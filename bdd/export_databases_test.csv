@@ -1,0 +1,10 @@
+id,type,date_prod,montant,description
+2    ,sortant,2025-02-24,300,
+3    ,sortant,2025-02-20,29.51,
+4    ,entrant,2025-02-23,0.99,
+5    ,entrant,2023-02-23,54.14,
+6    ,sortant,2023-02-23,14,
+7    ,entrant,2023-02-17,47,
+8    ,sortant,2023-02-17,87,
+1    ,entrant,2025-02-26,1500,test test
+9    ,entrant,2025-01-12,755,
