@@ -1,11 +1,13 @@
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from config import Config as flask_config
 
 app = Flask(__name__)
 CORS(app)  # Ajout de cette ligne pour permettre les requêtes CORS
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://dcantau:dcantau@localhost/test'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+#app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://dcantau:dcantau@localhost/test'
+#app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config.from_object(flask_config)
 db = SQLAlchemy(app)
 
 class Virement(db.Model):
