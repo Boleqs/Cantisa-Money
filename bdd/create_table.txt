@@ -1,0 +1,1 @@
+create table virement_temp ( id serial primary key, type varchar(50), date_prod date, montant integer NOT NULL, description varchar);
