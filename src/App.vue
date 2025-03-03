@@ -33,16 +33,14 @@ const sortData = () => {
     } else if (sortBy.value === 'montant') {
       result = parseFloat(a[sortBy.value]) - parseFloat(b[sortBy.value])
     } else if (sortBy.value === 'description') {
-        if (a[sortBy.value] === null) {
+        if (a[sortBy.value] === ""|| a[sortBy.value] === null) {
             result = 1
-        } else if (b[sortBy.value] === null) {
+        } else if (b[sortBy.value] === "" || b[sortBy.value] === null) {
             result = -1
         } else {
-            result = a[sortBy.value].toString().localeCompare(b[sortBy.value].toString())
+          result = a[sortBy.value].toString().localeCompare(b[sortBy.value].toString())
         }
-      
-    }
-      else {
+    } else {
       result = a[sortBy.value].toString().localeCompare(b[sortBy.value].toString())
     }
     return sortOrder.value === 'asc' ? result : -result
@@ -154,7 +152,7 @@ const addVirement = async () => {
         Sortant
       </label>
       <label>
-        <input type="button" value="Ajouter un virement" @click="openModal({ id: '', type: 'entrant', date_prod: '', montant: 0, description: '' }, 'add')" />
+        <input class="navbar_right" type="button" value="Ajouter un virement" @click="openModal({ id: '', type: 'entrant', date_prod: '', montant: 0, description: '' }, 'add')" />
       </label>
     </div>
     <div v-if="filteredData.length">
@@ -162,19 +160,19 @@ const addVirement = async () => {
       <table>
         <thead>
           <tr>
-            <th @click="sortByColumn('id')" :class="sortBy.value === 'id' ? (sortOrder.value === 'asc' ? 'sorted-blue' : 'sorted-green') : ''">
+            <th @click="sortByColumn('id')">
               ID
             </th>
-            <th @click="sortByColumn('type')" :class="sortBy.value === 'type' ? (sortOrder.value === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''">
+            <th @click="sortByColumn('type')">
               Type
             </th>
-            <th @click="sortByColumn('date_prod')" :class="sortBy.value === 'date_prod' ? (sortOrder.value === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''">
+            <th @click="sortByColumn('date_prod')">
               Date
             </th>
-            <th @click="sortByColumn('montant')" :class="sortBy.value === 'montant' ? (sortOrder.value === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''">
+            <th @click="sortByColumn('montant')">
               Montant
             </th>
-            <th @click="sortByColumn('description')" :class="sortBy.value === 'description' ? (sortOrder.value === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''">
+            <th @click="sortByColumn('description')">
               Description
             </th>
             <th>Actions</th>
@@ -182,7 +180,7 @@ const addVirement = async () => {
         </thead>
         <tbody>
           <tr v-for="virement in filteredData" :key="virement.id">
-            <td>{{ virement.id.trim() }}</td>
+            <td>{{ virement.id }}</td>
             <td>{{ virement.type }}</td>
             <td>{{ new Date(virement.date_prod).toLocaleDateString() }}</td>
             <td :class="virement.type === 'sortant' ? 'out' : 'in'">
@@ -204,7 +202,7 @@ const addVirement = async () => {
 
   <Modal v-if="showModal" :title="modalTitle" @close="showModal = false" :modifyVirement="modifyVirement" :addVirement="addVirement" :action="modalAction">
     <div class="modal-grid">
-      <div>
+      <div v-if="modalAction === 'modify'">
         <label>ID:</label>
         <span>{{ currentVirement.id }}</span>
       </div>
@@ -250,6 +248,21 @@ th:not(:last-child):hover {
   cursor: pointer;
   background-color: white;
   color: #323232;
+}
+.navbar_right {
+  float: right;
+  height: 40px;
+  background-color: lightgreen;
+  border: none;
+  color: black;
+  text-align: center;
+  text-decoration: none;
+  font-size: 16px;
+  cursor: pointer;
+}
+.navbar_right:hover {
+  background-color: green;
+  color: white;
 }
 .total {
   position: absolute;
