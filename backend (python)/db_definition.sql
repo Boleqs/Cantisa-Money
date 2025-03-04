@@ -27,6 +27,8 @@ CREATE TABLE commodities (
     type        VARCHAR(8) NOT NULL DEFAULT 'Currency' CHECK (type in ('Currency', 'Crypto')),
     fraction    SMALLINT DEFAULT 2 NOT NULL,
     description VARCHAR(1024) NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
     -- clé primaire
     PRIMARY KEY (user_id, id),
     UNIQUE (user_id, short_name),
@@ -67,6 +69,7 @@ CREATE TABLE transactions (
     post_date 	   DATE DEFAULT CURRENT_DATE,
     effective_date DATE DEFAULT CURRENT_DATE,
     description    VARCHAR(1024) NULL,
+    category_id    CHAR(36) NOT NULL DEFAULT 'N/A' CHECK (category_id IN (SELECT name from categories where categories.user_id = transactions.user_id)),
 
     -- clé primaire
     PRIMARY KEY (user_id, id),
@@ -96,7 +99,7 @@ CREATE TABLE categories (
     name        VARCHAR(64) UNIQUE NOT NULL,
     description VARCHAR(255) NULL,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
     -- clé primaire
     PRIMARY KEY (user_id, id),
     UNIQUE (user_id, name),
@@ -114,6 +117,8 @@ CREATE TABLE subscriptions (
     amount      INT NOT NULL DEFAULT 0,
     account_id  CHAR(36),
     category_id CHAR(36),
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
     -- clé primaire
     PRIMARY KEY (user_id, id),
     UNIQUE (user_id, name),
@@ -122,6 +127,20 @@ CREATE TABLE subscriptions (
     FOREIGN KEY (account_id) REFERENCES accounts (id),
     FOREIGN KEY (category_id) REFERENCES categories (id)
 
+);
+
+CREATE TABLE tags (
+    user_id     CHAR(36),
+    id          CHAR(36),
+    name        VARCHAR(64) UNIQUE NOT NULL,
+    color       VARCHAR(10) DEFAULT 'green' CHECK (color in ('green', 'red', 'blue', 'white', 'black', 'yellow', 'purple')),
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- clé primaire
+    PRIMARY KEY (user_id, id),
+    UNIQUE (user_id, name),
+    -- clés étrangères
+    FOREIGN KEY (user_id) REFERENCES users (id)
 );
 
 
@@ -147,11 +166,15 @@ CREATE TABLE assets (
 );
 
 CREATE TABLE asset_possession (
-    id            CHAR(36) PRIMARY KEY,
+    user_id       CHAR(36),
+    id            CHAR(36) UNIQUE,
     asset_id      CHAR(36) NOT NULL,
     account_id    CHAR(36) NOT NULL,
-    quantity      INT NOT NULL DEFAULT 0 CHECK (quantity <= 1000000000),
+    quantity      INT NOT NULL DEFAULT 0 CHECK (quantity <= 1000000000 AND quantity >= 0),
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
+    -- clé primaire
+    PRIMARY KEY (user_id, id),
     -- clés étrangères
     FOREIGN KEY (asset_id) REFERENCES assets (id),
     FOREIGN KEY (account_id) REFERENCES accounts (name)
@@ -162,14 +185,15 @@ CREATE TABLE asset_possession (
 
 CREATE TABLE budgets (
     user_id         CHAR(36),
-    id              CHAR(36) PRIMARY KEY,
+    id              CHAR(36) UNIQUE,
     amount_allocated INT NOT NULL CHECK (amount_allocated >= 0),
     amount_spent    INT DEFAULT 0 CHECK (amount_spent >= 0),
     start_date      DATE NOT NULL DEFAULT CURRENT_DATE,
     end_date        DATE NOT NULL DEFAULT (CURRENT_DATE + INTERVAL '365 days') CHECK (end_date >= start_date),
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
+    -- clé primaire
+    PRIMARY KEY (user_id, id),
     -- Clés étrangères
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
@@ -199,4 +223,23 @@ CREATE TABLE budget_categories (
 );
 
 
+-- Triggers
 
+CREATE OR REPLACE FUNCTION update_budget_spent()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Met à jour le budget en additionnant toutes les transactions liées
+    UPDATE budgets
+    SET amount_spent = (
+        SELECT SUM(SELECT ) FROM budgets
+    )
+    WHERE id = NEW.budget_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_log_budget_changes
+BEFORE UPDATE ON budgets
+FOR EACH ROW
+EXECUTE FUNCTION update_budget_spent();
