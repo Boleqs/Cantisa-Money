@@ -8,7 +8,7 @@ CREATE TABLE users (
     email           VARCHAR(100) UNIQUE NOT NULL,
     password_hash   VARCHAR(255) NOT NULL,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Index pour optimiser les recherches
@@ -20,7 +20,7 @@ CREATE INDEX idx_email ON users (email);
 
 CREATE TABLE commodities (
     user_id     CHAR(36),
-    id          CHAR(36),
+    id          CHAR(36) UNIQUE,
     name        VARCHAR(128) NOT NULL,
     short_name  VARCHAR(6) NULL UNIQUE,
     type        VARCHAR(8) NOT NULL DEFAULT 'Currency' CHECK (type in ('Currency', 'Crypto')),
@@ -37,14 +37,16 @@ CREATE TABLE commodities (
 
 CREATE TABLE accounts (
     user_id      CHAR(36),
-    id           CHAR(36),
-    name         VARCHAR(128) NOT NULL,
+    id           CHAR(36) UNIQUE,
+    name         VARCHAR(128) NOT NULL UNIQUE,
     parent_id    CHAR(36) NULL,
     account_type VARCHAR(64) NOT NULL DEFAULT 'Current' CHECK (account_type IN ('Income', 'Expense', 'Equity', 'Assets', 'Current')),
     -- account_subtype uniquement rempli si account_type = Equity
     account_subtype VARCHAR(64) NULL CHECK ((account_type = 'Equity' and account_subtype IN ('fr_PEA', 'Other')) OR account_subtype is NULL),
     currency_id  CHAR(36) NOT NULL,
     description  VARCHAR(1024) NULL,
+    total_spent  MONEY DEFAULT 0.0,
+    total_earned MONEY DEFAULT 0.0,
     is_virtual   BOOLEAN DEFAULT FALSE NOT NULL,
     is_hidden    BOOLEAN DEFAULT FALSE NOT NULL,
     code         VARCHAR(64) NULL,
@@ -59,17 +61,18 @@ CREATE TABLE accounts (
     FOREIGN KEY (currency_id) REFERENCES commodities(id) ON UPDATE CASCADE
 );
 -- Index pour optimiser les recherches
-CREATE INDEX idx_currency_id ON accounts (currency_id);
+CREATE INDEX idx_currency_id_accounts ON accounts (currency_id);
 
 
 CREATE TABLE transactions (
     user_id        CHAR(36),
-    id             CHAR(36),
+    id             CHAR(36) UNIQUE,
     currency_id    CHAR(36) NOT NULL,
     post_date 	   DATE DEFAULT CURRENT_DATE,
     effective_date DATE DEFAULT CURRENT_DATE,
     description    VARCHAR(1024) NULL,
-    category_id    CHAR(36) NOT NULL DEFAULT 'N/A' CHECK (category_id IN (SELECT name from categories where categories.user_id = transactions.user_id)),
+    category_id    CHAR(36) NOT NULL DEFAULT 'N/A', --CHECK (category_id IN (SELECT name from categories where categories.user_id = transactions.user_id)),
+    -- cannot use subquery in check constraint, so we need to create a trigger to check the category_id
 
     -- clé primaire
     PRIMARY KEY (user_id, id),
@@ -77,7 +80,6 @@ CREATE TABLE transactions (
     FOREIGN KEY (user_id) REFERENCES users (id),
     FOREIGN KEY (currency_id) REFERENCES commodities(id) ON UPDATE CASCADE
 );
-
 
 CREATE TABLE splits (
     id         CHAR(36) PRIMARY KEY,
@@ -90,12 +92,12 @@ CREATE TABLE splits (
 -- Index pour optimiser les recherches
 CREATE INDEX idx_account_id ON splits (account_id);
 CREATE INDEX idx_tx_id ON splits (tx_id);
-CREATE INDEX idx_currency_id ON transactions (currency_id);
+CREATE INDEX idx_currency_id_transactions ON transactions (currency_id); --VOIR
 
 
 CREATE TABLE categories (
     user_id     CHAR(36),
-    id          CHAR(36),
+    id          CHAR(36) UNIQUE,
     name        VARCHAR(64) UNIQUE NOT NULL,
     description VARCHAR(255) NULL,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -126,12 +128,11 @@ CREATE TABLE subscriptions (
     FOREIGN KEY (user_id) REFERENCES users (id),
     FOREIGN KEY (account_id) REFERENCES accounts (id),
     FOREIGN KEY (category_id) REFERENCES categories (id)
-
 );
 
 CREATE TABLE tags (
     user_id     CHAR(36),
-    id          CHAR(36),
+    id          CHAR(36) UNIQUE,
     name        VARCHAR(64) UNIQUE NOT NULL,
     color       VARCHAR(10) DEFAULT 'green' CHECK (color in ('green', 'red', 'blue', 'white', 'black', 'yellow', 'purple')),
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -157,11 +158,12 @@ CREATE TABLE tags_on_split (
 
 CREATE TABLE assets (
     user_id       CHAR(36),
-    id            CHAR(36),
+    id            CHAR(36) UNIQUE,
     symbol        VARCHAR(20) UNIQUE NOT NULL,
     name          VARCHAR(100) NOT NULL,
-    asset_type    VARCHAR(20) NOT NULL CHECK (asset_type IN ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')),
-    sector        VARCHAR(50) NULL CHECK (asset_type = ('Stock' OR 'ETF') OR sector is NULL), -- Secteur pour les actions/ETFs
+    asset_type    VARCHAR(20) NOT NULL CHECK (asset_type IN ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')),        
+    -- sector        VARCHAR(50) NULL CHECK (asset_type = ('Stock' OR 'ETF') OR sector is NULL), -- Secteur pour les actions/ETFs changé parce que ne marche pas
+    sector        VARCHAR(50) NULL CHECK (asset_type IN ('Stock', 'ETF') OR sector IS NULL), -- Secteur pour les actions/ETFs
     commodity     VARCHAR(6) NOT NULL,
     value_per_unit         INT NOT NULL DEFAULT 0,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -200,7 +202,7 @@ CREATE TABLE budgets (
     start_date      DATE NOT NULL DEFAULT CURRENT_DATE,
     end_date        DATE NOT NULL DEFAULT (CURRENT_DATE + INTERVAL '365 days') CHECK (end_date >= start_date),
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     -- clé primaire
     PRIMARY KEY (user_id, id),
     -- Clés étrangères
@@ -259,7 +261,8 @@ BEGIN
     SELECT COALESCE(SUM(s.quantity), 0) INTO total_spent
     FROM splits s
     WHERE s.account_id IN (
-        SELECT account_id FROM budget_accounts WHERE budget_id = NEW.id
+        -- SELECT account_id FROM budget_accounts WHERE budget_id = NEW.id
+        SELECT account_id FROM budget_accounts WHERE budget_id = NEW.budget_id --ia
     );
 
     -- Ajouter les transactions liées aux catégories associées au budget
@@ -267,7 +270,8 @@ BEGIN
     FROM splits s
     JOIN transactions t ON s.tx_id = t.id
     WHERE t.category_id IN (
-        SELECT category_id FROM budget_categories WHERE budget_id = NEW.id
+        -- SELECT category_id FROM budget_categories WHERE budget_id = NEW.id
+        SELECT category_id FROM budget_categories WHERE budget_id = NEW.budget_id --ia
     );
 
     -- Ajouter les transactions liées aux tags associés au budget
@@ -275,17 +279,24 @@ BEGIN
     FROM splits s
     JOIN tags_on_split ts ON s.id = ts.split_id
     WHERE ts.tag_id IN (
-        SELECT tag_id FROM budget_tags WHERE budget_id = NEW.id
+        -- SELECT tag_id FROM budget_tags WHERE budget_id = NEW.id 
+        SELECT tag_id FROM budget_tags WHERE budget_id = NEW.budget_id --ia
     );
 
     -- Mettre à jour le montant dépensé dans le budget
     UPDATE budgets
     SET amount_spent = total_spent
-    WHERE id = NEW.id;
+    -- WHERE id = NEW.id;
+    WHERE id = NEW.budget_id; --ia
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_update_budget_spent
+AFTER INSERT OR UPDATE ON splits
+FOR EACH ROW
+EXECUTE FUNCTION update_budget_spent();
 
 CREATE TRIGGER trg_log_budget_changes
 BEFORE UPDATE ON budgets
@@ -302,17 +313,33 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_update_timestamp
+CREATE TRIGGER trg_update_timestamp_accounts
 BEFORE UPDATE ON accounts
 FOR EACH ROW
 EXECUTE FUNCTION update_timestamp();
 
-CREATE TRIGGER trg_update_timestamp
+CREATE TRIGGER trg_update_timestamp_budgets
 BEFORE UPDATE ON budgets
 FOR EACH ROW
 EXECUTE FUNCTION update_timestamp();
 
-CREATE TRIGGER trg_update_timestamp
+CREATE TRIGGER trg_update_timestamp_users
 BEFORE UPDATE ON users
 FOR EACH ROW
 EXECUTE FUNCTION update_timestamp();
+
+--ia
+CREATE OR REPLACE FUNCTION check_category_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.category_id AND user_id = NEW.user_id) THEN
+        RAISE EXCEPTION 'Invalid category_id % for user_id %', NEW.category_id, NEW.user_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_category_id
+BEFORE INSERT OR UPDATE ON transactions
+FOR EACH ROW
+EXECUTE FUNCTION check_category_id();
