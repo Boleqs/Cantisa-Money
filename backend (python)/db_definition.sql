@@ -38,15 +38,15 @@ CREATE TABLE commodities (
 CREATE TABLE accounts (
     user_id      CHAR(36),
     id           CHAR(36) UNIQUE,
-    name         VARCHAR(128) NOT NULL UNIQUE,
+    name         VARCHAR(128) NOT NULL,
     parent_id    CHAR(36) NULL,
     account_type VARCHAR(64) NOT NULL DEFAULT 'Current' CHECK (account_type IN ('Income', 'Expense', 'Equity', 'Assets', 'Current')),
     -- account_subtype uniquement rempli si account_type = Equity
     account_subtype VARCHAR(64) NULL CHECK ((account_type = 'Equity' and account_subtype IN ('fr_PEA', 'Other')) OR account_subtype is NULL),
     currency_id  CHAR(36) NOT NULL,
     description  VARCHAR(1024) NULL,
-    total_spent  MONEY DEFAULT 0.0,
-    total_earned MONEY DEFAULT 0.0,
+    total_spent  MONEY DEFAULT 0,
+    total_earned MONEY DEFAULT 0,
     is_virtual   BOOLEAN DEFAULT FALSE NOT NULL,
     is_hidden    BOOLEAN DEFAULT FALSE NOT NULL,
     code         VARCHAR(64) NULL,

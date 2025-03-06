@@ -1,3 +1,5 @@
-from flask_sqlalchemy import SQLAlchemy
+from tokenize import String
 
-db = SQLAlchemy()
+from sqlalchemy.orm import declarative_base
+
+db = declarative_base()

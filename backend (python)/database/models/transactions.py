@@ -1,7 +1,7 @@
 import uuid
 from ..database import db
 from datetime import datetime
-
+from sqlalchemy import Column, String, Integer, DateTime, func, relationship
 
 class Transactions(db.Model):
     __tablename__ = 'transactions'
