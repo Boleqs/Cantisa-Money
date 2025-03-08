@@ -1,15 +1,23 @@
 import uuid
 from ..database import db
-from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship
+from datetime import datetime, timedelta
+from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKeyConstraint, UniqueConstraint, \
+    PrimaryKeyConstraint, Numeric
 
-class Budgets(db.Model):
+
+class Budgets(db):
     __tablename__ = 'budgets'
-    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), primary_key=True)
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    amount_allocated = db.Column(db.Integer, nullable=False)
-    amount_spent = db.Column(db.Numeric, default=0, nullable=False)
-    start_date = db.Column(db.Date, default=datetime.now(), nullable=False)
-    end_date = db.Column(db.Date, default=datetime.now(), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.now())
-    updated_at = db.Column(db.DateTime, default=datetime.now(), onupdate=datetime.now())
+    __table_args__ = (
+        PrimaryKeyConstraint('user_id', 'id'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+
+    )
+    user_id = Column(String(36))
+    id = Column(String(36), default=lambda: str(uuid.uuid4()))
+    amount_allocated = Column(Numeric, nullable=False)
+    amount_spent = Column(Numeric, default=0, nullable=False)
+    start_date = Column(DateTime, default=datetime.now(), nullable=False)
+    end_date = Column(DateTime, default=datetime.now() + timedelta(days=365), nullable=False)
+    created_at = Column(DateTime, default=datetime.now())
+    updated_at = Column(DateTime, default=datetime.now(), onupdate=datetime.now())
+

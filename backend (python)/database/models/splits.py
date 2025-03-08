@@ -1,10 +1,18 @@
 import uuid
 from ..database import db
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship
+from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKeyConstraint, UniqueConstraint, \
+    PrimaryKeyConstraint, Numeric, CheckConstraint
 
-class Splits(db.Model):
+
+class Splits(db):
     __tablename__ = 'splits'
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    tx_id = db.Column(db.String(36), db.ForeignKey('transactions.id'), nullable=False)
-    quantity = db.Column(db.Numeric, nullable=False)
-    account_id = db.Column(db.String(36), db.ForeignKey('accounts.id'), nullable=False)
+    __table_args__ = (
+        PrimaryKeyConstraint('id'),
+        ForeignKeyConstraint(['tx_id'],['transactions.id'], ondelete='CASCADE', onupdate='CASCADE'),
+        ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE', onupdate='CASCADE')
+    )
+
+    id = Column(String(36), default=lambda: str(uuid.uuid4()))
+    tx_id = Column(String(36), nullable=False)
+    quantity = Column(Numeric, nullable=False)
+    account_id = Column(String(36), nullable=False)

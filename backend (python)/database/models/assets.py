@@ -1,18 +1,29 @@
 import uuid
 from ..database import db
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship
+from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKeyConstraint, UniqueConstraint, \
+    PrimaryKeyConstraint, Numeric, CheckConstraint
 
-class Assets(db.Model):
+
+class Assets(db):
     __tablename__ = 'assets'
+    __table_args__ = (
+        PrimaryKeyConstraint('user_id', 'id'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+        ForeignKeyConstraint(['commodity_id'], ['commodities.id'], ondelete='CASCADE'),
 
-    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), primary_key=True)
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    symbol = db.Column(db.String(20), unique=True, nullable=False)
-    name = db.Column(db.String(100), nullable=False)
-    asset_type = db.Column(db.String(20), nullable=False)
-    sector = db.Column(db.String(50), nullable=True)
-    commodity = db.Column(db.String(6), db.ForeignKey('commodities.short_name'), nullable=False)
-    value_per_unit = db.Column(db.Integer, default=0, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.now(), nullable=False)
+        UniqueConstraint('name', 'asset_type', 'commodity_id'),
+        CheckConstraint("asset_type IN ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')"),
+        CheckConstraint("asset_type IN ('Stock', 'ETF') OR sector IS NULL")
+    )
+
+    user_id = Column(String(36))
+    id = Column(String(36), default=lambda: str(uuid.uuid4()))
+    symbol = Column(String(20), nullable=False)
+    name = Column(String(100), nullable=False)
+    asset_type = Column(String(20), nullable=False)
+    sector = Column(String(50), nullable=True)
+    commodity_id = Column(String(6), nullable=False)
+    value_per_unit = Column(Numeric, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.now(), nullable=False)
 
