@@ -30,24 +30,25 @@ from triggers.trg_update_timestamp_accounts import trg_update_timestamp_accounts
 from triggers.trg_update_timestamp_budgets import trg_update_timestamp_budgets
 from triggers.trg_update_timestamp_users import trg_update_timestamp_users
 
-engine = create_engine(db_url, echo=True)
+#engine = create_engine(db_url, echo=True)
 
 
-conn = engine.connect()
-Base.metadata.drop_all(bind=conn)
-conn.commit()
+#conn = engine.connect()
+#Base.metadata.drop_all(bind=conn)
+#conn.commit()
 # Prepare the functions and triggers to be created at database Base.metadata.create_all(bind=conn)
 # functions
-event.listen(Base.metadata, 'before_create', check_category_id)
-event.listen(Base.metadata, 'before_create', update_budget_spent)
-event.listen(Base.metadata, 'before_create', update_timestamp)
+#event.listen(Base.metadata, 'before_create', check_category_id)
+#event.listen(Base.metadata, 'before_create', update_budget_spent)
+#event.listen(Base.metadata, 'before_create', update_timestamp)
 # Triggers
-event.listen(Transactions.metadata, 'after_create', trg_check_category_id)
-event.listen(Splits.metadata, 'after_create', trg_update_budget_spent)
-event.listen(Accounts.metadata, 'after_create', trg_update_timestamp_accounts)
-event.listen(Budgets.metadata, 'after_create', trg_update_timestamp_budgets)
-event.listen(Users.metadata, 'after_create', trg_update_timestamp_users)
+#event.listen(Transactions.metadata, 'after_create', trg_check_category_id)
+#event.listen(Splits.metadata, 'after_create', trg_update_budget_spent)
+#event.listen(Accounts.metadata, 'after_create', trg_update_timestamp_accounts)
+#event.listen(Budgets.metadata, 'after_create', trg_update_timestamp_budgets)
+#event.listen(Users.metadata, 'after_create', trg_update_timestamp_users)
 # Create database structure
-Base.metadata.create_all(bind=conn)
-conn.commit()
+#Base.metadata.create_all(bind=conn)
+#conn.commit()
+
 

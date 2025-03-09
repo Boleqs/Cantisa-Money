@@ -3,6 +3,7 @@ from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint
+from sqlalchemy.dialects.postgresql import UUID
 
 
 class Commodities(Base):
@@ -16,8 +17,8 @@ class Commodities(Base):
         CheckConstraint("type in ('Currency', 'Crypto')")
 
     )
-    user_id = Column(String(36), nullable=False)
-    id = Column(String(36), default=str(uuid.uuid4()))
+    user_id = Column(UUID(as_uuid=True))
+    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
     name = Column(String(128), nullable=False)
     short_name = Column(String(6), nullable=False)
     type = Column(String(8), nullable=False, default='Currency')

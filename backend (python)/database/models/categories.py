@@ -3,6 +3,7 @@ from sqlalchemy import UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstra
 from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func
+from sqlalchemy.dialects.postgresql import UUID
 
 
 class Categories(Base):
@@ -16,8 +17,8 @@ class Categories(Base):
         UniqueConstraint('name')
     )
 
-    id = Column(String(36), nullable=False, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String(36), nullable=False)
+    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True))
     name = Column(String(100), nullable=False)
     description = Column(String(1000), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now())

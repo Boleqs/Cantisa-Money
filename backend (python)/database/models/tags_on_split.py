@@ -3,6 +3,7 @@ from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Numeric
+from sqlalchemy.dialects.postgresql import UUID
 
 
 class TagsOnSplits(Base):
@@ -13,5 +14,5 @@ class TagsOnSplits(Base):
         ForeignKeyConstraint(['tag_id'], ['tags.id'], ondelete='CASCADE'),
     )
 
-    split_id = Column(String(36), nullable=False)
-    tag_id = Column(String(36), nullable=False)
+    split_id = Column(UUID(as_uuid=True))
+    tag_id = Column(UUID(as_uuid=True))

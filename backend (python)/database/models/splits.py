@@ -2,6 +2,7 @@ import uuid
 from .base import Base
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \
     PrimaryKeyConstraint, Numeric, CheckConstraint
+from sqlalchemy.dialects.postgresql import UUID
 
 
 class Splits(Base):
@@ -12,7 +13,7 @@ class Splits(Base):
         ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE', onupdate='CASCADE')
     )
 
-    id = Column(String(36), default=lambda: str(uuid.uuid4()))
-    tx_id = Column(String(36), nullable=False)
+    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    tx_id = Column(UUID(as_uuid=True))
     quantity = Column(Numeric, nullable=False)
-    account_id = Column(String(36), nullable=False)
+    account_id = Column(UUID(as_uuid=True))

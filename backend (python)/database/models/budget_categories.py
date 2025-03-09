@@ -3,6 +3,7 @@ from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Numeric
+from sqlalchemy.dialects.postgresql import UUID
 
 
 class BudgetCategories(Base):
@@ -13,5 +14,5 @@ class BudgetCategories(Base):
         ForeignKeyConstraint(['category_id'], ['categories.id'], ondelete='CASCADE'),
     )
 
-    budget_id = Column(String(36), nullable=False)
-    category_id = Column(String(36), nullable=False)
+    budget_id = Column(UUID(as_uuid=True))
+    category_id = Column(UUID(as_uuid=True))

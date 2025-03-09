@@ -1,6 +1,7 @@
 import uuid
 from .base import Base
 from sqlalchemy import Column, String, DateTime, func, PrimaryKeyConstraint, ForeignKeyConstraint
+from sqlalchemy.dialects.postgresql import UUID
 
 
 class Users(Base):
@@ -9,7 +10,7 @@ class Users(Base):
         PrimaryKeyConstraint('id'),
     )
 
-    id = Column(String(36), default=str(uuid.uuid4()))
+    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
     username = Column(String(50), index=True, nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
