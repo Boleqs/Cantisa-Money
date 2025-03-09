@@ -1,13 +1,13 @@
 import uuid
-from ..database import db
+from .base import Base
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKeyConstraint, UniqueConstraint, PrimaryKeyConstraint
+from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, PrimaryKeyConstraint
 
 
-class Transactions(db):
+class Transactions(Base):
     __tablename__ = 'transactions'
     __table_args__ = (
-        PrimaryKeyConstraint('user_id', 'id'),
+        PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'],['users.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['currency_id'],['commodities.id'], ondelete='CASCADE', onupdate='CASCADE'),
 

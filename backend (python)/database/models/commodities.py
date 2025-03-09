@@ -1,23 +1,25 @@
 import uuid
-from ..database import db
+from .base import Base
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKey, CheckConstraint, SmallInteger, \
+from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint
 
 
-class Commodities(db):
+class Commodities(Base):
     __tablename__ = 'commodities'
     __table_args__ = (
-        PrimaryKeyConstraint('user_id', 'id'),
+        PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
 
         UniqueConstraint('user_id', 'short_name'),
+        UniqueConstraint('id'),
         CheckConstraint("type in ('Currency', 'Crypto')")
+
     )
     user_id = Column(String(36), nullable=False)
     id = Column(String(36), default=str(uuid.uuid4()))
     name = Column(String(128), nullable=False)
-    short_name = Column(String(6), nullable=False, unique=True)
+    short_name = Column(String(6), nullable=False)
     type = Column(String(8), nullable=False, default='Currency')
     fraction = Column(SmallInteger, default=2, nullable=False)
     description = Column(String(1024))

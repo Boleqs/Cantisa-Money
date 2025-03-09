@@ -1,10 +1,10 @@
 import uuid
-from ..database import db
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKeyConstraint, UniqueConstraint, \
+from .base import Base
+from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \
     PrimaryKeyConstraint, Numeric, CheckConstraint
 
 
-class Splits(db):
+class Splits(Base):
     __tablename__ = 'splits'
     __table_args__ = (
         PrimaryKeyConstraint('id'),

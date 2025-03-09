@@ -1,259 +1,274 @@
--- noinspection SqlNoDataSourceInspectionForFile
-
--- Partie gestion des users / sécurité de l'app
-
-CREATE TABLE users (
-    id              CHAR(36) PRIMARY KEY,
-    username        VARCHAR(50) UNIQUE NOT NULL,
-    email           VARCHAR(100) UNIQUE NOT NULL,
-    password_hash   VARCHAR(255) NOT NULL,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+create table users
+(
+    id            varchar(36)  not null
+        primary key,
+    username      varchar(50)  not null,
+    email         varchar(100) not null,
+    password_hash varchar(255) not null,
+    created_at    timestamp,
+    updated_at    timestamp
 );
 
--- Index pour optimiser les recherches
-CREATE INDEX idx_username ON users (username);
-CREATE INDEX idx_email ON users (email);
+create unique index ix_users_email
+    on users (email);
 
+create index ix_users_username
+    on users (username);
 
--- Partie gestion comptabilité
-
-CREATE TABLE commodities (
-    user_id     CHAR(36),
-    id          CHAR(36) UNIQUE,
-    name        VARCHAR(128) NOT NULL,
-    short_name  VARCHAR(6) NULL UNIQUE,
-    type        VARCHAR(8) NOT NULL DEFAULT 'Currency' CHECK (type in ('Currency', 'Crypto')),
-    fraction    SMALLINT DEFAULT 2 NOT NULL,
-    description VARCHAR(1024) NULL,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    UNIQUE (user_id, short_name),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id)
+create table budgets
+(
+    user_id          varchar(36)
+        references users
+            on delete cascade,
+    id               varchar(36) not null
+        primary key,
+    amount_allocated numeric     not null,
+    amount_spent     numeric     not null,
+    start_date       timestamp   not null,
+    end_date         timestamp   not null,
+    created_at       timestamp,
+    updated_at       timestamp
 );
 
-CREATE TABLE accounts (
-    user_id      CHAR(36),
-    id           CHAR(36) UNIQUE,
-    name         VARCHAR(128) NOT NULL,
-    parent_id    CHAR(36) NULL,
-    account_type VARCHAR(64) NOT NULL DEFAULT 'Current' CHECK (account_type IN ('Income', 'Expense', 'Equity', 'Assets', 'Current')),
-    -- account_subtype uniquement rempli si account_type = Equity
-    account_subtype VARCHAR(64) NULL CHECK ((account_type = 'Equity' and account_subtype IN ('fr_PEA', 'Other')) OR account_subtype is NULL),
-    currency_id  CHAR(36) NOT NULL,
-    description  VARCHAR(1024) NULL,
-    total_spent  MONEY DEFAULT 0,
-    total_earned MONEY DEFAULT 0,
-    is_virtual   BOOLEAN DEFAULT FALSE NOT NULL,
-    is_hidden    BOOLEAN DEFAULT FALSE NOT NULL,
-    code         VARCHAR(64) NULL,
-	created_at   DATE DEFAULT CURRENT_DATE,
-    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    UNIQUE (user_id, name),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (currency_id) REFERENCES commodities(id) ON UPDATE CASCADE
-);
--- Index pour optimiser les recherches
-CREATE INDEX idx_currency_id_accounts ON accounts (currency_id);
-
-
-CREATE TABLE transactions (
-    user_id        CHAR(36),
-    id             CHAR(36) UNIQUE,
-    currency_id    CHAR(36) NOT NULL,
-    post_date 	   DATE DEFAULT CURRENT_DATE,
-    effective_date DATE DEFAULT CURRENT_DATE,
-    description    VARCHAR(1024) NULL,
-    category_id    CHAR(36) NOT NULL DEFAULT 'N/A', --CHECK (category_id IN (SELECT name from categories where categories.user_id = transactions.user_id)),
-    -- cannot use subquery in check constraint, so we need to create a trigger to check the category_id
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (currency_id) REFERENCES commodities(id) ON UPDATE CASCADE
+create table categories
+(
+    id          varchar(36)  not null
+        primary key,
+    user_id     varchar(36)  not null
+        references users
+            on delete cascade,
+    name        varchar(100) not null
+        unique,
+    description varchar(1000),
+    created_at  timestamp    not null,
+    unique (user_id, name)
 );
 
-CREATE TABLE splits (
-    id         CHAR(36) PRIMARY KEY,
-    tx_id      CHAR(36) NOT NULL,
-    quantity   INT NOT NULL,
-    account_id CHAR(36) NOT NULL,
-    FOREIGN KEY (tx_id) REFERENCES transactions(id) ON UPDATE CASCADE ON DELETE CASCADE,
-    FOREIGN KEY (account_id) REFERENCES accounts(name) ON UPDATE CASCADE ON DELETE CASCADE
-);
--- Index pour optimiser les recherches
-CREATE INDEX idx_account_id ON splits (account_id);
-CREATE INDEX idx_tx_id ON splits (tx_id);
-CREATE INDEX idx_currency_id_transactions ON transactions (currency_id); --VOIR
-
-
-CREATE TABLE categories (
-    user_id     CHAR(36),
-    id          CHAR(36) UNIQUE,
-    name        VARCHAR(64) UNIQUE NOT NULL,
-    description VARCHAR(255) NULL,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    UNIQUE (user_id, name),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id)
-);
--- Index pour accélérer la recherche par nom
-CREATE INDEX idx_category_name ON categories (name);
-
-CREATE TABLE subscriptions (
-    user_id     CHAR(36),
-    id          CHAR(36),
-    name        VARCHAR(64) UNIQUE NOT NULL,
-    recurrence  SMALLINT NOT NULL DEFAULT 30,
-    amount      INT NOT NULL DEFAULT 0,
-    account_id  CHAR(36),
-    category_id CHAR(36),
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    UNIQUE (user_id, name),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (account_id) REFERENCES accounts (id),
-    FOREIGN KEY (category_id) REFERENCES categories (id)
+create table commodities
+(
+    user_id     varchar(36)  not null
+        references users
+            on delete cascade,
+    id          varchar(36)  not null
+        primary key,
+    name        varchar(128) not null,
+    short_name  varchar(6)   not null,
+    type        varchar(8)   not null
+        constraint commodities_type_check
+            check ((type)::text = ANY ((ARRAY ['Currency'::character varying, 'Crypto'::character varying])::text[])),
+    fraction    smallint     not null,
+    description varchar(1024),
+    created_at  timestamp,
+    unique (user_id, short_name)
 );
 
-CREATE TABLE tags (
-    user_id     CHAR(36),
-    id          CHAR(36) UNIQUE,
-    name        VARCHAR(64) UNIQUE NOT NULL,
-    color       VARCHAR(10) DEFAULT 'green' CHECK (color in ('green', 'red', 'blue', 'white', 'black', 'yellow', 'purple')),
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    UNIQUE (user_id, name),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id)
+create table tags
+(
+    id         varchar(36)  not null
+        primary key,
+    user_id    varchar(36)  not null
+        references users
+            on delete cascade,
+    name       varchar(100) not null,
+    color      varchar(64)  not null
+        constraint tags_color_check
+            check ((color)::text = ANY
+                   ((ARRAY ['green'::character varying, 'red'::character varying, 'blue'::character varying, 'white'::character varying, 'black'::character varying, 'yellow'::character varying, 'purple'::character varying])::text[])),
+    created_at timestamp    not null,
+    unique (user_id, name)
 );
 
-CREATE TABLE tags_on_split (
-    split_id    CHAR(36) NOT NULL,
-    tag_id      CHAR(36) NOT NULL,
-    -- clé unique
-    UNIQUE (split_id, tag_id),
-    -- clés étrangères
-    FOREIGN KEY (split_id) REFERENCES splits (id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
+create table accounts
+(
+    user_id         varchar(36)  not null
+        references users
+            on delete cascade,
+    id              varchar(36)  not null
+        primary key,
+    name            varchar(128) not null,
+    parent_id       varchar(36),
+    account_type    varchar(64)  not null
+        constraint accounts_account_type_check
+            check ((account_type)::text = ANY
+                   ((ARRAY ['Income'::character varying, 'Expense'::character varying, 'Equity'::character varying, 'Assets'::character varying, 'Current'::character varying])::text[])),
+    account_subtype varchar(64),
+    currency_id     varchar(36)  not null
+        references commodities
+            on delete cascade,
+    description     varchar(1024),
+    total_spent     numeric      not null,
+    total_earned    numeric      not null,
+    is_virtual      boolean      not null,
+    is_hidden       boolean      not null,
+    code            varchar(64),
+    created_at      timestamp,
+    updated_at      timestamp,
+    unique (user_id, name),
+    constraint accounts_check
+        check ((((account_type)::text = 'Equity'::text) AND ((account_subtype)::text = ANY
+                                                             ((ARRAY ['fr_PEA'::character varying, 'Other'::character varying])::text[]))) OR
+               (account_subtype IS NULL))
 );
 
--- Partie gestion Finances
-
-CREATE TABLE assets (
-    user_id       CHAR(36),
-    id            CHAR(36) UNIQUE,
-    symbol        VARCHAR(20) UNIQUE NOT NULL,
-    name          VARCHAR(100) NOT NULL,
-    asset_type    VARCHAR(20) NOT NULL CHECK (asset_type IN ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')),        
-    -- sector        VARCHAR(50) NULL CHECK (asset_type = ('Stock' OR 'ETF') OR sector is NULL), -- Secteur pour les actions/ETFs changé parce que ne marche pas
-    sector        VARCHAR(50) NULL CHECK (asset_type IN ('Stock', 'ETF') OR sector IS NULL), -- Secteur pour les actions/ETFs
-    commodity     VARCHAR(6) NOT NULL,
-    value_per_unit         INT NOT NULL DEFAULT 0,
-    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    UNIQUE (name, asset_type, commodity),
-    -- clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (commodity) REFERENCES commodities (short_name)
+create table assets
+(
+    user_id        varchar(36)
+        references users
+            on delete cascade,
+    id             varchar(36)  not null
+        primary key,
+    symbol         varchar(20)  not null,
+    name           varchar(100) not null,
+    asset_type     varchar(20)  not null
+        constraint assets_asset_type_check
+            check ((asset_type)::text = ANY
+                   ((ARRAY ['Stock'::character varying, 'ETF'::character varying, 'RealEstate'::character varying, 'Vehicle'::character varying, 'Other'::character varying])::text[])),
+    sector         varchar(50),
+    commodity_id   varchar(6)   not null
+        references commodities
+            on delete cascade,
+    value_per_unit numeric      not null,
+    created_at     timestamp    not null,
+    unique (name, asset_type, commodity_id),
+    constraint assets_check
+        check (((asset_type)::text = ANY ((ARRAY ['Stock'::character varying, 'ETF'::character varying])::text[])) OR
+               (sector IS NULL))
 );
 
-CREATE TABLE asset_possession (
-    user_id       CHAR(36),
-    id            CHAR(36) UNIQUE,
-    asset_id      CHAR(36) NOT NULL,
-    account_id    CHAR(36) NOT NULL,
-    quantity      INT NOT NULL DEFAULT 0 CHECK (quantity <= 1000000000 AND quantity >= 0),
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    -- clés étrangères
-    FOREIGN KEY (asset_id) REFERENCES assets (id),
-    FOREIGN KEY (account_id) REFERENCES accounts (name)
+create table budget_categories
+(
+    budget_id   varchar(36) not null
+        references budgets
+            on delete cascade,
+    category_id varchar(36) not null
+        references categories
+            on delete cascade,
+    primary key (budget_id, category_id)
 );
 
-
--- Partie gestion Stats
-
-CREATE TABLE budgets (
-    user_id         CHAR(36),
-    id              CHAR(36) UNIQUE,
-    amount_allocated INT NOT NULL CHECK (amount_allocated >= 0),
-    amount_spent    INT DEFAULT 0 CHECK (amount_spent >= 0),
-    start_date      DATE NOT NULL DEFAULT CURRENT_DATE,
-    end_date        DATE NOT NULL DEFAULT (CURRENT_DATE + INTERVAL '365 days') CHECK (end_date >= start_date),
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- clé primaire
-    PRIMARY KEY (user_id, id),
-    -- Clés étrangères
-    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-);
--- Index pour optimiser les recherches
-CREATE INDEX idx_user_id ON budgets (user_id);
-CREATE INDEX idx_start_date ON budgets (start_date);
-CREATE INDEX idx_end_date ON budgets (end_date);
-
-
-CREATE TABLE budget_accounts (
-    budget_id       CHAR(36) NOT NULL,
-    account_id      CHAR(36) NOT NULL,
-
-    -- clé unique
-    UNIQUE (budget_id, account_id),
-    -- Clés étrangères
-    FOREIGN KEY (budget_id) REFERENCES  budgets (id) ON DELETE CASCADE,
-    FOREIGN KEY (account_id) REFERENCES accounts (name) ON DELETE CASCADE
+create table budget_tags
+(
+    budget_id varchar(36) not null
+        references budgets
+            on delete cascade,
+    tag_id    varchar(36) not null
+        references tags
+            on delete cascade,
+    primary key (budget_id, tag_id)
 );
 
-
-CREATE TABLE budget_categories (
-    budget_id       CHAR(36) NOT NULL,
-    category_id      CHAR(36) NOT NULL,
-
-    -- clé unique
-    UNIQUE (budget_id, category_id),
-    -- Clés étrangères
-    FOREIGN KEY (budget_id) REFERENCES  budgets (id) ON DELETE CASCADE,
-    FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE
+create table transactions
+(
+    user_id        varchar(36)
+        references users
+            on delete cascade,
+    id             varchar(36) not null
+        primary key,
+    currency_id    varchar(36) not null
+        references commodities
+            on update cascade on delete cascade,
+    post_date      timestamp   not null,
+    effective_date timestamp   not null,
+    description    varchar(1024),
+    category_id    varchar(36) not null
 );
 
-CREATE TABLE budget_tags (
-    budget_id    CHAR(36) NOT NULL,
-    tag_id      CHAR(36) NOT NULL,
-    -- clé unique
-    UNIQUE (budget_id, tag_id),
-    -- clés étrangères
-    FOREIGN KEY (budget_id) REFERENCES budgets (id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
+create table asset_possession
+(
+    user_id    varchar(36) not null
+        references users
+            on delete cascade,
+    id         varchar(36) not null
+        primary key,
+    asset_id   varchar(36) not null
+        references assets
+            on delete cascade,
+    account_id varchar(36) not null
+        references accounts
+            on update cascade on delete cascade,
+    quantity   integer     not null
+        constraint asset_possession_quantity_check
+            check ((quantity <= 1000000000) AND (quantity >= 0)),
+    created_at timestamp
 );
 
+create table budget_accounts
+(
+    budget_id  varchar(36) not null
+        references budgets
+            on delete cascade,
+    account_id varchar(36) not null
+        references accounts
+            on delete cascade,
+    primary key (budget_id, account_id)
+);
 
--- Triggers
+create table splits
+(
+    id         varchar(36) not null
+        primary key,
+    tx_id      varchar(36) not null
+        references transactions
+            on update cascade on delete cascade,
+    quantity   numeric     not null,
+    account_id varchar(36) not null
+        references accounts
+            on update cascade on delete cascade
+);
 
--- Auto update budget spent
+create table subscriptions
+(
+    user_id     varchar(36) not null
+        references users
+            on delete cascade,
+    id          varchar(36) not null
+        primary key,
+    name        varchar(64) not null,
+    recurrence  smallint    not null,
+    amount      numeric     not null,
+    account_id  varchar(36) not null
+        references accounts
+            on update cascade on delete cascade,
+    category_id varchar(36) not null
+        references categories
+            on update cascade on delete cascade,
+    created_at  timestamp,
+    unique (user_id, name)
+);
 
-CREATE OR REPLACE FUNCTION update_budget_spent()
-RETURNS TRIGGER AS $$
+create table tags_on_split
+(
+    split_id varchar(36) not null
+        references splits
+            on delete cascade,
+    tag_id   varchar(36) not null
+        references tags
+            on delete cascade,
+    primary key (split_id, tag_id)
+);
+
+create function check_category_id() returns trigger
+    language plpgsql
+as
+$$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.category_id AND user_id = NEW.user_id) THEN
+        RAISE EXCEPTION 'Invalid category_id % for user_id %', NEW.category_id, NEW.user_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+create trigger trg_check_category_id
+    before insert or update
+    on transactions
+    for each row
+execute procedure check_category_id();
+
+create function update_budget_spent() returns trigger
+    language plpgsql
+as
+$$
 DECLARE
     total_spent INT;
 BEGIN
@@ -287,59 +302,43 @@ BEGIN
     UPDATE budgets
     SET amount_spent = total_spent
     -- WHERE id = NEW.id;
-    WHERE id = NEW.budget_id; --ia
+    WHERE id = NEW.budget_id; -- ia
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
-CREATE TRIGGER trg_update_budget_spent
-AFTER INSERT OR UPDATE ON splits
-FOR EACH ROW
-EXECUTE FUNCTION update_budget_spent();
+create trigger trg_update_budget_spent
+    after insert or update
+    on splits
+    for each row
+execute procedure update_budget_spent();
 
-CREATE TRIGGER trg_log_budget_changes
-BEFORE UPDATE ON budgets
-FOR EACH ROW
-EXECUTE FUNCTION update_budget_spent();
-
--- Auto update fields updated_at
-
-CREATE OR REPLACE FUNCTION update_timestamp()
-RETURNS TRIGGER AS $$
+create function update_timestamp() returns trigger
+    language plpgsql
+as
+$$
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
-CREATE TRIGGER trg_update_timestamp_accounts
-BEFORE UPDATE ON accounts
-FOR EACH ROW
-EXECUTE FUNCTION update_timestamp();
+create trigger trg_update_timestamp_users
+    before update
+    on users
+    for each row
+execute procedure update_timestamp();
 
-CREATE TRIGGER trg_update_timestamp_budgets
-BEFORE UPDATE ON budgets
-FOR EACH ROW
-EXECUTE FUNCTION update_timestamp();
+create trigger trg_update_timestamp_budgets
+    before update
+    on budgets
+    for each row
+execute procedure update_timestamp();
 
-CREATE TRIGGER trg_update_timestamp_users
-BEFORE UPDATE ON users
-FOR EACH ROW
-EXECUTE FUNCTION update_timestamp();
+create trigger trg_update_timestamp_accounts
+    before update
+    on accounts
+    for each row
+execute procedure update_timestamp();
 
---ia
-CREATE OR REPLACE FUNCTION check_category_id()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.category_id AND user_id = NEW.user_id) THEN
-        RAISE EXCEPTION 'Invalid category_id % for user_id %', NEW.category_id, NEW.user_id;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_check_category_id
-BEFORE INSERT OR UPDATE ON transactions
-FOR EACH ROW
-EXECUTE FUNCTION check_category_id();

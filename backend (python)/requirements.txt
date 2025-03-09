@@ -2,3 +2,5 @@ Flask
 Flask-SQLAlchemy
 Flask-CORS
 python-dotenv
+psycopg2
+sqlalchemy

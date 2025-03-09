@@ -1,9 +1,9 @@
 import uuid
-from ..database import db
-from sqlalchemy import Column, String, DateTime, func, relationship, PrimaryKeyConstraint, ForeignKeyConstraint
+from .base import Base
+from sqlalchemy import Column, String, DateTime, func, PrimaryKeyConstraint, ForeignKeyConstraint
 
 
-class Users(db):
+class Users(Base):
     __tablename__ = 'users'
     __table_args__ = (
         PrimaryKeyConstraint('id'),

@@ -1,16 +1,16 @@
 import uuid
-from ..database import db
+from .base import Base
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship, Boolean, Numeric, PrimaryKeyConstraint, \
+from sqlalchemy import Column, String, Integer, DateTime, func, Boolean, Numeric, PrimaryKeyConstraint, \
     ForeignKeyConstraint, UniqueConstraint, CheckConstraint
 
 
-class Accounts(db):
+class Accounts(Base):
     __tablename__ = 'accounts'
     __table_args__ = (
-        PrimaryKeyConstraint('user_id', 'id'),
+        PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        ForeignKeyConstraint(['currency_id'],['commodities.id'],ondelete='CASCADE'),
+        ForeignKeyConstraint(['currency_id'], ['commodities.id'], ondelete='CASCADE'),
 
         UniqueConstraint('user_id', 'name'),
         UniqueConstraint('id'),

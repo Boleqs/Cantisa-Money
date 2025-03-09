@@ -1,14 +1,14 @@
 import uuid
-from ..database import db
+from .base import Base
 from datetime import datetime, timedelta
-from sqlalchemy import Column, String, Integer, DateTime, func, relationship, ForeignKeyConstraint, UniqueConstraint, \
+from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \
     PrimaryKeyConstraint, Numeric
 
 
-class Budgets(db):
+class Budgets(Base):
     __tablename__ = 'budgets'
     __table_args__ = (
-        PrimaryKeyConstraint('user_id', 'id'),
+        PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
 
     )
