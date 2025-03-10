@@ -34,6 +34,8 @@ from database.triggers.trg_update_timestamp_accounts import trg_update_timestamp
 from database.triggers.trg_update_timestamp_budgets import trg_update_timestamp_budgets
 from database.triggers.trg_update_timestamp_users import trg_update_timestamp_users
 
+# Import routes
+from routes.rt_users import UsersRoutes
 
 
 app = Flask(__name__)
@@ -41,10 +43,8 @@ CORS(app)  # Ajout de cette ligne pour permettre les requêtes CORS
 app.config.from_object(flask_config)
 DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
-
-# Import routes
-from routes.rt_users import rt_users
-app.register_blueprint(rt_users)
+# Routes declaration
+UsersRoutes(app, DB, Users)
 
 
 

@@ -5,6 +5,7 @@ from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, Chec
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 
+#TODO add total spent in tag
 
 class Tags(Base):
     __tablename__ = 'tags'

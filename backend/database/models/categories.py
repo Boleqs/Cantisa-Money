@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
 
-
+#TODO add total spent in category
 class Categories(Base):
     __tablename__ = 'categories'
     __table_args__ = (

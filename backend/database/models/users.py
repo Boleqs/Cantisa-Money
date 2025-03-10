@@ -3,7 +3,7 @@ from .base import Base
 from sqlalchemy import Column, String, DateTime, func, PrimaryKeyConstraint, ForeignKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID
 
-
+#TODO make username unique
 class Users(Base):
     __tablename__ = 'users'
     __table_args__ = (
