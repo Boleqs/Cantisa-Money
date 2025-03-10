@@ -7,6 +7,7 @@ class HttpCode:
     SERVER_ERROR = 500
 
 
+
 from database.config import db_url
 class Config:
     ### Global config

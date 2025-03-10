@@ -4,38 +4,17 @@ from flask_cors import CORS
 from config import Config as flask_config
 import hashlib
 
-# Import tables
-from database.models.base import Base
-from database.models.accounts import Accounts
-from database.models.asset_possession import AssetPossession
-from database.models.assets import Assets
-from database.models.budget_accounts import BudgetAccounts
-from database.models.budget_categories import BudgetCategories
-from database.models.budget_tags import BudgetTags
-from database.models.budgets import Budgets
-from database.models.categories import Categories
-from database.models.commodities import Commodities
-from database.models.splits import Splits
-from database.models.subscriptions import Subscriptions
-from database.models.tags import Tags
-from database.models.tags_on_split import TagsOnSplits
-from database.models.transactions import Transactions
-from database.models.users import Users
+# Import tables models
+from database.models.import_models import *
 
 # import functions
-from database.functions.check_category_id import check_category_id
-from database.functions.update_budget_spent import update_budget_spent
-from database.functions.update_timestamp import update_timestamp
-
+from database.functions.import_functions import *
+# TODO imports using * or name by name ?
 # import triggers
-from database.triggers.trg_check_category_id import trg_check_category_id
-from database.triggers.trg_update_budget_spent import trg_update_budget_spent
-from database.triggers.trg_update_timestamp_accounts import trg_update_timestamp_accounts
-from database.triggers.trg_update_timestamp_budgets import trg_update_timestamp_budgets
-from database.triggers.trg_update_timestamp_users import trg_update_timestamp_users
+from database.triggers.import_triggers import *
 
 # Import routes
-from routes.rt_users import UsersRoutes
+from routes.import_routes import UsersRoutes
 
 
 app = Flask(__name__)
@@ -84,7 +63,8 @@ def init_db():
     DB.session.commit()
 
 with app.app_context():
-    init_db()
+    pass
+    #init_db()
 
 
 if __name__ == '__main__':
