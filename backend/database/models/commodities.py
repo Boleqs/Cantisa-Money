@@ -5,7 +5,7 @@ from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, Chec
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID
 
-
+#TODO add symbol field for commodities (ex: € or $)
 class Commodities(Base):
     __tablename__ = 'commodities'
     __table_args__ = (

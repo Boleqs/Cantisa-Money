@@ -59,70 +59,26 @@ def init_db():
     # add data for testing purpose
     user1 = Users(username='user_1', email='user.1@example.com', password_hash=hashlib.sha256(bytes('password1', encoding="utf8")).hexdigest())
     user2 = Users(username='user_2', email='user.2@example.com', password_hash=hashlib.sha256(bytes('password2', encoding="utf8")).hexdigest())
-    data_list = [user1, user2]
-    for data in data_list:
-        DB.session.add(data)
+    DB.session.add(user1)
+    DB.session.add(user2)
     DB.session.commit()
     user1_id = DB.session.query(Users).filter(Users.username == 'user_1').first().id
-    print(user1_id)
-
+    user2_id = DB.session.query(Users).filter(Users.username == 'user_2').first().id
+    user1_commodity = Commodities(user_id=user1_id, name='Euro', short_name='eu', description='La monnaie européenne')
+    user2_commodity = Commodities(user_id=user2_id, name='Euro', short_name='eu', description='La monnaie européenne')
+    DB.session.add(user1_commodity)
+    DB.session.add(user2_commodity)
+    DB.session.commit()
+    user1_commodity_id = DB.session.query(Commodities).filter(Commodities.user_id == user1_id).first().id
+    user2_commodity_id = DB.session.query(Commodities).filter(Commodities.user_id == user2_id).first().id
+    user1_account = Accounts(user_id=user1_id, name='user1_account', currency_id=user1_commodity_id, description='User 1 main account')
+    user2_account = Accounts(user_id=user2_id, name='user2_account', currency_id=user2_commodity_id, description='User 2 main account', code='04356')
+    DB.session.add(user1_account)
+    DB.session.add(user2_account)
+    DB.session.commit()
 
 with app.app_context():
     init_db()
-
-
-
-
-@app.route('/api/virements', methods=['GET'])
-def get_virements():
-    virements = Virement.query.all()
-    return jsonify([{'id': virement.id, 'type': virement.type, 'date_prod': virement.date_prod, 'montant': virement.montant, 'description': virement.description} for virement in virements])
-
-@app.route('/api/virements/<id>', methods=['DELETE'])
-def delete_virement(id):
-    virement = Virement.query.get(id)
-    if virement:
-        db.session.delete(virement)
-        db.session.commit()
-        return jsonify({'message': 'Virement deteted successfully'}), 200
-    else:
-        return jsonify({'message': 'Virement not found'}), 404
-
-@app.route('/api/virements/<id>', methods=['PUT'])
-def modify_virement(id):
-    virement = Virement.query.get(id)
-    if virement:
-        id = request.json.get('id', virement.id)
-        virement.id = id
-        type = request.json.get('type', virement.type)
-        virement.type = type
-        date_prod = request.json.get('date_prod', virement.date_prod)
-        virement.date_prod = date_prod
-        montant = request.json.get('montant', virement.montant)
-        virement.montant = montant
-        description = request.json.get('description', virement.description)
-        virement.description = description
-        db.session.commit()
-        return jsonify({'message': 'Virement modified successfully'}), 200
-    else:
-        return jsonify({'message': 'Virement not found'}), 404
-
-@app.route('/api/virements', methods=['POST'])
-def add_virement():
-    type = request.json.get('type')
-    date_prod = request.json.get('date_prod')
-    montant = request.json.get('montant')
-    description = request.json.get('description')
-    virement = Virement(type=type, date_prod=date_prod, montant=montant, description=description)
-    db.session.add(virement)
-    db.session.commit()
-    return jsonify({
-        'id': virement.id,
-        'type': virement.type,
-        'date_prod': virement.date_prod,
-        'montant': virement.montant,
-        'description': virement.description
-    }), 201
 
 
 if __name__ == '__main__':
