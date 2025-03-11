@@ -7,9 +7,14 @@ class HttpCode:
     SERVER_ERROR = 500
 
 
+VAR_DEBUG = False
+VAR_API_SERVER_ROOT_PATH = '/api'
+VAR_API_USER_ROOT_PATH = '/api/<uuid:user_id>'
+
+
 
 from database.config import db_url
-class Config:
+class FlaskConfig:
     ### Global config
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     ### Database config

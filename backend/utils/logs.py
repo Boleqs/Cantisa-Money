@@ -1,3 +1,6 @@
+from datetime import datetime
+import os
+
 #TODO : a rework, ancienne fonction à moi (mal écrite)
 def log(message: str, big=False, separator=False, dated=False):
 

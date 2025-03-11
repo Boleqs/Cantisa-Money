@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from config import Config as flask_config
+from config import FlaskConfig as flask_config
 import hashlib
 
 # Import tables models
