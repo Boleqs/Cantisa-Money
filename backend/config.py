@@ -1,4 +1,6 @@
 # Aggregation of all configs for Flask App
+from datetime import datetime
+from version import APP_VERSION
 class HttpCode:
     OK = 200
     CREATED = 201
@@ -6,11 +8,15 @@ class HttpCode:
     METHOD_NOT_ALLOWED = 405
     SERVER_ERROR = 500
 
+class JsonResponseType:
+    SUCCESS = 'success'
+    FAILURE = 'failure'
+    VALUES = [SUCCESS, FAILURE]
+
 
 VAR_DEBUG = False
 VAR_API_SERVER_ROOT_PATH = '/api'
 VAR_API_USER_ROOT_PATH = '/api/<uuid:user_id>'
-
 
 
 from database.config import db_url

@@ -1,15 +1,17 @@
-from flask import jsonify, Blueprint
+from flask import jsonify, request
 from backend.config import (HttpCode,
+                            JsonResponseType,
                             VAR_API_SERVER_ROOT_PATH as SERVER_ROOT_PATH,
                             VAR_API_USER_ROOT_PATH as USER_ROOT_PATH)
 from backend.utils.exceptions import RoutesException
+from backend.utils.api_responses import json_response
 
 
 def as_dict(user) -> dict:
-    return {'data' : {'id': user.id,
+    return {'fields' : {'id': user.id,
                         'username': user.username,
                         'email': user.email},
-            'metadata': {'created_at': user.created_at,
+            'infos': {'created_at': user.created_at,
                          'updated_at': user.updated_at}}
 
 class UsersRoutes:
@@ -24,10 +26,10 @@ class UsersRoutes:
         def get_user_by_id(user_id):
             try:
                 user = DB.session.query(Users).filter(Users.id == user_id).first()
-                if user: return jsonify(as_dict(user)), HttpCode.OK
-                else: raise RoutesException.NoUser
-            except RoutesException.NoUser as error:
-                return jsonify(error), HttpCode.SERVER_ERROR
+                if user: return json_response(as_dict(user), JsonResponseType.SUCCESS), HttpCode.OK
+                else: raise RoutesException
+            except RoutesException as error:
+                return json_response(str(error), JsonResponseType.FAILURE), HttpCode.SERVER_ERROR
 
         @app.route(ROUTE_PATH, methods=['POST'])
         def post_users(user_id):
