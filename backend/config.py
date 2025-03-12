@@ -25,4 +25,5 @@ class FlaskConfig:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     ### Database config
     SQLALCHEMY_DATABASE_URI = db_url
+    SECRET_KEY = 'SuperSecureSecretKey'
 

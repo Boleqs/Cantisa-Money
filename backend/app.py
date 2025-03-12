@@ -14,7 +14,7 @@ from database.functions.import_functions import *
 from database.triggers.import_triggers import *
 
 # Import routes
-from routes.import_routes import UsersRoutes
+from routes.import_routes import *
 
 
 app = Flask(__name__)
@@ -24,6 +24,8 @@ DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
 # Routes declaration
 UsersRoutes(app, DB, Users)
+CommoditiesRoutes(app, DB, Commodities)
+AuthRoutes(app, DB, Users)
 
 
 
@@ -50,8 +52,10 @@ def init_db():
     user1_id = DB.session.query(Users).filter(Users.username == 'user_1').first().id
     user2_id = DB.session.query(Users).filter(Users.username == 'user_2').first().id
     user1_commodity = Commodities(user_id=user1_id, name='Euro', short_name='eu', description='La monnaie européenne')
+    user1_commodity2 = Commodities(user_id=user1_id, name='Dollar', short_name='USD', description='La monnaie américaine')
     user2_commodity = Commodities(user_id=user2_id, name='Euro', short_name='eu', description='La monnaie européenne')
     DB.session.add(user1_commodity)
+    DB.session.add(user1_commodity2)
     DB.session.add(user2_commodity)
     DB.session.commit()
     user1_commodity_id = DB.session.query(Commodities).filter(Commodities.user_id == user1_id).first().id
@@ -63,8 +67,8 @@ def init_db():
     DB.session.commit()
 
 with app.app_context():
-    pass
     #init_db()
+    pass
 
 
 if __name__ == '__main__':

@@ -4,3 +4,4 @@ Flask-CORS
 python-dotenv
 psycopg2
 sqlalchemy
+pyjwt
