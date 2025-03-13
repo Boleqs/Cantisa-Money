@@ -1,6 +1,7 @@
 Flask
 Flask-SQLAlchemy
 Flask-CORS
+flask-jwt-extended
 python-dotenv
 psycopg2
 sqlalchemy

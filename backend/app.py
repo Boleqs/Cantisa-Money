@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request
+from flask_jwt_extended import JWTManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from config import FlaskConfig as flask_config
@@ -22,9 +23,10 @@ CORS(app)  # Ajout de cette ligne pour permettre les requêtes CORS
 app.config.from_object(flask_config)
 DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
+jwt = JWTManager(app)
 # Routes declaration
 UsersRoutes(app, DB, Users)
-CommoditiesRoutes(app, DB, Commodities)
+CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
 
 
