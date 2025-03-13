@@ -23,7 +23,7 @@ CORS(app)  # Ajout de cette ligne pour permettre les requêtes CORS
 app.config.from_object(flask_config)
 DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
-jwt = JWTManager(app)
+JWTManager(app)
 # Routes declaration
 UsersRoutes(app, DB, Users)
 CommoditiesRoutes(app, DB, Users, Commodities)

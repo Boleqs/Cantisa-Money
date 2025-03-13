@@ -28,12 +28,11 @@ def auth_required(f):
 
 
 
-def check_user_resource(model, resource_id_field="id"):
+def is_user_resource(model, resource_id_field="id"):
     """
-    Décorateur pour s'assurer que l'utilisateur ne peut accéder qu'à ses propres ressources.
-
-    :param model: Modèle SQLAlchemy (ex: Commodity, Account)
-    :param resource_id_field: Champ utilisé pour l'ID (par défaut: "id")
+    Use to make sure the user accesses to only its own resources
+    :param model: SQLAlchemy Model(ex: Commodities, Accounts)
+    :param resource_id_field: id field (par défaut: "id")
     """
     def decorator(f):
         @wraps(f)

@@ -3,7 +3,7 @@ from backend.config import (HttpCode,
                             JsonResponseType,
                             VAR_API_SERVER_ROOT_PATH as SERVER_ROOT_PATH,
                             VAR_API_USER_ROOT_PATH as USER_ROOT_PATH)
-from backend.utils.auth_token_checker import check_user_access, check_user_resource
+from backend.utils.auth_token_checker import is_user_resource
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
 
@@ -33,10 +33,10 @@ class CommoditiesRoutes:
                 return json_response(str(error), JsonResponseType.FAILURE), HttpCode.SERVER_ERROR
 
         @app.route(f"{ROUTE_PATH}/<uuid:id>", methods=['GET'])
-        @check_user_resource(Commodities)
-        def get_commodity_by_id(user_id, commodity_id):
+        @is_user_resource(Commodities)
+        def get_commodity_by_id(user_id, id):
             try:
-                commodity = DB.session.query(Commodities).filter(Commodities.id == commodity_id).first()
+                commodity = DB.session.query(Commodities).filter(Commodities.id == id).first()
                 if commodity:
                     return json_response(as_dict(commodity), JsonResponseType.SUCCESS), HttpCode.OK
                 else:

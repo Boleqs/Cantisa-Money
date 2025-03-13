@@ -3,6 +3,8 @@ import hashlib
 
 from flask import jsonify, request, make_response
 import jwt
+from flask_jwt_extended import jwt_required
+
 from backend.config import (HttpCode,
                             JsonResponseType,
                             VAR_API_SERVER_ROOT_PATH as SERVER_ROOT_PATH,
@@ -11,7 +13,7 @@ from backend.config import (HttpCode,
                             )
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
-from backend.utils.auth_token_checker import auth_required, check_user_access
+from backend.utils.auth_token_checker import auth_required
 
 
 
@@ -25,8 +27,10 @@ class AuthRoutes:
             user_proposed_hash = hashlib.sha256(bytes(auth.password, encoding="utf8")).hexdigest()
             user_hash_from_db = DB.session.query(Users).filter(Users.username == auth.username).first().password_hash
             if auth and (user_proposed_hash == user_hash_from_db):
+                user_id = DB.session.query(Users).filter(Users.username == auth.username).first().id
                 token = jwt.encode({'user': auth.username,
-                                    'exp': int(datetime.datetime.now().timestamp()) + JWT_TOKEN_LIFETIME},
+                                    'exp': int(datetime.datetime.now().timestamp()) + JWT_TOKEN_LIFETIME,
+                                    'sub': str(user_id)},
                                     app.config['SECRET_KEY'])
                 return json_response(f"TOKEN : {token}", JsonResponseType.SUCCESS), 200
             return json_response('Login or password incorrect !', JsonResponseType.FAILURE), 401
