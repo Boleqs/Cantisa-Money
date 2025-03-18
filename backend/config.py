@@ -31,3 +31,5 @@ class FlaskConfig:
     JWT_HEADER_NAME = 'Authorization'
     JWT_HEADER_TYPE = 'Bearer'
     JWT_IDENTITY_CLAIM = 'sub'
+
+
