@@ -6,7 +6,7 @@ import { collapsed } from './state';
 export default {
     props: {
         to: { type: String, required: true },
-        icon: { type: String, required: true }
+        iconUrl: { type: String, required: true }
     },
     setup(props) {
         const route = useRoute()
@@ -18,7 +18,7 @@ export default {
 
 <template>
     <router-link :to="to" class="link" :class="{ active: isActive}">
-        <i class="icon" :class="icon" />
+        <img class="icon" :src="iconUrl" alt="icon" />
         <transition name="fade">
             <span v-if="!collapsed">
                 <slot />
@@ -57,10 +57,13 @@ export default {
 
 .link:hover {
     background-color: var(--sidebar-item-hover);
+    padding: 1em;
 }
 
 .link.active {
     background-color: var(--sidebar-item-active);
+    padding: 1em;
+
 }
 
 .link .icon {
