@@ -10,11 +10,14 @@ export default {
 </script>
 <template>
   <Sidebar />
-  <div :style="{ 'margin-left': sidebarWidth }">
+  <div class="smooch" :style="{ 'margin-left': sidebarWidth }">
     <router-view />
   </div>
 </template>
 
 <style>
+.smooch {
+  transition: margin-left 0.5s;
+}
 
 </style>

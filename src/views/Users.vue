@@ -1,18 +1,39 @@
 <template>
-    <h1>The sidebar is {{ collapsed ? 'closed' : 'open' }}</h1>
-    <button @click="toggleSidebar">Toggle sidebar</button>
+  <div class="bandeau">
+    <Title class="title" title="Users" />
+    <h1 class="menu">Panneau de configuration</h1>
+  </div>
 </template>
 
 <script>
-import { collapsed, toggleSidebar } from '@/components/sidebar/state'
+import Title from './Title.vue';
 
 export default {
-  setup() {
-    return { collapsed, toggleSidebar }
+  components: {
+    Title
   }
 }
 </script>
 
 <style>
-
+.bandeau {
+  left: 0;
+  top: 0;
+  width: 100%;
+  background-color: #1a4396;
+  display: flex;
+  align-items: center;
+  padding: 0 0px;
+  color: white;  
+}
+.title {
+  width: 15%;
+  padding: 10px;
+  background-color: lightblue;
+}
+.menu {
+  width: 85%;
+  padding: 10px;
+  background-color: grey;
+}
 </style>

@@ -6,19 +6,21 @@ import { collapsed } from './state';
 export default {
     props: {
         to: { type: String, required: true },
-        iconUrl: { type: String, required: true }
+        iconFile: { type: String, required: true }
     },
     setup(props) {
-        const route = useRoute()
-        const isActive = computed(() => route.path === props.to)
-        return { isActive, collapsed }
+        const route = useRoute();
+        const isActive = computed(() => route.path === props.to);
+        const iconSrc = computed(() => new URL(`../icons/${props.iconFile}`, import.meta.url).href);
+
+        return { isActive, collapsed, iconSrc };
     }
 }
 </script>
 
 <template>
     <router-link :to="to" class="link" :class="{ active: isActive}">
-        <img class="icon" :src="iconUrl" alt="icon" />
+        <img class="icon" :src="iconSrc" alt="icon" />
         <transition name="fade">
             <span v-if="!collapsed">
                 <slot />
@@ -53,6 +55,8 @@ export default {
 
     color: white;
     text-decoration: none;
+    transition: 0.4s ease;
+
 }
 
 .link:hover {
@@ -63,7 +67,6 @@ export default {
 .link.active {
     background-color: var(--sidebar-item-active);
     padding: 1em;
-
 }
 
 .link .icon {

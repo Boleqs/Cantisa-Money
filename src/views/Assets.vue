@@ -1,14 +1,13 @@
 <template>
-    <h1>The sidebar is {{ collapsed ? 'closed' : 'open' }}</h1>
-    <button @click="toggleSidebar">Toggle sidebar</button>
+  <Title title="Assets" />
 </template>
 
 <script>
-import { collapsed, toggleSidebar } from '@/components/sidebar/state'
+import Title from './Title.vue';
 
 export default {
-  setup() {
-    return { collapsed, toggleSidebar }
+  components: {
+    Title
   }
 }
 </script>
