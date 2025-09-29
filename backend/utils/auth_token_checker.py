@@ -3,7 +3,7 @@ from functools import wraps
 from flask import request
 import jwt
 from backend.utils.api_responses import JsonResponseType, json_response
-from backend.config import FlaskConfig
+from backend.config import FlaskConfig, HttpCode
 from backend.utils.exceptions import AuthException
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
@@ -17,12 +17,11 @@ def auth_required(f):
     def decorated(*args, **kwargs):
         auth = request.authorization
         if not auth.token:
-            return json_response({'error': 'User is not authenticated.'}, JsonResponseType.FAILURE), 403
+            return json_response({'error': 'User is not authenticated.'}, JsonResponseType.FAILURE), HttpCode.FORBIDDEN
         try:
             token = jwt.decode(auth.token, FlaskConfig.SECRET_KEY, algorithms="HS256")
-            print(token)
         except Exception as error:
-            return json_response({'error': 'token is invalid/expired', 'message': str(error)}, JsonResponseType.FAILURE), 403
+            return json_response({'error': 'token is invalid/expired', 'message': str(error)}, JsonResponseType.FAILURE), HttpCode.FORBIDDEN
         return f(*args, **kwargs)
     return decorated
 
@@ -43,7 +42,7 @@ def is_user_resource(model, resource_id_field="id"):
             resource = model.query.filter_by(id=resource_id, user_id=user_id).first()
             if not resource:
                 return (json_response({"message": "Resource not found or unauthorized"},
-                                      JsonResponseType.FAILURE), 404)
+                                      JsonResponseType.FAILURE), HttpCode.FORBIDDEN)
             return f(*args, **kwargs)
         return wrapper
     return decorator
