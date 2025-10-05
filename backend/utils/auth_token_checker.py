@@ -26,7 +26,6 @@ def auth_required(f):
     return decorated
 
 
-
 def is_user_resource(model, resource_id_field="id"):
     """
     Use to make sure the user accesses to only its own resources

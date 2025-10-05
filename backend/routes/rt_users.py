@@ -8,7 +8,7 @@ from backend.utils.api_responses import json_response
 
 
 def as_dict(user) -> dict:
-    return {'fields' : {'id': user.id,
+    return {'fields': {'id': user.id,
                         'username': user.username,
                         'email': user.email},
             'infos': {'created_at': user.created_at,

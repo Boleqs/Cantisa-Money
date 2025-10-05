@@ -32,8 +32,8 @@ class AuthRoutes:
                                     'exp': int(datetime.datetime.now().timestamp()) + JWT_TOKEN_LIFETIME,
                                     'sub': str(user_id)},
                                     app.config['SECRET_KEY'])
-                return json_response(f"TOKEN : {token}", JsonResponseType.SUCCESS), 200
-            return json_response('Login or password incorrect !', JsonResponseType.FAILURE), 401
+                return json_response(f"TOKEN : {token}", JsonResponseType.SUCCESS), HttpCode.OK
+            return json_response('Login or password incorrect !', JsonResponseType.FAILURE), HttpCode.CREATED
 
         @app.route(f"{ROUTE_PATH}/check_token/<uuid:user_id>", methods=['GET'])
         @auth_required
