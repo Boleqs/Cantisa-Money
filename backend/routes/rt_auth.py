@@ -7,9 +7,8 @@ from flask_jwt_extended import jwt_required
 
 from backend.config import (HttpCode,
                             JsonResponseType,
-                            VAR_API_SERVER_ROOT_PATH as SERVER_ROOT_PATH,
-                            VAR_API_USER_ROOT_PATH as USER_ROOT_PATH,
-                            VAR_API_JWT_TOKEN_LIFETIME_IN_SECONDS as JWT_TOKEN_LIFETIME
+                            VAR_API_ROOT_PATH as ROOT_PATH,
+                            VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS as JWT_TOKEN_LIFETIME
                             )
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
@@ -19,7 +18,7 @@ from backend.utils.auth_token_checker import auth_required
 
 class AuthRoutes:
     def __init__(self, app, DB, Users):
-        ROUTE_PATH = f"{SERVER_ROOT_PATH}/auth"
+        ROUTE_PATH = f"{ROOT_PATH}/auth"
 
         @app.route(f"{ROUTE_PATH}/login", methods=['GET'])
         def login():
@@ -35,7 +34,8 @@ class AuthRoutes:
                 return json_response(f"TOKEN : {token}", JsonResponseType.SUCCESS), HttpCode.OK
             return json_response('Login or password incorrect !', JsonResponseType.FAILURE), HttpCode.CREATED
 
-        @app.route(f"{ROUTE_PATH}/check_token/<uuid:user_id>", methods=['GET'])
+        @app.route(f"{ROUTE_PATH}/check_token", methods=['GET'])
         @auth_required
-        def check_token(user_id):
+        def check_token():
+            user_id = request.args.get('user_id')
             return 'OK IS OK OK OUAIS'

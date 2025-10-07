@@ -3,6 +3,7 @@ from backend.version import APP_VERSION
 from datetime import datetime
 from flask import jsonify
 
+
 def json_response(response_data: dict|str|list[dict], response_type: str):
     if response_type not in JsonResponseType.VALUES:
         raise ValueError('Invalid response type')

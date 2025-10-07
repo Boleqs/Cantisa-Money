@@ -29,7 +29,19 @@ UsersRoutes(app, DB, Users)
 CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
 
-
+def reset_db():
+    # drop all for testing purpose
+    DB.drop_all()
+    DB.event.listen(Base.metadata, 'before_create', check_category_id)
+    DB.event.listen(Base.metadata, 'before_create', update_budget_spent)
+    DB.event.listen(Base.metadata, 'before_create', update_timestamp)
+    # Triggers
+    DB.event.listen(Transactions.metadata, 'after_create', trg_check_category_id)
+    DB.event.listen(Splits.metadata, 'after_create', trg_update_budget_spent)
+    DB.event.listen(Accounts.metadata, 'after_create', trg_update_timestamp_accounts)
+    DB.event.listen(Budgets.metadata, 'after_create', trg_update_timestamp_budgets)
+    DB.event.listen(Users.metadata, 'after_create', trg_update_timestamp_users)
+    DB.create_all()
 
 def init_db():
     # drop all for testing purpose
@@ -70,6 +82,7 @@ def init_db():
 
 with app.app_context():
     #init_db()
+    reset_db()
     pass
 
 
