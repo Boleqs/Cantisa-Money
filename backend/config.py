@@ -1,5 +1,5 @@
 # Aggregation of all configs for Flask App
-from datetime import datetime
+from datetime import datetime, timedelta
 from version import APP_VERSION
 class HttpCode:
     OK = 200
@@ -16,7 +16,7 @@ class JsonResponseType:
 
 
 #TODO: GET VAR_LOG_FILES PATHS FROM ENV VAR
-VAR_LOG_FILES = {'debug': r'C:\Users\Loris\Downloads'}
+VAR_LOG_FILES = {'debug': r'C:\Users\Loris\Downloads\debug.txt'}
 # USED TO DISPLAY DEV INTENDED DEBUG MESSAGES
 VAR_DEBUG_DEV = False
 # USED TO DISPLAY USER INTENDED DEBUG MESSAGES | In {'INFO' : 0,'WARN' : 1,'ERROR' : 2,'CRITICAL' : 3}
@@ -24,7 +24,7 @@ VAR_DEBUG_DEV = False
 VAR_LOG_LEVEL = 3
 VAR_API_ROOT_PATH = '/api'
 VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS = 3600
-VAR_API_JWT_REFRESH_TOKEN_LIFETIME_IN_SECONDS = 3600
+VAR_API_JWT_REFRESH_TOKEN_LIFETIME_IN_SECONDS = 86400
 
 
 from database.config import db_url
@@ -35,9 +35,9 @@ class FlaskConfig:
     SQLALCHEMY_DATABASE_URI = db_url
     #TODO : Get SECRET_KEY from env var
     SECRET_KEY = 'SuperSecureSecretKey'
-    JWT_TOKEN_LOCATION = 'headers'
-    JWT_HEADER_NAME = 'Authorization'
-    JWT_HEADER_TYPE = 'Bearer'
-    JWT_IDENTITY_CLAIM = 'sub'
+    JWT_TOKEN_LOCATION = 'cookies'
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(seconds=VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS)
+    JWT_COOKIE_SECURE = False
+
 
 

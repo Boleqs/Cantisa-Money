@@ -5,6 +5,7 @@ from flask_cors import CORS
 from config import FlaskConfig as flask_config
 import hashlib
 
+
 # Import tables models
 from database.models.import_models import *
 
