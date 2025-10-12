@@ -16,9 +16,6 @@ from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
 from backend.utils.auth_token_checker import auth_required
 
-from backend.functions.f_users import check_user_password, check_user_exist
-
-
 
 class AuthRoutes:
     def __init__(self, app, DB, Users):
@@ -39,13 +36,17 @@ class AuthRoutes:
 
         @app.route(f"{ROUTE_PATH}/login", methods=["POST"])
         def login():
-            user_name = request.args.get("user_name")
-            if check_user_exist(Users, user_name) and check_user_password(Users, user_name, request.args.get("password_hash")):
-                response = jsonify("login successful")
-                set_access_cookies(response, create_access_token(identity=user_name, fresh=True))
-                set_refresh_cookies(response, create_refresh_token(identity=user_name))
-                return response, HttpCode.OK
-            return json_response("login error : Bad login or password", HttpCode.NOT_FOUND)
+            try:
+                user_name = request.args.get("user_name")
+                user = Users.query.filter(Users.username == request.args.get("user_name")).first()
+                if user.check_password(request.args.get("password_hash")):
+                    response = jsonify("login successful")
+                    set_access_cookies(response, create_access_token(identity=user_name, fresh=True))
+                    set_refresh_cookies(response, create_refresh_token(identity=user_name))
+                    return response, HttpCode.OK
+                raise
+            except AttributeError:
+                return json_response("login error : Bad login or password", HttpCode.NOT_FOUND)
 
 
         @app.route(f"{ROUTE_PATH}/logout", methods=["POST"])
@@ -57,5 +58,4 @@ class AuthRoutes:
 
         @app.route(f"{ROUTE_PATH}/test", methods=["POST"])
         def test():
-            print(check_user_password(Users, request.args.get('username'), request.args.get('password_hash')))
             return json_response("ok", HttpCode.OK)

@@ -1,14 +1,15 @@
 import hashlib
+import os
 
 from flask import jsonify, request
 from flask_jwt_extended import jwt_required
 from backend.config import (HttpCode,
                             JsonResponseType,
-                            VAR_API_ROOT_PATH as ROOT_PATH)
+                            VAR_API_ROOT_PATH as ROOT_PATH,
+                            VAR_PWD_PEPPER)
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
-
-from backend.functions.f_users import check_user_exist, check_user_password
+from backend.utils.hash_password import hash_password
 
 
 def as_dict(user) -> dict:
@@ -35,10 +36,14 @@ class UsersRoutes:
         @app.route(ROUTE_PATH, methods=['POST'])
         def add_user():
             try:
-                if check_user_exist(Users, request.args.get('user_name')):
+                if Users.query.filter(Users.username == request.args.get("user_name")).first():
                     return json_response("Username already exists", HttpCode.FORBIDDEN)
+                salt = str(os.urandom(32))
                 new_user = Users(username=request.args.get('user_name'), email=request.args.get('email'),
-                                 password_hash=hashlib.sha256(bytes(request.args.get('password_hash'), encoding="utf8")).hexdigest())
+                                 password_hash=hash_password(request.args.get('password_hash'),
+                                                             salt,
+                                                             VAR_PWD_PEPPER),
+                                 salt=salt)
                 DB.session.add(new_user)
                 DB.session.commit()
             except Exception as error:
@@ -55,4 +60,3 @@ class UsersRoutes:
             except Exception as error:
                 return json_response(str(error), HttpCode.SERVER_ERROR)
             return json_response('User has been deleted from the database.', HttpCode.OK)
-
