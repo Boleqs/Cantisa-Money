@@ -12,3 +12,5 @@ class Permissions(Base):
 
     id = Column(UUID(as_uuid=True), default=uuid.uuid4)
     name = Column(String(50), unique=True, index=True, nullable=False)
+    description = Column(String(250))
+

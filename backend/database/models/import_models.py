@@ -14,3 +14,7 @@ from .tags import Tags
 from .tags_on_split import TagsOnSplits
 from .transactions import Transactions
 from .users import Users
+from .roles import Roles
+from .permissions import Permissions
+from .user_roles import UserRoles
+from .role_permissions import RolePermissions

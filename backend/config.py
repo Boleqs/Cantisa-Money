@@ -1,6 +1,9 @@
 # Aggregation of all configs for Flask App
+import uuid
 from datetime import datetime, timedelta
 from version import APP_VERSION
+
+
 class HttpCode:
     OK = 200
     CREATED = 201
@@ -9,12 +12,17 @@ class HttpCode:
     METHOD_NOT_ALLOWED = 405
     SERVER_ERROR = 500
 
+
 class JsonResponseType:
     SUCCESS = 'success'
     FAILURE = 'failure'
     VALUES = [SUCCESS, FAILURE]
 
 
+VAR_PERMISSIONS_LIST = {'Delete users': {'id': uuid.UUID('00000000-cafe-4c9d-8ab3-b35d0bd54397'),
+                                         'description': 'Allow to delete any user'},
+
+                        }
 #TODO: GET VAR_LOG_FILES PATHS FROM ENV VAR
 VAR_LOG_FILES = {'debug': r'C:\Users\Loris\Downloads\debug.txt'}
 # USED TO DISPLAY DEV INTENDED DEBUG MESSAGES
@@ -39,6 +47,7 @@ class FlaskConfig:
     SECRET_KEY = 'SuperSecureSecretKey'
     JWT_TOKEN_LOCATION = 'cookies'
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(seconds=VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS)
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(seconds=VAR_API_JWT_REFRESH_TOKEN_LIFETIME_IN_SECONDS)
     JWT_COOKIE_SECURE = False
 
 

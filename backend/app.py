@@ -2,8 +2,8 @@ from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from config import FlaskConfig as flask_config
-import hashlib
+from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST
+import uuid
 
 
 # Import tables models
@@ -26,9 +26,9 @@ DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
 JWTManager(app)
 # Routes declaration
-UsersRoutes(app, DB, Users)
+UsersRoutes(app, DB, Users, UserRoles)
 CommoditiesRoutes(app, DB, Users, Commodities)
-AuthRoutes(app, DB, Users)
+AuthRoutes(app, DB, Users, Roles)
 
 def reset_db():
     # drop all for testing purpose
@@ -59,8 +59,8 @@ def init_db():
     DB.create_all()
 
     # add data for testing purpose
-    user1 = Users(username='user_1', email='user.1@example.com', password_hash=hashlib.sha256(bytes('password1', encoding="utf8")).hexdigest())
-    user2 = Users(username='user_2', email='user.2@example.com', password_hash=hashlib.sha256(bytes('password2', encoding="utf8")).hexdigest())
+    user1 = Users(username='user_1', email='user.1@example.com', password_hash='test', salt=b'test')
+    user2 = Users(username='user_2', email='user.2@example.com', password_hash='test', salt=b'test')
     DB.session.add(user1)
     DB.session.add(user2)
     DB.session.commit()
@@ -81,12 +81,44 @@ def init_db():
     DB.session.add(user2_account)
     DB.session.commit()
 
+
+def insert_permissions():
+    for VAR_PERMISSION in VAR_PERMISSIONS_LIST:
+        DB.session.add(Permissions(id=VAR_PERMISSIONS_LIST[VAR_PERMISSION]['id'],
+                                   name=VAR_PERMISSION,
+                                   description=VAR_PERMISSIONS_LIST[VAR_PERMISSION]['description']))
+    DB.session.commit()
+
+
+def insert_roles():
+    roles = [
+        Roles(id=uuid.UUID("00000000-cafe-4bca-82bb-a0cec8e5a6ba"), name="Global administrator", description="Default admin role with all rights"),
+        Roles(id=uuid.UUID("00000000-cafe-46fe-9a04-a03b4c253f1f"), name="Standard user", description="Default user role with only rights on its own data")
+    ]
+    for role in roles:
+        DB.session.add(role)
+    DB.session.commit()
+
+
+def assign_permissions_to_roles():
+    role_permissions = {
+        Roles.query.filter(Roles.name == "Global administrator").first().id:
+            Permissions.query.filter(Permissions.name == "Delete users").first().id,
+
+    }
+    for role_id in role_permissions.keys():
+        DB.session.add(RolePermissions(role_id=role_id, permission_id=role_permissions[role_id]))
+    DB.session.commit()
+
 with app.app_context():
     #init_db()
     reset_db()
+    insert_permissions()
+    insert_roles()
+    assign_permissions_to_roles()
     pass
 
-
+uuid.uuid4()
 if __name__ == '__main__':
     app.run(debug=True)
 

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 import hashlib
 
@@ -18,7 +19,7 @@ from backend.utils.auth_token_checker import auth_required
 
 
 class AuthRoutes:
-    def __init__(self, app, DB, Users):
+    def __init__(self, app, DB, Users, Roles):
         ROUTE_PATH = f"{ROOT_PATH}/auth"
 
         @app.route(f"{ROUTE_PATH}/refresh", methods=["POST"])
@@ -38,16 +39,19 @@ class AuthRoutes:
         def login():
             try:
                 user_name = request.args.get("user_name")
-                user = Users.query.filter(Users.username == request.args.get("user_name")).first()
-                if user.check_password(request.args.get("password_hash")):
+                user = Users.query.filter(Users.username == user_name).first()
+                if user.check_password(request.args.get("password")):
                     response = jsonify("login successful")
-                    set_access_cookies(response, create_access_token(identity=user_name, fresh=True))
-                    set_refresh_cookies(response, create_refresh_token(identity=user_name))
+                    set_access_cookies(response, create_access_token(identity=user.id, fresh=True))
+                    set_refresh_cookies(response, create_refresh_token(identity=user.id))
                     return response, HttpCode.OK
-                raise
-            except AttributeError:
+                #Bad password
                 return json_response("login error : Bad login or password", HttpCode.NOT_FOUND)
-
+            except AttributeError:
+                #Bad login
+                return json_response("login error : Bad login or password", HttpCode.NOT_FOUND)
+            except Exception as err:
+                return jsonify(err)
 
         @app.route(f"{ROUTE_PATH}/logout", methods=["POST"])
         @jwt_required()
@@ -57,5 +61,8 @@ class AuthRoutes:
             return response, HttpCode.OK
 
         @app.route(f"{ROUTE_PATH}/test", methods=["POST"])
+        @jwt_required()
         def test():
+            user = Users.query.filter(Users.username == get_jwt_identity()).first()
+            print()
             return json_response("ok", HttpCode.OK)
