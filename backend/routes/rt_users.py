@@ -30,15 +30,15 @@ class UsersRoutes:
     def __init__(self, app, DB, Users, UserRoles):
         ROUTE_PATH = f"{ROOT_PATH}/user"
 
-        @app.route(ROUTE_PATH, methods=['GET'])
-        def get_user_by_id():
-            try:
-                user_id = request.args.get('user_id')
-                user = DB.session.query(Users).filter(Users.id == user_id).first()
-                if user: return json_response(as_dict(user), JsonResponseType.SUCCESS), HttpCode.OK
-                else: raise RoutesException
-            except RoutesException as error:
-                return json_response(str(error), HttpCode.SERVER_ERROR)
+        @app.route(f"{ROUTE_PATH}/reset_password", methods=["POST"])
+        @jwt_required(fresh=True)
+        def reset_password():
+            if request.args.get("password") is None:
+                return json_response("Missing password parameter", HttpCode.SERVER_ERROR)
+            user = Users.query.filter(Users.id == get_jwt_identity())
+            user.set_password(request.args.get("password"))
+            DB.session.commit()
+            return json_response("Password has been reset", HttpCode.OK)
 
         @app.route(ROUTE_PATH, methods=['POST'])
         def add_user():
@@ -67,13 +67,8 @@ class UsersRoutes:
         @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Delete users']['id'])
         def delete_users():
             try:
-                print('succeed')
-                user_id = request.args.get('user_id')
-                asking_user = Users.query.filter(Users.id == get_jwt_identity()).first()
-                # If user delete itself or if user has "Delete users" permission
-                if user_id == get_jwt_identity() or asking_user.check_permission(uuid.UUID("00000000-cafe-4c9d-8ab3-b35d0bd54397")):
-                    Users.query.filter(Users.id == user_id).delete()
-                    DB.session.commit()
+                Users.query.filter(Users.id == request.args.get('user_id')).delete()
+                DB.session.commit()
             except Exception as error:
                 return json_response(str(error), HttpCode.SERVER_ERROR)
             return json_response('User has been deleted from the database.', HttpCode.OK)

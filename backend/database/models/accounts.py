@@ -27,7 +27,7 @@ class Accounts(Base):
     parent_id = Column(UUID(as_uuid=True))
     account_type = Column(String(64), nullable=False, default='Current')
     account_subtype = Column(String(64), nullable=True)
-    currency_id = Column(UUID(as_uuid=True))
+    currency_id = Column(UUID(as_uuid=True), nullable=False)
     description = Column(String(1024), nullable=True)
     total_spent = Column(Numeric, default=0, nullable=False)
     total_earned = Column(Numeric, default=0, nullable=False)

@@ -15,25 +15,26 @@ from backend.config import (HttpCode,
                             )
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
-from backend.utils.auth_token_checker import auth_required
+
 
 
 class AuthRoutes:
-    def __init__(self, app, DB, Users, Roles):
+    def __init__(self, app, DB, Users):
         ROUTE_PATH = f"{ROOT_PATH}/auth"
 
-        @app.route(f"{ROUTE_PATH}/refresh", methods=["POST"])
+        @app.route(f"{ROUTE_PATH}/reset", methods=["POST"])
         @jwt_required(refresh=True)
-        def refresh(response):
+        def refresh():
             try:
                 exp_timestamp = get_jwt()["exp"]
                 target_timestamp = datetime.timestamp(datetime.now() + timedelta(seconds=VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS/2))
+                response = jsonify("refresh successful")
                 if target_timestamp > exp_timestamp:
                     access_token = create_access_token(identity=get_jwt_identity())
                     set_access_cookies(response, access_token)
                 return response
             except (RuntimeError, KeyError):
-                return response
+                return json_response("Refresh error", HttpCode.SERVER_ERROR)
 
         @app.route(f"{ROUTE_PATH}/login", methods=["POST"])
         def login():

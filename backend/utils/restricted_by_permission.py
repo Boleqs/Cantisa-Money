@@ -18,10 +18,8 @@ def restricted_by_permission(users_model, permission_id):
         @wraps(f)
         def wrapper(*args, **kwargs):
             asking_user = users_model.query.filter(users_model.id == get_jwt_identity()).first()
-            print(request.args.get('user_id'))
             #If no permission and not on himself
-            #TODO non fonctionnel : vérification "not on himself"
-            if not (asking_user.check_permission(permission_id) and request.args.get('user_id') == str(get_jwt_identity())):
+            if not (asking_user.check_permission(permission_id) or request.args.get('user_id') == str(get_jwt_identity())):
                 return json_response({"message": "Resource unauthorized"}, HttpCode.FORBIDDEN)
             return f(*args, **kwargs)
         return wrapper
