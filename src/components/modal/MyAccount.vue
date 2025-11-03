@@ -3,6 +3,7 @@
         <div class="modal-myaccount" @click.stop>
             <h1>My Account</h1>
             <button @click="closeModal">Close</button>
+            <button>Log off</button>
         </div>
     </div>
 </template>
@@ -14,6 +15,7 @@
         closeModal() {
             this.$emit('close');
         }
+
     }
 }
 </script>

@@ -1,6 +1,7 @@
 <template>
   <div class="home">
-    <h1>Home</h1>
+    <h1>Accueil</h1>
+    <h2>Application de gestion financière Cantisa Money Manager</h2>
   </div>
 </template>
 
@@ -9,3 +10,11 @@
 
 
 </script>
+
+<style scoped>
+.home {
+  justify-content: center;
+  align-items: center;
+}
+
+</style>

@@ -33,7 +33,7 @@ export default {
 <template>
     <div class="sidebar" :style="{ width: sidebarWidth}">
         <h1>
-            <span class="sidebar-title" :class="{ schmall: collapsed, bwig: !collapsed }">Cantisa</span>
+            <span class="sidebar-title" :class="{ schmall: collapsed, bwig: !collapsed }">CMM</span>
         </h1>
         <br>
         <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>        
