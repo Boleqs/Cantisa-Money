@@ -40,25 +40,8 @@ export default {
         <br>
         <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
         <br>
-        <SidebarLink to="/Accounts" iconFile="Accounts.png">Accounts</SidebarLink>
+        <SidebarLink icon-file="Users.png" to="/login">Login</SidebarLink>
         <br>
-        <SidebarLink to="/Assets" iconFile="Assets.png">Assets</SidebarLink>
-        <br>
-        <SidebarLink to="/Budgets" iconFile="Budgets.png">Budgets</SidebarLink>
-        <br>
-        <SidebarLink to="/Categories" iconFile="Categories.png">Categories</SidebarLink>
-        <br>
-        <SidebarLink to="/Commodities" iconFile="Commodities.png">Commodities</SidebarLink>
-        <br>
-        <SidebarLink to="/Splits" iconFile="Splits.png">Splits</SidebarLink>
-        <br>
-        <SidebarLink to="/Subscriptions" iconFile="Subscriptions.png">Subscriptions</SidebarLink>
-        <br>
-        <SidebarLink to="/Tags" iconFile="Tags.png">Tags</SidebarLink>
-        <br>
-        <SidebarLink to="/Transactions" iconFile="Transactions.png">Transactions</SidebarLink>
-        <br>
-        <SidebarLink to="/Users" iconFile="Users.png">Users</SidebarLink>
         <span>
             <span class="collapse-icon" @click="toggleSidebar">
                 <img class="collapse-icon-img" :class="{ 'collapse-icon-img collapsed': collapsed}" src="../icons/double_fleche.png"></img>
