@@ -39,9 +39,10 @@ class AuthRoutes:
         @app.route(f"{ROUTE_PATH}/login", methods=["POST"])
         def login():
             try:
-                user_name = request.args.get("user_name")
+                data = request.get_json()
+                user_name = data.get("login")
                 user = Users.query.filter(Users.username == user_name).first()
-                if user.check_password(request.args.get("password")):
+                if user.check_password(data.get("password")):
                     response = jsonify("login successful")
                     set_access_cookies(response, create_access_token(identity=user.id, fresh=True))
                     set_refresh_cookies(response, create_refresh_token(identity=user.id))

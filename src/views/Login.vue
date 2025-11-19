@@ -1,27 +1,51 @@
   <template>
-    <Title title="Login" />
     <div class="div_form">
-      <form id="form_login">
+      <form @submit.prevent="login">
         <br>
         <label for="login">Login : </label>
-        <input type="text" id="login" name="login"/>
+        <input type="text" v-model="email" name="login"/>
         <br>
         <label for="password">Password : </label>
-        <input type="password" id="password" name="password" minlength="4"/>
+        <input type="password" v-model="password" name="password" minlength="4"/>
         <br><br>
-        <button class="submit_button" id="submit_button">Submit</button>
+        <button id="submit_button">
+          <span v-if="!loading">Se connecter</span>
+          <span v-else>Connexion...</span>
+        </button>
       </form>
     </div>
   </template>
 
-  <script>
-  import Title from './Title.vue';
+  <script setup>
+    import { ref } from 'vue'
+    import axios from 'axios'
+    import { useRouter } from 'vue-router'
 
-  export default {
-    components: {
-      Title
+    const email = ref('')
+    const password = ref('')
+    const loading = ref(false)
+    const error = ref('')
+    const router = useRouter()
+
+    const API_BASE = 'http://127.0.0.1:5000/api/auth'
+
+    async function login () {
+      error.value = ''
+      loading.value = true
+      try {
+        const { data } = await axios.post(`${API_BASE}/login`, {
+          login: email.value,
+          password: password.value
+        })
+        // on suppose que Flask renvoie { token: '...' }
+        console.log(data)
+        router.push('/')     // redirige après succès
+      } catch (e) {
+        error.value = e?.response?.data?.message || 'Identifiants invalides ou erreur serveur.'
+      } finally {
+        loading.value = false
+      }
     }
-  }
 
   </script>
 
@@ -29,9 +53,4 @@
   .div_form {
     align-items: center;
   }
-
-  .submit_button {
-    color: white;
-  }
-
   </style>

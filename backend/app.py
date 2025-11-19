@@ -28,7 +28,7 @@ JWTManager(app)
 # Routes declaration
 UsersRoutes(app, DB, Users, UserRoles)
 CommoditiesRoutes(app, DB, Users, Commodities)
-AuthRoutes(app, DB, Users, Roles)
+AuthRoutes(app, DB, Users)
 
 def reset_db():
     # drop all for testing purpose
