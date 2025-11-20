@@ -22,7 +22,24 @@ class AuthRoutes:
     def __init__(self, app, DB, Users):
         ROUTE_PATH = f"{ROOT_PATH}/auth"
 
-        @app.route(f"{ROUTE_PATH}/reset", methods=["POST"])
+        @app.route(f"{ROUTE_PATH}/check-auth", methods=["GET"])
+        @jwt_required(optional=True)
+        def check_auth():
+            try:
+                token = get_jwt()
+                print(get_jwt())
+                if not token:
+                    return json_response("Not logged in", HttpCode.NOT_FOUND)
+
+                if datetime.timestamp(datetime.now()) > get_jwt()["exp"]:
+                    return json_response("Loggin expired", HttpCode.FORBIDDEN)
+                else:
+                    return json_response("Logged in", HttpCode.OK)
+            except Exception as e:
+                print(e)
+                return json_response("Not logged in", HttpCode.NOT_FOUND)
+
+        @app.route(f"{ROUTE_PATH}/refresh", methods=["POST"])
         @jwt_required(refresh=True)
         def refresh():
             try:

@@ -20,7 +20,7 @@ from routes.import_routes import *
 
 
 app = Flask(__name__)
-CORS(app)  # Ajout de cette ligne pour permettre les requêtes CORS
+CORS(app, supports_credentials=True, resources={r"/*": {"origins": "http://localhost:5173"}})  # Ajout de cette ligne pour permettre les requêtes CORS
 app.config.from_object(flask_config)
 DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)

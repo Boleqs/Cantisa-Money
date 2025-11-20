@@ -3,22 +3,36 @@
         <div class="modal-myaccount" @click.stop>
             <h1>My Account</h1>
             <button @click="closeModal">Close</button>
-            <button>Log off</button>
+            <button @click="logOff">Log off</button>
         </div>
     </div>
 </template>
 
 <script>
+    import axios from "axios";
+    function getCookie(name) {
+            return document.cookie
+              .split('; ')
+              .find(row => row.startsWith(name + '='))
+              ?.split('=')[1]
+              }
     export default {
         name: 'MyAccountModal',
         methods: {
+
+
         closeModal() {
             this.$emit('close');
+        },
+        logOff() {
+            const csrfToken = getCookie('csrf_access_token')
+            axios.post('http://localhost:5000/api/auth/logout', {headers: {'X-CSRF-TOKEN': csrfToken}})
+            this.$emit('close')
         }
-
     }
 }
 </script>
+
 
 <style>
     .modal-overlay-myaccount {

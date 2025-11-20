@@ -27,7 +27,7 @@
     const error = ref('')
     const router = useRouter()
 
-    const API_BASE = 'http://127.0.0.1:5000/api/auth'
+    const API_BASE = 'http://localhost:5000/api/auth'
 
     async function login () {
       error.value = ''
