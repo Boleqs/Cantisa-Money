@@ -37,7 +37,7 @@ class AuthRoutes:
                     return json_response("Logged in", HttpCode.OK)
             except Exception as e:
                 print(e)
-                return json_response("Not logged in", HttpCode.NOT_FOUND)
+                return json_response("Not logged in", HttpCode.FORBIDDEN)
 
         @app.route(f"{ROUTE_PATH}/refresh", methods=["POST"])
         @jwt_required(refresh=True)

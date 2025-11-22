@@ -19,14 +19,9 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
-        path: '/Accounts',
-        name: 'Accounts',
-        component: () => import('../views/Accounts.vue')
-    },
-    {
-        path: '/login',
-        name: 'Login',
-        component: () => import('../views/Login.vue')
+        path: '/Signin',
+        name: 'Signin',
+        component: () => import('../views/Signin.vue')
     }
 
 ]
@@ -38,7 +33,8 @@ const router = createRouter({
   })
 
 router.beforeEach(async (to, from, next) => {
-  if (!to.meta.requiresAuth) {
+  document.title = 'CMM | ' + to.name;
+    if (!to.meta.requiresAuth) {
     return next()
   }
 
@@ -52,8 +48,9 @@ router.beforeEach(async (to, from, next) => {
 
   } catch (err) {
     // si Flask renvoie erreur → pas connecté
-    next('/login')
+    next('/Signin')
   }
 })
+
 
   export default router

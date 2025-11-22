@@ -1,4 +1,7 @@
   <template>
+    <div v-show=error>
+      <TopRightDisplay p-type="error">{{error}}</TopRightDisplay>
+    </div>
     <div class="div_form">
       <form @submit.prevent="login">
         <br>
@@ -20,6 +23,7 @@
     import { ref } from 'vue'
     import axios from 'axios'
     import { useRouter } from 'vue-router'
+    import TopRightDisplay from "@/components/TopRightDisplay.vue";
 
     const email = ref('')
     const password = ref('')
@@ -37,16 +41,19 @@
           login: email.value,
           password: password.value
         })
-        // on suppose que Flask renvoie { token: '...' }
-        console.log(data)
-        router.push('/')     // redirige après succès
+        router.push('/')     // redirect after success
       } catch (e) {
-        error.value = e?.response?.data?.message || 'Identifiants invalides ou erreur serveur.'
+        try {
+          // if login error
+          error.value = e.response.data.response_data || 'Server error.'}
+        finally {
+          // if other error, typically network error
+          error.value = e
+        }
       } finally {
         loading.value = false
       }
     }
-
   </script>
 
   <style>

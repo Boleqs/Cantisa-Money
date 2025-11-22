@@ -40,8 +40,6 @@ export default {
         <br>
         <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
         <br>
-        <SidebarLink icon-file="Users.png" to="/login">Login</SidebarLink>
-        <br>
         <span>
             <span class="collapse-icon" @click="toggleSidebar">
                 <img class="collapse-icon-img" :class="{ 'collapse-icon-img collapsed': collapsed}" src="../icons/double_fleche.png"></img>

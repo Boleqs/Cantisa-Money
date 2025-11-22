@@ -4,12 +4,16 @@
             <h1>My Account</h1>
             <button @click="closeModal">Close</button>
             <button @click="logOff">Log off</button>
+            <button @click="login">Login</button>
         </div>
     </div>
 </template>
 
 <script>
     import axios from "axios";
+    import router from "@/router/index.js";
+
+
     function getCookie(name) {
             return document.cookie
               .split('; ')
@@ -25,10 +29,17 @@
             this.$emit('close');
         },
         logOff() {
-            const csrfToken = getCookie('csrf_access_token')
-            axios.post('http://localhost:5000/api/auth/logout', {headers: {'X-CSRF-TOKEN': csrfToken}})
-            this.$emit('close')
+          const csrfToken = getCookie('csrf_access_token')
+          axios.post('http://localhost:5000/api/auth/logout', {headers: {'X-CSRF-TOKEN': csrfToken}})
+          router.push('/')
+          this.$emit('close')
+        },
+        login() {
+          router.push('/Signin')
+          this.$emit('close')
         }
+
+
     }
 }
 </script>
