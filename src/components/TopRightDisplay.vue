@@ -1,5 +1,5 @@
 <template>
-  <div class="div_msg">
+  <div :class="props.pType">
     <slot>
       Default message content.
       A message should be displaying here
@@ -18,12 +18,32 @@
 </script>
 
 <style scoped>
-  .div_msg{
+  .error{
     position: absolute;
     right: 0px;
     top: 0px;
     background: red;
     border: 2px solid red;
+    margin-top: 10px;
+    margin-right: 10px;
+    width: 300px;
+  }
+  .warning{
+    position: absolute;
+    right: 0px;
+    top: 0px;
+    background: yellow;
+    border: 2px solid yellow;
+    margin-top: 10px;
+    margin-right: 10px;
+    width: 300px;
+  }
+  .info{
+    position: absolute;
+    right: 0px;
+    top: 0px;
+    background: gray;
+    border: 2px solid gray;
     margin-top: 10px;
     margin-right: 10px;
     width: 300px;

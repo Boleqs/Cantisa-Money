@@ -1,12 +1,14 @@
 <script>
 import SidebarLink from './SidebarLink.vue';
+import SidebarGroup from './SidebarGroup.vue';
+import SidebarSectionTitle from './SidebarSectionTitle.vue';
 import { collapsed, toggleSidebar, sidebarWidth } from './state';
 import Settings from '../modal/settings.vue';
 import MyAccount from '../modal/MyAccount.vue'; 
 
 export default {
     props: {},
-    components: { SidebarLink, Settings, MyAccount },
+    components: { SidebarGroup, SidebarLink, SidebarSectionTitle, Settings, MyAccount },
     data() {
         return {
             showMyAccount: false,
@@ -35,11 +37,12 @@ export default {
         <h1>
             <span class="sidebar-title" :class="{ schmall: collapsed, bwig: !collapsed }">CMM</span>
         </h1>
-        <br>
-        <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>        
-        <br>
+        <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
         <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
-        <br>
+        <SidebarSectionTitle label="Gestion des finances"/>
+        <SidebarGroup label="Admin">
+          <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
+        </SidebarGroup>
         <span>
             <span class="collapse-icon" @click="toggleSidebar">
                 <img class="collapse-icon-img" :class="{ 'collapse-icon-img collapsed': collapsed}" src="../icons/double_fleche.png"></img>

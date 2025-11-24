@@ -22,6 +22,16 @@ const routes = [
         path: '/Signin',
         name: 'Signin',
         component: () => import('../views/Signin.vue')
+    },
+    {
+        path: '/init/Signup',
+        name: 'Signup',
+        component: () => import('../views/initialization/Signup.vue')
+    },
+    {
+        path: '/error',
+        name: 'ConnectionError',
+        component: () => import('../views/ConnectionError.vue')
     }
 
 ]
@@ -34,6 +44,7 @@ const router = createRouter({
 
 router.beforeEach(async (to, from, next) => {
   document.title = 'CMM | ' + to.name;
+
     if (!to.meta.requiresAuth) {
     return next()
   }
@@ -47,8 +58,13 @@ router.beforeEach(async (to, from, next) => {
     next()
 
   } catch (err) {
-    // si Flask renvoie erreur → pas connecté
-    next('/Signin')
+        // si erreur network → pas de connexion à l'api
+    if (err.message === 'Network Error') {
+        next('/error')
+    } else {
+        // sinon, go to signin
+        next('/Signin')
+    }
   }
 })
 

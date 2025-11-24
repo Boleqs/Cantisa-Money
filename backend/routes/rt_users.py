@@ -42,19 +42,21 @@ class UsersRoutes:
 
         @app.route(ROUTE_PATH, methods=['POST'])
         def add_user():
+            data = request.get_json()
+            if not data.get('username') or not data.get('email') or not data.get('password') or not data.get('role_id'):
+                return json_response("Missing data from request", HttpCode.SERVER_ERROR)
             try:
-                if Users.query.filter(Users.username == request.args.get("user_name")).first():
+                if Users.query.filter(Users.username == data.get("user_name")).first():
                     return json_response("Username already exists", HttpCode.FORBIDDEN)
                 salt = os.urandom(16)
-                new_user = Users(username=request.args.get('user_name'), email=request.args.get('email'),
-                                 password_hash=hash_password(request.args.get('password_hash'),
+                new_user = Users(username=data.get('username'), email=data.get('email'),
+                                 password_hash=hash_password(data.get('password'),
                                                              salt,
                                                              VAR_PWD_PEPPER),
                                  salt=salt)
                 DB.session.add(new_user)
-                DB.session.commit()
-                user_role = UserRoles(user_id=Users.query.filter(Users.username == request.args.get('user_name')).first().id,
-                                      role_id=request.args.get('role_id'))
+                user_role = UserRoles(user_id=Users.query.filter(Users.username == data.get('username')).first().id,
+                                      role_id=data.get('role_id'))
                 DB.session.add(user_role)
                 DB.session.commit()
             except Exception as error:

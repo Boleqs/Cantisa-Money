@@ -46,7 +46,7 @@
         try {
           // if login error
           error.value = e.response.data.response_data || 'Server error.'}
-        finally {
+        catch {
           // if other error, typically network error
           error.value = e
         }
