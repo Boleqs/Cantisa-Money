@@ -44,7 +44,7 @@
         router.push('/')     // redirect after success
       } catch (e) {
         try {
-          // if login error
+          // if error sent by flask API
           error.value = e.response.data.response_data || 'Server error.'}
         catch {
           // if other error, typically network error

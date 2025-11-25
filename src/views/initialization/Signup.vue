@@ -46,7 +46,8 @@
       const { data } = await axios.post(`${API_BASE}`, {
         username: username.value,
         email: email.value,
-        password: password.value
+        password: password.value,
+        role_id: '00000000-cafe-46fe-9a04-a03b4c253f1f'
       })
       created.value = true
     } catch (e) {

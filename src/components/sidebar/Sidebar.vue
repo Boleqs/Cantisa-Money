@@ -39,9 +39,10 @@ export default {
         </h1>
         <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
         <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
-        <SidebarSectionTitle label="Gestion des finances"/>
-        <SidebarGroup label="Admin">
-          <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
+        <SidebarSectionTitle label="Gestion bancaire"/>
+        <SidebarLink to="/Accounts" iconFile="Accounts.png">Comptes</SidebarLink>
+        <SidebarSectionTitle label="Paramètres"/>
+        <SidebarGroup label="Administration">
         </SidebarGroup>
         <span>
             <span class="collapse-icon" @click="toggleSidebar">
@@ -161,5 +162,4 @@ export default {
     font-size: 1.10em; /* Adjust the size as needed */
     transition: 0.3s ease;
 }
-
 </style>

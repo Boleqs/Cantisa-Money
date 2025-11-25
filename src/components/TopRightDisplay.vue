@@ -19,33 +19,39 @@
 
 <style scoped>
   .error{
-    position: absolute;
-    right: 0px;
-    top: 0px;
+    position: fixed;
+    right: 0%;
     background: red;
     border: 2px solid red;
+    border-radius: 5px;
     margin-top: 10px;
     margin-right: 10px;
-    width: 300px;
+    width: 25em;
+    height: auto;
+    padding: 0.5em;
   }
   .warning{
-    position: absolute;
-    right: 0px;
-    top: 0px;
-    background: yellow;
-    border: 2px solid yellow;
+    position: fixed;
+    right: 0%;
+    background: orangered;
+    border: 2px solid orangered;
+    border-radius: 5px;
     margin-top: 10px;
     margin-right: 10px;
-    width: 300px;
+    width: 25em;
+    height: auto;
+    padding: 0.5em;
   }
   .info{
-    position: absolute;
-    right: 0px;
-    top: 0px;
+    position: fixed;
+    right: 0%;
     background: gray;
     border: 2px solid gray;
+    border-radius: 5px;
     margin-top: 10px;
     margin-right: 10px;
-    width: 300px;
+    width: 25em;
+    height: auto;
+    padding: 0.5em;
   }
 </style>
