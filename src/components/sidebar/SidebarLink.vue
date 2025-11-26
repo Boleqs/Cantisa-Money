@@ -6,7 +6,7 @@ import { collapsed } from './state';
 export default {
     props: {
         to: { type: String, required: true },
-        iconFile: { type: String, required: true }
+        iconFile: { type: String, required: false }
     },
     setup(props) {
         const route = useRoute();
@@ -20,7 +20,7 @@ export default {
 
 <template>
     <router-link :to="to" class="link" :class="{ active: isActive}">
-        <img class="icon" :src="iconSrc" alt="icon" />
+        <img v-if="iconFile" class="icon" :src="iconSrc" alt="icon" />
         <transition name="fade">
             <span v-if="!collapsed">
                 <slot />

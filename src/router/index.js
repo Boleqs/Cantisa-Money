@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import axios from 'axios'
+import showEventBool from "@/App.vue"
 //import createRouter from 'vue-router'
 //import createWebHistory from 'vue-router'
 
@@ -32,6 +33,11 @@ const routes = [
         path: '/error',
         name: 'ConnectionError',
         component: () => import('../views/ConnectionError.vue')
+    },
+    {
+        path: '/accounts',
+        name: 'Accounts',
+        component: () => import('../views/Accounts.vue')
     }
 
 ]

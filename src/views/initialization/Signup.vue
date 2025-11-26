@@ -1,7 +1,4 @@
 <template>
-  <div v-show=error>
-      <TopRightDisplay p-type="error">{{error}}</TopRightDisplay>
-  </div>
   <div class="div_form">
     <form @submit.prevent="createAccount">
       <br>
@@ -20,9 +17,6 @@
       </button>
     </form>
   </div>
-  <div v-show=created>
-      <TopRightDisplay p-type="info">The account {{username}} has been created!</TopRightDisplay>
-  </div>
 </template>
 
 <script setup>
@@ -38,6 +32,7 @@
   const error = ref('')
   const created = ref('')
   const router = useRouter()
+  const emit = defineEmits(['msg-event'])
 
   const API_BASE = 'http://localhost:5000/api/user'
 
@@ -49,12 +44,13 @@
         password: password.value,
         role_id: '00000000-cafe-46fe-9a04-a03b4c253f1f'
       })
-      created.value = true
+      emit('msg-event', { type: 'info', content: `The account ${username} has been created!`})
     } catch (e) {
       try {
         // if missing value error
-        error.value = e.response.data.response_data || 'Server error.'}
-      catch {
+        error.value = e.response.data.response_data || 'Server error.'
+      }
+      catch (e) {
         // if other error, typically network error
         error.value = e
       }

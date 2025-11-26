@@ -1,22 +1,28 @@
-<script>
+<script setup>
 import Sidebar from './components/sidebar/Sidebar.vue'
 import { sidebarWidth } from './components/sidebar/state'
 import Topbar from "@/components/topbar/Topbar.vue";
 import TopRightDisplay from "@/components/TopRightDisplay.vue";
-export default {
-  components: {TopRightDisplay, Topbar, Sidebar },
-  setup() {
-    return { sidebarWidth }
-  }
+import {ref, useTemplateRef} from "vue";
+
+const topRightDisplayRef = useTemplateRef("showDiv")
+const msgType = ref('info')
+const msgContent = ref()
+
+async function showEvent (payload) {
+  msgType.value = payload.type
+  msgContent.value = payload.content
+  topRightDisplayRef.value.showDiv()
 }
 </script>
+
 <template>
-  <Sidebar />
   <Topbar/>
   <div class="smooch" :style="{ 'margin-left': sidebarWidth}">
-    <div v-show=false><TopRightDisplay p-type="error">Maud pète !!!</TopRightDisplay></div>
-    <router-view />
+    <TopRightDisplay :p-type="msgType" ref="showDiv">{{msgContent}}</TopRightDisplay>
+    <router-view @msg-event="showEvent" />
   </div>
+  <Sidebar />
 </template>
 
 <style>

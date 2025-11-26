@@ -1,7 +1,4 @@
   <template>
-    <div v-show=error>
-      <TopRightDisplay p-type="error">{{error}}</TopRightDisplay>
-    </div>
     <div class="div_form">
       <form @submit.prevent="login">
         <br>
@@ -24,17 +21,19 @@
     import axios from 'axios'
     import { useRouter } from 'vue-router'
     import TopRightDisplay from "@/components/TopRightDisplay.vue";
+    const emit = defineEmits(['msg-event'])
 
     const email = ref('')
     const password = ref('')
     const loading = ref(false)
-    const error = ref('')
+    const msg_content = ref('')
     const router = useRouter()
+    const msg_type = ref()
+
 
     const API_BASE = 'http://localhost:5000/api/auth'
 
     async function login () {
-      error.value = ''
       loading.value = true
       try {
         const { data } = await axios.post(`${API_BASE}/login`, {
@@ -42,16 +41,22 @@
           password: password.value
         })
         router.push('/')     // redirect after success
+        msg_type.value = 'info'
+        msg_content.value = data
       } catch (e) {
         try {
           // if error sent by flask API
-          error.value = e.response.data.response_data || 'Server error.'}
-        catch {
+          msg_content.value = e.response.data.response_data || 'Server error.'
+          msg_type.value = 'error'
+        }
+        catch (e) {
           // if other error, typically network error
-          error.value = e
+          msg_content.value = e
+          msg_type.value = 'error'
         }
       } finally {
         loading.value = false
+        emit('msg-event', { type: msg_type.value, content: msg_content.value })
       }
     }
   </script>

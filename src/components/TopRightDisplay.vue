@@ -1,5 +1,5 @@
 <template>
-  <div :class="props.pType">
+  <div v-show=showEventBool :class="props.pType">
     <slot>
       Default message content.
       A message should be displaying here
@@ -8,13 +8,27 @@
 </template>
 
 <script setup>
+  import {onMounted, ref} from "vue";
+
+  defineExpose({showDiv})
+
+  const showEventBool = ref(false)
   const props = defineProps({
     pType: {
       validator(value, props) {return ['info', 'warning', 'error'].includes(value)},
       type: String,
-      required: true}
+      required: true},
+
     }
   )
+
+  function showDiv () {
+    showEventBool.value = true
+    setTimeout(() => {
+    showEventBool.value = false
+  }, 5000)
+  }
+
 </script>
 
 <style scoped>
@@ -29,6 +43,7 @@
     width: 25em;
     height: auto;
     padding: 0.5em;
+    transition: opacity 0.8s linear;
   }
   .warning{
     position: fixed;

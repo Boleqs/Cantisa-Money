@@ -3,6 +3,7 @@
         <div class="modal-settings" @click.stop>
             <h1>settings</h1>
             <button @click="closeModal">Close</button>
+          <button @click="closeModal">Sidebar settings</button>
         </div>
     </div>
 </template>
