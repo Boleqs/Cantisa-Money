@@ -40,10 +40,8 @@ export default {
         <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
         <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
         <SidebarSectionTitle label="Gestion bancaire"/>
-        <SidebarGroup label="Actifs" icon-file="Accounts.png">
-          <SidebarGroup label="Comptes personnels">
-            <SidebarLink to="/Accounts"></SidebarLink>
-          </SidebarGroup>
+        <SidebarGroup label="Mes comptes" icon-file="Accounts.png">
+          <SidebarLink to="/Accounts">Actifs</SidebarLink>
         </SidebarGroup>
         <SidebarSectionTitle label="Paramètres"/>
         <SidebarGroup label="Administration">

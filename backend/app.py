@@ -45,40 +45,32 @@ def reset_db():
     DB.create_all()
 
 def init_db():
-    # drop all for testing purpose
-    DB.drop_all()
-    DB.event.listen(Base.metadata, 'before_create', check_category_id)
-    DB.event.listen(Base.metadata, 'before_create', update_budget_spent)
-    DB.event.listen(Base.metadata, 'before_create', update_timestamp)
-    # Triggers
-    DB.event.listen(Transactions.metadata, 'after_create', trg_check_category_id)
-    DB.event.listen(Splits.metadata, 'after_create', trg_update_budget_spent)
-    DB.event.listen(Accounts.metadata, 'after_create', trg_update_timestamp_accounts)
-    DB.event.listen(Budgets.metadata, 'after_create', trg_update_timestamp_budgets)
-    DB.event.listen(Users.metadata, 'after_create', trg_update_timestamp_users)
-    DB.create_all()
-
     # add data for testing purpose
-    user1 = Users(username='user_1', email='user.1@example.com', password_hash='test', salt=b'test')
-    user2 = Users(username='user_2', email='user.2@example.com', password_hash='test', salt=b'test')
+    user1 = Users(username='Loris',
+                  email='loris@test.com',
+                  password_hash=b'0x7ED3D060E511764096EF4A056021178758A8D32ECD1D2BA72B7E015AC9FFD13F',
+                  salt=b'ee318ef8-cb0e-15c4-65c5-d1d7d26ae0d1')
     DB.session.add(user1)
-    DB.session.add(user2)
     DB.session.commit()
-    user1_id = DB.session.query(Users).filter(Users.username == 'user_1').first().id
-    user2_id = DB.session.query(Users).filter(Users.username == 'user_2').first().id
+    user1_id = DB.session.query(Users).filter(Users.username == 'Loris').first().id
+    user_role = UserRoles(user_id=user1_id,
+                          role_id='00000000-cafe-46fe-9a04-a03b4c253f1f')
+    DB.session.add(user_role)
+    DB.session.commit()
     user1_commodity = Commodities(user_id=user1_id, name='Euro', short_name='eu', description='La monnaie européenne')
     user1_commodity2 = Commodities(user_id=user1_id, name='Dollar', short_name='USD', description='La monnaie américaine')
-    user2_commodity = Commodities(user_id=user2_id, name='Euro', short_name='eu', description='La monnaie européenne')
     DB.session.add(user1_commodity)
     DB.session.add(user1_commodity2)
-    DB.session.add(user2_commodity)
     DB.session.commit()
     user1_commodity_id = DB.session.query(Commodities).filter(Commodities.user_id == user1_id).first().id
-    user2_commodity_id = DB.session.query(Commodities).filter(Commodities.user_id == user2_id).first().id
-    user1_account = Accounts(user_id=user1_id, name='user1_account', currency_id=user1_commodity_id, description='User 1 main account')
-    user2_account = Accounts(user_id=user2_id, name='user2_account', currency_id=user2_commodity_id, description='User 2 main account', code='04356')
+    user1_commodity_id2 = DB.session.query(Commodities).filter(Commodities.user_id == user1_id and Commodities.name == 'Dollar').first().id
+
+    user1_account = Accounts(user_id=user1_id, name='Compte courant', currency_id=user1_commodity_id,
+                             description='Loris main account')
+    user1_account2 = Accounts(user_id=user1_id, name='Compte Investissment', currency_id=user1_commodity_id2,
+                             description='Loris second account')
     DB.session.add(user1_account)
-    DB.session.add(user2_account)
+    DB.session.add(user1_account2)
     DB.session.commit()
 
 
@@ -111,11 +103,11 @@ def assign_permissions_to_roles():
     DB.session.commit()
 
 with app.app_context():
-    #init_db()
     reset_db()
     insert_permissions()
     insert_roles()
     assign_permissions_to_roles()
+    init_db()
     pass
 
 uuid.uuid4()
