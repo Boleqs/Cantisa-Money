@@ -53,6 +53,7 @@ html, body, #app {
   height: 100%;
   display: flex;
   flex-direction: column;
+  transition: padding-left 0.5s;
 }
 
 /* zone où s’affichent tes pages (avec le graphique etc.) */

@@ -38,11 +38,21 @@ export default {
             <span class="sidebar-title" :class="{ schmall: collapsed, bwig: !collapsed }">CMM</span>
         </h1>
         <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
-        <SidebarLink to="/Dashboard" iconFile="Dashboard.png">Dashboard</SidebarLink>
+
         <SidebarSectionTitle label="Gestion bancaire"/>
-        <SidebarGroup label="Mes comptes" icon-file="Accounts.png">
-          <SidebarLink to="/Accounts">Actifs</SidebarLink>
-        </SidebarGroup>
+          <SidebarGroup label="Comptes Bancaires">
+            <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
+            <SidebarLink to="/Accounts">Liste des comptes</SidebarLink>
+          </SidebarGroup>
+          <SidebarLink to="/test4">Factures</SidebarLink>
+          <SidebarLink to="/test5">Budgets</SidebarLink>
+        <SidebarSectionTitle label="Gestion financière"/>
+          <SidebarGroup label="Portfolio">
+            <SidebarLink to="/test3">Liste des comptes</SidebarLink>
+          </SidebarGroup>
+          <SidebarLink to="/test2">Marchés</SidebarLink>
+        <SidebarSectionTitle label="Reporting"/>
+          <SidebarLink to="/test1">Rapports prédéfinis</SidebarLink>
         <SidebarSectionTitle label="Paramètres"/>
         <SidebarGroup label="Administration">
           <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>

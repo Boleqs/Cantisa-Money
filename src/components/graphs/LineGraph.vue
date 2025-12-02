@@ -77,7 +77,8 @@ const props = defineProps({
    */
   formatValue: {
     type: Function,
-    default: null
+    default: (v) =>
+  v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
   }
 })
 
