@@ -4,8 +4,10 @@ from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
     UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
+from dataclasses import dataclass
 
 
+@dataclass
 class AssetPossession(Base):
     __tablename__ = 'asset_possession'
     __table_args__ = (
@@ -17,9 +19,9 @@ class AssetPossession(Base):
         CheckConstraint("quantity <= 1000000000 AND quantity >= 0")
     )
 
-    user_id = Column(UUID(as_uuid=True))
-    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
-    asset_id = Column(UUID(as_uuid=True))
-    account_id = Column(UUID(as_uuid=True))
-    quantity = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, default=func.current_timestamp())
+    user_id:uuid = Column(UUID(as_uuid=True))
+    id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    asset_id:uuid = Column(UUID(as_uuid=True))
+    account_id:uuid = Column(UUID(as_uuid=True))
+    quantity:int = Column(Integer, nullable=False, default=0)
+    created_at:datetime = Column(DateTime, default=func.current_timestamp())

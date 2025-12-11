@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import axios from 'axios'
+import {defineEmits} from "vue";
 import showEventBool from "@/App.vue"
 //import createRouter from 'vue-router'
 //import createWebHistory from 'vue-router'
@@ -41,7 +42,6 @@ const routes = [
     }
 
 ]
-
 
 const router = createRouter({
     history: createWebHistory(),

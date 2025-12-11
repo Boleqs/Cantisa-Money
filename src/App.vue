@@ -8,16 +8,22 @@ import {ref, useTemplateRef} from "vue";
 const topRightDisplayRef = useTemplateRef("showDiv")
 const msgType = ref('info')
 const msgContent = ref()
+const showFullPage = ref(false)
 
 async function showEvent (payload) {
   msgType.value = payload.type
   msgContent.value = payload.content
   topRightDisplayRef.value.showDiv()
 }
+
+async function FullPage (payload) {
+  console.log(payload.value)
+  showFullPage.value = payload.value
+}
 </script>
 
 <template>
-  <div class="app-root">
+  <div class="app-root" v-if="!showFullPage">
     <!-- Sidebar fixe à gauche -->
     <Sidebar />
     <Topbar />
@@ -26,10 +32,11 @@ async function showEvent (payload) {
       <main class="app-content">
         <TopRightDisplay :p-type="msgType" ref="showDiv">{{msgContent}}</TopRightDisplay>
         <!-- TODO: transition 5s pour correspondre avec la sidebar -->
-        <router-view @msg-event="showEvent" />
+        <router-view @msg-event="showEvent" @fullpage="FullPage" />
       </main>
     </div>
   </div>
+  <div v-else><router-view @msg-event="showEvent"/></div>
 </template>
 
 <style>

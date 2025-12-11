@@ -4,8 +4,11 @@ from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
+from dataclasses import dataclass
+
 
 #TODO add total spent in category
+@dataclass
 class Categories(Base):
     __tablename__ = 'categories'
     __table_args__ = (
@@ -17,8 +20,8 @@ class Categories(Base):
         UniqueConstraint('name')
     )
 
-    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True))
-    name = Column(String(100), nullable=False)
-    description = Column(String(1000), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now())
+    id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    user_id:uuid = Column(UUID(as_uuid=True))
+    name:str = Column(String(100), nullable=False)
+    description:str = Column(String(1000), nullable=True)
+    created_at:datetime = Column(DateTime, nullable=False, default=datetime.now())

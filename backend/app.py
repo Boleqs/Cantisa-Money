@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+
 from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST
 import uuid
 
@@ -29,6 +30,8 @@ JWTManager(app)
 UsersRoutes(app, DB, Users, UserRoles)
 CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
+TestRoutes(app, DB, Users, Accounts)
+
 
 def reset_db():
     # drop all for testing purpose

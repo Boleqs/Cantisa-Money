@@ -78,10 +78,3 @@ class AuthRoutes:
             response = jsonify("logout successful")
             unset_jwt_cookies(response)
             return response, HttpCode.OK
-
-        @app.route(f"{ROUTE_PATH}/test", methods=["POST"])
-        @jwt_required()
-        def test():
-            user = Users.query.filter(Users.username == get_jwt_identity()).first()
-            print()
-            return json_response("ok", HttpCode.OK)

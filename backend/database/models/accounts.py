@@ -4,8 +4,10 @@ from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, Boolean, Numeric, PrimaryKeyConstraint, \
     ForeignKeyConstraint, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from dataclasses import dataclass
 
 
+@dataclass
 class Accounts(Base):
     __tablename__ = 'accounts'
     __table_args__ = (
@@ -21,18 +23,18 @@ class Accounts(Base):
                         "OR account_subtype is NULL")
     )
 
-    user_id = Column(UUID(as_uuid=True))
-    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
-    name = Column(String(128), nullable=False)
-    parent_id = Column(UUID(as_uuid=True))
-    account_type = Column(String(64), nullable=False, default='Current')
-    account_subtype = Column(String(64), nullable=True)
-    currency_id = Column(UUID(as_uuid=True), nullable=False)
-    description = Column(String(1024), nullable=True)
-    total_spent = Column(Numeric, default=0, nullable=False)
-    total_earned = Column(Numeric, default=0, nullable=False)
-    is_virtual = Column(Boolean, default=False, nullable=False)
-    is_hidden = Column(Boolean, default=False, nullable=False)
-    code = Column(String(64), nullable=True)
-    created_at = Column(DateTime, default=datetime.now())
-    updated_at = Column(DateTime, default=datetime.now(), onupdate=datetime.now())
+    user_id:uuid = Column(UUID(as_uuid=True))
+    id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    name:str = Column(String(128), nullable=False)
+    parent_id:uuid = Column(UUID(as_uuid=True))
+    account_type:str = Column(String(64), nullable=False, default='Current')
+    account_subtype:str = Column(String(64), nullable=True)
+    currency_id:uuid = Column(UUID(as_uuid=True), nullable=False)
+    description:str = Column(String(1024), nullable=True)
+    total_spent:int = Column(Numeric, default=0, nullable=False)
+    total_earned:int = Column(Numeric, default=0, nullable=False)
+    is_virtual:bool = Column(Boolean, default=False, nullable=False)
+    is_hidden:bool = Column(Boolean, default=False, nullable=False)
+    code:str = Column(String(64), nullable=True)
+    created_at:datetime = Column(DateTime, default=datetime.now())
+    updated_at:datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

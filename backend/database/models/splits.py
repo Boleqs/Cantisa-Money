@@ -3,8 +3,10 @@ from .base import Base
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \
     PrimaryKeyConstraint, Numeric, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from dataclasses import dataclass
 
 
+@dataclass
 class Splits(Base):
     __tablename__ = 'splits'
     __table_args__ = (
@@ -13,7 +15,7 @@ class Splits(Base):
         ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE', onupdate='CASCADE')
     )
 
-    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
-    tx_id = Column(UUID(as_uuid=True))
-    quantity = Column(Numeric, nullable=False)
-    account_id = Column(UUID(as_uuid=True))
+    id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    tx_id:uuid = Column(UUID(as_uuid=True))
+    quantity:int = Column(Numeric, nullable=False)
+    account_id:uuid = Column(UUID(as_uuid=True))

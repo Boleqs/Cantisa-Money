@@ -3,8 +3,10 @@ from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, PrimaryKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from dataclasses import dataclass
 
 
+@dataclass
 class Transactions(Base):
     __tablename__ = 'transactions'
     __table_args__ = (
@@ -15,12 +17,12 @@ class Transactions(Base):
         UniqueConstraint('id')
     )
 
-    user_id = Column(UUID(as_uuid=True))
-    id = Column(UUID(as_uuid=True), default=uuid.uuid4)
-    currency_id = Column(UUID(as_uuid=True))
-    post_date = Column(DateTime, nullable=False, default=datetime.now())
-    effective_date = Column(DateTime, nullable=False, default=datetime.now())
-    description = Column(String(1024), nullable=True)
-    category_id = Column(UUID(as_uuid=True), default='N/A')
+    user_id:uuid = Column(UUID(as_uuid=True))
+    id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    currency_id:uuid = Column(UUID(as_uuid=True))
+    post_date:datetime = Column(DateTime, nullable=False, default=datetime.now())
+    effective_date:datetime = Column(DateTime, nullable=False, default=datetime.now())
+    description:str = Column(String(1024), nullable=True)
+    category_id:uuid = Column(UUID(as_uuid=True), default='N/A')
 
 

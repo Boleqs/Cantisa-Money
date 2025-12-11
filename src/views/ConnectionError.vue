@@ -1,5 +1,6 @@
 <script setup>
-
+const emit = defineEmits(['fullpage'])
+emit('fullpage', {value: true})
 </script>
 
 <template>

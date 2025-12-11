@@ -1,8 +1,12 @@
+import uuid
+
 from .base import Base
 from sqlalchemy import Column, String, DateTime, func, PrimaryKeyConstraint, ForeignKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID
+from dataclasses import dataclass
 
 
+@dataclass
 class RolePermissions(Base):
     __tablename__ = 'role_permissions'
     __table_args__ = (
@@ -11,5 +15,5 @@ class RolePermissions(Base):
         ForeignKeyConstraint(['permission_id'], ['permissions.id'], ondelete='CASCADE'),
     )
 
-    role_id = Column(UUID(as_uuid=True))
-    permission_id = Column(UUID(as_uuid=True))
+    role_id:uuid = Column(UUID(as_uuid=True))
+    permission_id:uuid = Column(UUID(as_uuid=True))
