@@ -16,8 +16,7 @@ class Categories(Base):
         ForeignKeyConstraint(['user_id'],['users.id'], ondelete='CASCADE'),
 
         UniqueConstraint('user_id', 'name'),
-        UniqueConstraint('id'),
-        UniqueConstraint('name')
+        UniqueConstraint('id')
     )
 
     id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)

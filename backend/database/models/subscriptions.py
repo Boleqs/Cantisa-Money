@@ -13,8 +13,9 @@ class Subscriptions(Base):
     __table_args__ = (
         PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'],['users.id'], ondelete='CASCADE'),
-        ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE', onupdate='CASCADE'),
-        ForeignKeyConstraint(['category_id'], ['categories.id'], ondelete='CASCADE', onupdate='CASCADE'),
+        ForeignKeyConstraint(['from_account_id'], ['accounts.id'], ondelete='RESTRICT', onupdate='CASCADE'),
+        ForeignKeyConstraint(['to_account_id'], ['accounts.id'], ondelete='RESTRICT', onupdate='CASCADE'),
+        ForeignKeyConstraint(['category_id'], ['categories.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
         UniqueConstraint('user_id', 'name')
     )
@@ -24,6 +25,8 @@ class Subscriptions(Base):
     name:str = Column(String(64), nullable=False)
     recurrence:int = Column(SmallInteger, nullable=False, default=30)
     amount:int = Column(Numeric, nullable=False, default=0)
-    account_id:uuid = Column(UUID(as_uuid=True))
+    from_account_id:uuid = Column(UUID(as_uuid=True))
+    to_account_id: uuid = Column(UUID(as_uuid=True))
     category_id:uuid = Column(UUID(as_uuid=True))
     created_at:datetime = Column(DateTime, default=func.current_timestamp())
+    updated_at: datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

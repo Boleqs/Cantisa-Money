@@ -1,4 +1,6 @@
 from flask import jsonify, request
+from marshmallow import Schema, fields, ValidationError
+
 from backend.config import (HttpCode,
                             JsonResponseType,
                             VAR_API_ROOT_PATH as ROOT_PATH)
@@ -8,14 +10,8 @@ from backend.utils.api_responses import json_response
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 
-def as_dict(commodity) -> dict:
-    return {'fields': {'id': commodity.id,
-                        'name': commodity.name,
-                        'short_name': commodity.short_name,
-                        'type': commodity.type,
-                        'fraction': commodity.fraction,
-                        'description': commodity.description},
-            'infos': {'created_at': commodity.created_at}}
+class GetCommoditiesSchema(Schema):
+    commodity_id = fields.UUID(required=True)
 
 
 class CommoditiesRoutes:
@@ -24,16 +20,17 @@ class CommoditiesRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
-        def get_commodity():
+        def get_commodities():
             try:
-                commodity = Commodities.query.filter(Commodities.id == request.args.get('commodity_id'),
-                                                     Commodities.user_id == get_jwt_identity()).first()
-                if bool(commodity):
-                    return json_response(as_dict(commodity), JsonResponseType.SUCCESS), HttpCode.OK
-                else:
-                    raise RoutesException.NotFound
-            except RoutesException.NotFound as error:
-                return json_response(str(error), JsonResponseType.FAILURE), HttpCode.SERVER_ERROR
+                # Validate request body against schema data types
+                data = GetCommoditiesSchema().load(request.args)
+            except ValidationError as err:
+                # Return a nice message if validation fails
+                return json_response(err.messages, HttpCode.NOT_FOUND)
+            if data.get('commodity_id'):
+                return json_response(Commodities.query.filter(Commodities.id == data.get('commodity_id'),
+                                                     Commodities.user_id == get_jwt_identity()).first(), HttpCode.OK)
+            return json_response(Commodities.query.filter(Commodities.user_id == get_jwt_identity()).all(), HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
@@ -59,6 +56,7 @@ class CommoditiesRoutes:
                                          Commodities.id == request.args.get("id")).first()
                 if bool(commodity):
                     DB.session.delete(commodity)
+                    return json_response("Commidity has been deleted!", HttpCode.OK)
                 else:
                     return json_response("Commodity doesn't exist", HttpCode.NOT_FOUND)
                 return json_response("Commodity deleted", HttpCode.OK)

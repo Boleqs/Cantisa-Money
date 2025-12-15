@@ -14,6 +14,7 @@ class Accounts(Base):
         PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['currency_id'], ['commodities.id'], ondelete='CASCADE'),
+        ForeignKeyConstraint(['parent_id'],['accounts.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
         UniqueConstraint('user_id', 'name'),
         UniqueConstraint('id'),

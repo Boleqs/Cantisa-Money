@@ -30,12 +30,24 @@ class AddAccountSchema(Schema):
     code = fields.String()
 
 
+class UpdateAccountSchema(Schema):
+    name = fields.String(required=True)
+    description = fields.String(required=True)
+    currency_id = fields.String(required=True)
+    parent_id = fields.UUID(required=True)
+    account_type = fields.String(required=True)
+    account_subtype = fields.String(required=True)
+    is_virtual = fields.Boolean(required=True)
+    is_hidden = fields.Boolean(required=True)
+    code = fields.String(required=True)
+
+
 class GetAccountSchema(Schema):
     account_id = fields.UUID()
 
 
 class DeleteAccountSchema(Schema):
-    account_id = fields.UUID()
+    account_id = fields.UUID(required=True)
 
 
 class AccountsRoutes:
@@ -52,15 +64,39 @@ class AccountsRoutes:
                 # Return a nice message if validation fails
                 return json_response(err.messages, HttpCode.NOT_FOUND)
             try:
-                if Accounts.query.filter(Users.id == get_jwt_identity(),
-                                            Accounts.name == data.get("name")).first():
+                if bool(Accounts.query.filter(Users.id == get_jwt_identity(),
+                                            Accounts.name == data.get("name")).first()):
                     return json_response("Account already exists", HttpCode.NOT_FOUND)
                 account = Accounts(user_id=get_jwt_identity(), name=data.get("name"),description=data.get("description"))
                 DB.session.add(account)
                 DB.session.commit()
-                return json_response("Account created", HttpCode.CREATED)
+                return json_response(account, HttpCode.CREATED)
             except Exception as error:
                 return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}", methods=["UPDATE"])
+        @jwt_required()
+        def update_account():
+            try:
+                # Validate request body against schema data types
+                data = UpdateAccountSchema().load(request.json)
+            except ValidationError as err:
+                # Return a nice message if validation fails
+                return json_response(err.messages, HttpCode.NOT_FOUND)
+            account = Accounts.query.filter(Accounts.user_id == get_jwt_identity() and Accounts.id == data.get('account_id'))
+            if not bool(account):
+                return json_response('Account does not exist', HttpCode.NOT_FOUND)
+            account.name = data.get('name')
+            account.description = data.get('description')
+            account.currency_id = data.get('currency_id')
+            account.parent_id = data.get('parent_id')
+            account.type = data.get('type')
+            account.subtype = data.get('subtype')
+            account.is_virtual = data.get('is_virtual')
+            account.is_hidden = data.get('is_hidden')
+            account.code = data.get('code')
+            DB.session.commit()
+            return json_response(account, HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}", methods=["GET"])
         @jwt_required()
@@ -87,4 +123,13 @@ class AccountsRoutes:
             except ValidationError as err:
                 # Return a nice message if validation fails
                 return json_response(err.messages, HttpCode.NOT_FOUND)
-            #TODO : delete account
+            try:
+                account_to_delete = Accounts.query.filter(Accounts.user_id == get_jwt_identity() and Accounts.id == data.get('account_id'))
+                if not bool(account_to_delete):
+                    return json_response(r"Account doesn't exist", HttpCode.NOT_FOUND)
+                account_to_delete.delete()
+                DB.session.commit()
+                return json_response('Account has been deleted', HttpCode.OK)
+            except Exception as error:
+                return json_response(str(error), HttpCode.SERVER_ERROR)
+

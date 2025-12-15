@@ -18,24 +18,24 @@ from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
 
 
-class GetAccountSchema(Schema):
-    account_id = fields.UUID()
-    account_name = fields.String()
+class GetTransactionsSchema(Schema):
+    transaction_id = fields.UUID()
 
-class TestRoutes:
-    def __init__(self, app, DB, Users, Accounts):
-        ROUTE_PATH = f"{ROOT_PATH}/test"
 
-        @app.route(f"{ROUTE_PATH}", methods=["GET"])
-        def get_account():
+class TransactionsRoutes:
+    def __init__(self, app, DB, Transactions, Splits):
+        ROUTE_PATH = f"{ROOT_PATH}/transactions"
+
+        @app.route(f"{ROUTE_PATH}", methods=['GET'])
+        @jwt_required()
+        def get_transactions():
             try:
                 # Validate request body against schema data types
-                data = GetAccountSchema().load(request.args)
-                test = Accounts.query.filter(Accounts.id == data.get("account_id")).first()
-                for arg in data:
-                    print(arg)
-                print(test)
-                return json_response([test, 'test_code'], HttpCode.OK)
+                data = GetTransactionsSchema().load(request.args)
             except ValidationError as err:
                 # Return a nice message if validation fails
                 return json_response(err.messages, HttpCode.NOT_FOUND)
+            if data.get('transaction_id'):
+                return json_response(Transactions.query.filter(Transactions.id == data.get('transaction_id'),
+                                                     Transactions.user_id == get_jwt_identity()).first(), HttpCode.OK)
+            return json_response(Transactions.query.filter(Transactions.user_id == get_jwt_identity()).all(), HttpCode.OK)

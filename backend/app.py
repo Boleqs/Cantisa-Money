@@ -30,6 +30,7 @@ JWTManager(app)
 UsersRoutes(app, DB, Users, UserRoles)
 CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
+TransactionsRoutes(app, DB, Transactions, Splits)
 TestRoutes(app, DB, Users, Accounts)
 
 

@@ -1,7 +1,7 @@
 import uuid
 from .base import Base
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, PrimaryKeyConstraint
+from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, PrimaryKeyConstraint, BOOLEAN
 from sqlalchemy.dialects.postgresql import UUID
 from dataclasses import dataclass
 
@@ -13,6 +13,7 @@ class Transactions(Base):
         PrimaryKeyConstraint('id'),
         ForeignKeyConstraint(['user_id'],['users.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['currency_id'],['commodities.id'], ondelete='CASCADE', onupdate='CASCADE'),
+        ForeignKeyConstraint(['category_id'],['categories.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
         UniqueConstraint('id')
     )
@@ -23,6 +24,5 @@ class Transactions(Base):
     post_date:datetime = Column(DateTime, nullable=False, default=datetime.now())
     effective_date:datetime = Column(DateTime, nullable=False, default=datetime.now())
     description:str = Column(String(1024), nullable=True)
-    category_id:uuid = Column(UUID(as_uuid=True), default='N/A')
-
-
+    category_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    is_cleared:bool = Column(BOOLEAN, nullable=False, default=False)
