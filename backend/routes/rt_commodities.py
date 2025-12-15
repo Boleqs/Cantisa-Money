@@ -11,7 +11,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 
 class GetCommoditiesSchema(Schema):
-    commodity_id = fields.UUID(required=True)
+    commodity_id = fields.UUID(required=False)
 
 
 class CommoditiesRoutes:

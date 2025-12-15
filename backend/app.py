@@ -30,6 +30,7 @@ JWTManager(app)
 UsersRoutes(app, DB, Users, UserRoles)
 CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
+AccountsRoutes(app, DB, Users, Accounts)
 TransactionsRoutes(app, DB, Transactions, Splits)
 TestRoutes(app, DB, Users, Accounts)
 
@@ -72,7 +73,7 @@ def init_db():
     user1_account = Accounts(user_id=user1_id, name='Compte courant', currency_id=user1_commodity_id,
                              description='Loris main account')
     user1_account2 = Accounts(user_id=user1_id, name='Compte Investissment', currency_id=user1_commodity_id2,
-                             description='Loris second account')
+                             description='Loris second account', account_type='Assets')
     DB.session.add(user1_account)
     DB.session.add(user1_account2)
     DB.session.commit()

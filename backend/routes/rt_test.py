@@ -27,7 +27,7 @@ class TestRoutes:
         ROUTE_PATH = f"{ROOT_PATH}/test"
 
         @app.route(f"{ROUTE_PATH}", methods=["GET"])
-        def get_account():
+        def get_test():
             try:
                 # Validate request body against schema data types
                 data = GetAccountSchema().load(request.args)

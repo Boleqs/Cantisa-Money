@@ -2,10 +2,10 @@
   <div class="page">
     <!-- Header -->
     <header class="page-header">
-      <div>
-        <h1>Bank accounts</h1>
+      <div class="title-block">
+        <h1>Accounts</h1>
         <p class="subtitle">
-          Gérez vos comptes courants, livrets et cartes comme dans Microsoft Money.
+          Tous les comptes de l’utilisateur connecté, groupés par type.
         </p>
       </div>
 
@@ -14,690 +14,560 @@
           <span class="search-icon">🔍</span>
           <input
             v-model="search"
+            class="search-input"
             type="text"
-            placeholder="Rechercher un compte…"
+            placeholder="Rechercher un compte (nom, description, code)…"
           />
         </div>
 
-        <label class="checkbox">
-          <input type="checkbox" v-model="showArchived" />
-          Afficher les comptes archivés
+        <label class="toggle">
+          <input type="checkbox" v-model="showHidden" />
+          <span>Afficher cachés</span>
         </label>
 
-        <button class="btn btn-primary" type="button" @click="openCreate">
-          <span class="btn-icon">＋</span>
-          Nouveau compte
+        <label class="toggle">
+          <input type="checkbox" v-model="showVirtual" />
+          <span>Afficher virtuels</span>
+        </label>
+
+        <button class="btn" :disabled="loading" @click="reload">
+          <span v-if="!loading">↻ Rafraîchir</span>
+          <span v-else>Chargement…</span>
         </button>
       </div>
     </header>
 
-    <!-- Résumé -->
-    <section class="summary-grid">
-      <div class="summary-card">
-        <span class="summary-label">Nombre de comptes</span>
-        <span class="summary-value">{{ filteredAccounts.length }}</span>
-      </div>
-      <div class="summary-card">
-        <span class="summary-label">Solde bancaire total</span>
-        <span class="summary-value">{{ formatMoney(totalBankBalance) }}</span>
-      </div>
-      <div class="summary-card">
-        <span class="summary-label">Solde ajusté total</span>
-        <span class="summary-value">{{ formatMoney(totalAdjBalance) }}</span>
-      </div>
-      <div class="summary-card">
-        <span class="summary-label">Transactions à traiter</span>
-        <span class="summary-value">
-          {{ totalToReview }} opé
-        </span>
-      </div>
-    </section>
-
-    <div class="layout">
-      <!-- Liste des comptes bancaires -->
-      <section class="accounts-card">
-        <div
-          v-for="group in groupedAccounts"
-          :key="group.key"
-          class="group"
-        >
-          <!-- En-tête de groupe (pliable) -->
-          <button
-            class="group-header"
-            type="button"
-            @click="toggleGroup(group.key)"
-          >
-            <div class="group-header-left">
-              <span class="group-toggle">
-                {{ isCollapsed(group.key) ? '▶' : '▼' }}
-              </span>
-              <span class="group-title">{{ group.label }}</span>
-            </div>
-            <div class="group-header-right">
-              <span class="group-subtitle">
-                {{ group.accounts.length }} compte{{ group.accounts.length > 1 ? 's' : '' }}
-                · Subtotal {{ formatMoney(group.subtotalAdj) }}
-              </span>
-            </div>
-          </button>
-
-          <!-- Tableau du groupe -->
-          <div v-if="!isCollapsed(group.key)" class="group-table-wrapper">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Compte</th>
-                  <th>Dernière maj</th>
-                  <th>À traiter</th>
-                  <th>Bank balance</th>
-                  <th>Adj. balance</th>
-                  <th class="col-actions"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="acc in group.accounts"
-                  :key="acc.id"
-                  class="account-row"
-                >
-                  <td @click="openLedger(acc)">
-                    <div class="cell-main">
-                      <span class="cell-title">{{ acc.name }}</span>
-                      <span class="cell-sub">
-                        {{ acc.institution || '—' }}
-                        <template v-if="acc.code">
-                          · {{ acc.code }}
-                        </template>
-                      </span>
-                    </div>
-                  </td>
-                  <td>{{ formatDate(acc.last_updated) }}</td>
-                  <td>
-                    <span
-                      :class="[
-                        'badge',
-                        acc.to_review > 0 ? 'badge-warning' : 'badge-muted'
-                      ]"
-                    >
-                      {{ acc.to_review > 0
-                        ? acc.to_review + ' opé à traiter'
-                        : 'OK'
-                      }}
-                    </span>
-                  </td>
-                  <td class="money">
-                    {{ formatMoney(acc.bank_balance) }}
-                  </td>
-                  <td class="money">
-                    {{ formatMoney(acc.adjusted_balance) }}
-                  </td>
-                  <td class="col-actions">
-                    <button
-                      class="icon-btn"
-                      title="Modifier"
-                      @click.stop="openEdit(acc)"
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      class="icon-btn"
-                      :title="acc.is_archived ? 'Réactiver' : 'Archiver'"
-                      @click.stop="toggleArchived(acc)"
-                    >
-                      {{ acc.is_archived ? '🔁' : '🗃️' }}
-                    </button>
-                  </td>
-                </tr>
-
-                <!-- Sous-total -->
-                <tr class="subtotal-row">
-                  <td colspan="3" class="subtotal-label">
-                    Subtotal {{ group.label }}
-                  </td>
-                  <td class="money">
-                    {{ formatMoney(group.subtotalBank) }}
-                  </td>
-                  <td class="money">
-                    {{ formatMoney(group.subtotalAdj) }}
-                  </td>
-                  <td></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Total global -->
-        <footer class="total-footer">
-          <span>Total Account Balance</span>
-          <span class="money">{{ formatMoney(totalAdjBalance) }}</span>
-        </footer>
-
-        <p v-if="!groupedAccounts.length" class="empty">
-          Aucun compte ne correspond à vos filtres.
-        </p>
-      </section>
+    <!-- Errors -->
+    <div v-if="error" class="alert">
+      <strong>Erreur :</strong> {{ error }}
     </div>
 
-    <!-- Modal création / édition (celui qu'on a déjà fait) -->
-    <AccountModal
-      v-model="showModal"
-      :mode="modalMode"
-      :account="editingAccount"
-      @save="handleSave"
-    />
+    <!-- Skeleton / Empty -->
+    <div v-if="loading && !accounts.length" class="skeleton">
+      Chargement des comptes…
+    </div>
+
+    <div v-else-if="!loading && !filteredAccounts.length" class="empty">
+      Aucun compte à afficher.
+    </div>
+
+    <!-- Groups -->
+    <section v-else class="groups">
+      <article
+        v-for="group in groupedAccounts"
+        :key="group.key"
+        class="group"
+      >
+        <div class="group-header" @click="toggleGroup(group.key)">
+          <div class="group-title">
+            <h2>{{ group.label }}</h2>
+            <span class="pill">{{ group.items.length }}</span>
+          </div>
+          <button class="icon-btn" type="button" :aria-label="isCollapsed(group.key) ? 'Déplier' : 'Replier'">
+            {{ isCollapsed(group.key) ? '▸' : '▾' }}
+          </button>
+        </div>
+
+        <div v-if="!isCollapsed(group.key)" class="cards">
+          <div v-for="acc in group.items" :key="acc.id" class="card">
+            <div class="card-top">
+              <div class="name-wrap">
+                <div class="name-row">
+                  <h3 class="name">{{ acc.name }}</h3>
+                  <span v-if="acc.code" class="code">#{{ acc.code }}</span>
+                </div>
+                <p v-if="acc.description" class="desc">
+                  {{ acc.description }}
+                </p>
+              </div>
+
+              <div class="badges">
+                <span class="badge">{{ acc.account_type }}</span>
+                <span v-if="acc.account_subtype" class="badge soft">
+                  {{ acc.account_subtype }}
+                </span>
+                <span v-if="acc.is_hidden" class="badge danger">Hidden</span>
+                <span v-if="acc.is_virtual" class="badge warn">Virtual</span>
+              </div>
+            </div>
+
+            <div class="card-grid">
+              <div class="kv">
+                <div class="k">Devise</div>
+                <div class="v">
+                  {{ currencyLabel(acc.currency_id) }}
+                </div>
+              </div>
+
+              <div class="kv">
+                <div class="k">Total earned</div>
+                <div class="v mono">
+                  {{ fmtAmount(acc.total_earned) }} {{ currencyShort(acc.currency_id) }}
+                </div>
+              </div>
+
+              <div class="kv">
+                <div class="k">Total spent</div>
+                <div class="v mono">
+                  {{ fmtAmount(acc.total_spent) }} {{ currencyShort(acc.currency_id) }}
+                </div>
+              </div>
+
+              <div class="kv" v-if="acc.parent_id">
+                <div class="k">Parent</div>
+                <div class="v mono">
+                  {{ acc.parent_id }}
+                </div>
+              </div>
+
+              <div class="kv">
+                <div class="k">Created</div>
+                <div class="v">{{ fmtDate(acc.created_at) }}</div>
+              </div>
+
+              <div class="kv">
+                <div class="k">Updated</div>
+                <div class="v">{{ fmtDate(acc.updated_at) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import AccountModal from "@/components/modal/AccountModal.vue";
+import { ref, computed, onMounted } from "vue";
+import axios from "axios";
 
-// --- Données de démo (banques only, comme Money) ---
-const accounts = ref([
-  {
-    id: '1',
-    name: 'Compte courant',
-    category: 'checking',
-    categoryLabel: 'Checking accounts',
-    institution: 'Boursorama',
-    currency: 'EUR',
-    bank_balance: 1234.56,
-    adjusted_balance: 1180.12,
-    last_updated: '2025-11-29',
-    to_review: 3,
-    code: 'CCP-BRS',
-    is_archived: false
-  },
-  {
-    id: '2',
-    name: 'Livret A',
-    category: 'savings',
-    categoryLabel: 'Savings accounts',
-    institution: 'Crédit Agricole',
-    currency: 'EUR',
-    bank_balance: 8000,
-    adjusted_balance: 8000,
-    last_updated: '2025-11-15',
-    to_review: 0,
-    code: 'LIV-A',
-    is_archived: false
-  },
-  {
-    id: '3',
-    name: 'Compte joint',
-    category: 'checking',
-    categoryLabel: 'Checking accounts',
-    institution: 'Hello Bank',
-    currency: 'EUR',
-    bank_balance: 420.5,
-    adjusted_balance: 395.2,
-    last_updated: '2025-11-28',
-    to_review: 1,
-    code: 'CCP-JNT',
-    is_archived: false
-  },
-  {
-    id: '4',
-    name: 'Carte de crédit',
-    category: 'card',
-    categoryLabel: 'Credit cards',
-    institution: 'Fortuneo',
-    currency: 'EUR',
-    bank_balance: -350.0,
-    adjusted_balance: -320.0,
-    last_updated: '2025-11-20',
-    to_review: 2,
-    code: 'CB-CRD',
-    is_archived: false
-  },
-  {
-    id: '5',
-    name: 'Ancien compte',
-    category: 'checking',
-    categoryLabel: 'Checking accounts',
-    institution: 'Banque Populaire',
-    currency: 'EUR',
-    bank_balance: 0,
-    adjusted_balance: 0,
-    last_updated: '2023-01-01',
-    to_review: 0,
-    code: 'OLD-CC',
-    is_archived: true
+const accounts = ref([]);
+const commodities = ref([]);
+
+const loading = ref(false);
+const error = ref("");
+
+const search = ref("");
+const showHidden = ref(false);
+const showVirtual = ref(false);
+
+// Group collapse state
+const collapsed = ref(new Set());
+
+// Order & labels for account_type
+const TYPE_ORDER = ["Current", "Assets", "Equity", "Income", "Expense"];
+const TYPE_LABELS = {
+  Current: "Current accounts",
+  Assets: "Assets",
+  Equity: "Equity",
+  Income: "Income",
+  Expense: "Expense",
+};
+
+function normalizeText(v) {
+  return (v ?? "").toString().toLowerCase().trim();
+}
+
+function fmtDate(v) {
+  if (!v) return "—";
+  // backend renvoie souvent un ISO ou une string parseable
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  return d.toLocaleString("fr-FR");
+}
+
+function fmtAmount(v) {
+  if (v === null || v === undefined || v === "") return "0";
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(n);
+}
+
+function commodityById(id) {
+  return commodities.value.find((c) => String(c.id) === String(id));
+}
+
+function currencyShort(currencyId) {
+  const c = commodityById(currencyId);
+  return c?.short_name?.toUpperCase?.() || "—";
+}
+
+function currencyLabel(currencyId) {
+  const c = commodityById(currencyId);
+  if (!c) return String(currencyId ?? "—");
+  const short = c.short_name ? c.short_name.toUpperCase() : "";
+  return short ? `${c.name} (${short})` : c.name;
+}
+
+function isCollapsed(key) {
+  return collapsed.value.has(key);
+}
+
+function toggleGroup(key) {
+  const next = new Set(collapsed.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsed.value = next;
+}
+
+async function fetchCommodities() {
+  // GET /api/commodities -> { response_data: [...] }
+  const { data } = await axios.get("/api/commodities");
+  commodities.value = Array.isArray(data?.response_data) ? data.response_data : [];
+}
+
+async function fetchAccounts() {
+  // GET /api/accounts -> { response_data: [...] }
+  const { data } = await axios.get("/api/accounts");
+  accounts.value = Array.isArray(data?.response_data) ? data.response_data : [];
+}
+
+async function reload() {
+  loading.value = true;
+  error.value = "";
+  try {
+    // commodities avant accounts pour afficher les devises correctement
+    await fetchCommodities();
+    await fetchAccounts();
+  } catch (e) {
+    // erreurs typiques : 401 si auth invalide, ou backend down
+    const msg =
+      e?.response?.data?.response_data ||
+      e?.response?.statusText ||
+      e?.message ||
+      "Erreur inconnue";
+    error.value = msg;
+  } finally {
+    loading.value = false;
   }
-])
-
-// filtres
-const search = ref('')
-const showArchived = ref(false)
-
-// groupes repliés
-const collapsed = ref(new Set())
-const isCollapsed = key => collapsed.value.has(key)
-const toggleGroup = key => {
-  const set = new Set(collapsed.value)
-  if (set.has(key)) set.delete(key)
-  else set.add(key)
-  collapsed.value = set
 }
 
-// formatage
-const formatMoney = v =>
-  v == null
-    ? '—'
-    : v.toLocaleString('fr-FR', {
-        style: 'currency',
-        currency: 'EUR',
-        maximumFractionDigits: 0
-      })
+onMounted(() => {
+  reload();
+});
 
-const formatDate = iso => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString('fr-FR')
-}
-
-// comptes filtrés
+// Filtering (search + flags)
 const filteredAccounts = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  return accounts.value.filter(acc => {
-    if (!showArchived.value && acc.is_archived) return false
-    const matchSearch =
-      !q ||
-      acc.name.toLowerCase().includes(q) ||
-      (acc.institution && acc.institution.toLowerCase().includes(q)) ||
-      (acc.code && acc.code.toLowerCase().includes(q))
-    return matchSearch
-  })
-})
+  const q = normalizeText(search.value);
 
-// groupement par catégorie façon Money
+  return accounts.value
+    .filter((a) => (showHidden.value ? true : !a.is_hidden))
+    .filter((a) => (showVirtual.value ? true : !a.is_virtual))
+    .filter((a) => {
+      if (!q) return true;
+      const blob = [
+        a.name,
+        a.description,
+        a.code,
+        a.account_type,
+        a.account_subtype,
+      ]
+        .map(normalizeText)
+        .join(" ");
+      return blob.includes(q);
+    });
+});
+
+// Grouping by account_type + ordering
 const groupedAccounts = computed(() => {
-  const map = new Map()
-  for (const acc of filteredAccounts.value) {
-    const key = acc.category || 'other'
-    const label =
-      acc.categoryLabel ||
-      (key === 'checking'
-        ? 'Checking accounts'
-        : key === 'savings'
-        ? 'Savings accounts'
-        : key === 'card'
-        ? 'Credit cards'
-        : 'Other accounts')
+  const list = filteredAccounts.value.slice();
 
-    if (!map.has(key)) {
-      map.set(key, { key, label, accounts: [] })
+  // sort inside groups by name
+  list.sort((a, b) => {
+    const an = normalizeText(a.name);
+    const bn = normalizeText(b.name);
+    return an.localeCompare(bn, "fr");
+  });
+
+  const map = new Map();
+  for (const acc of list) {
+    const t = acc.account_type || "Other";
+    if (!map.has(t)) map.set(t, []);
+    map.get(t).push(acc);
+  }
+
+  const keys = Array.from(map.keys());
+
+  // order groups by known order first, then rest alpha
+  keys.sort((a, b) => {
+    const ia = TYPE_ORDER.indexOf(a);
+    const ib = TYPE_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) {
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
     }
-    map.get(key).accounts.push(acc)
-  }
+    return a.localeCompare(b, "fr");
+  });
 
-  const result = []
-  for (const [key, group] of map.entries()) {
-    const subtotalBank = group.accounts.reduce(
-      (sum, a) => sum + (a.bank_balance || 0),
-      0
-    )
-    const subtotalAdj = group.accounts.reduce(
-      (sum, a) => sum + (a.adjusted_balance || 0),
-      0
-    )
-    result.push({ ...group, subtotalBank, subtotalAdj })
-  }
-
-  // ordre : checking, savings, card, puis autres
-  const order = ['checking', 'savings', 'card']
-  return result.sort(
-    (a, b) => (order.indexOf(a.key) + 10) - (order.indexOf(b.key) + 10)
-  )
-})
-
-// totaux
-const totalBankBalance = computed(() =>
-  filteredAccounts.value.reduce((s, a) => s + (a.bank_balance || 0), 0)
-)
-const totalAdjBalance = computed(() =>
-  filteredAccounts.value.reduce((s, a) => s + (a.adjusted_balance || 0), 0)
-)
-const totalToReview = computed(() =>
-  filteredAccounts.value.reduce((s, a) => s + (a.to_review || 0), 0)
-)
-
-// actions simples
-const toggleArchived = acc => {
-  acc.is_archived = !acc.is_archived
-}
-
-const openLedger = acc => {
-  // plus tard : router.push({ name: 'ledger', params: { id: acc.id } })
-  console.log('open ledger for account', acc.id)
-}
-
-// --- Modal création / édition (réutilisation de AccountModal.vue) ---
-const showModal = ref(false)
-const modalMode = ref('create') // 'create' | 'edit'
-const editingAccount = ref(null)
-
-const openCreate = () => {
-  modalMode.value = 'create'
-  editingAccount.value = null
-  showModal.value = true
-}
-
-const openEdit = acc => {
-  modalMode.value = 'edit'
-  // on passe une copie pour ne pas muter directement la ligne si on annule
-  editingAccount.value = { ...acc }
-  showModal.value = true
-}
-
-const handleSave = payload => {
-  if (modalMode.value === 'create') {
-    const newAcc = {
-      id: String(Date.now()),
-      category: 'checking',
-      categoryLabel: 'Checking accounts',
-      to_review: 0,
-      ...payload
-    }
-    accounts.value = [...accounts.value, newAcc]
-  } else {
-    accounts.value = accounts.value.map(a =>
-      a.id === payload.id ? { ...a, ...payload } : a
-    )
-  }
-}
+  return keys.map((key) => ({
+    key,
+    label: TYPE_LABELS[key] || key,
+    items: map.get(key),
+  }));
+});
 </script>
 
 <style scoped>
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  padding: 28px;
+  color: #e5e7eb;
+  background: #0b1220;
+  min-height: 100vh;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
 }
 
-/* Header */
 .page-header {
   display: flex;
+  align-items: flex-end;
   justify-content: space-between;
-  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
 }
-.page-header h1 {
+
+.title-block h1 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 28px;
+  letter-spacing: 0.2px;
 }
+
 .subtitle {
-  margin: 2px 0 0;
-  font-size: 13px;
+  margin: 6px 0 0;
   color: #9ca3af;
+  font-size: 14px;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .search-wrapper {
   position: relative;
 }
-.search-wrapper input {
-  padding: 6px 10px 6px 24px;
-  border-radius: 999px;
-  border: 1px solid #1f2937;
-  background: #020617;
-  color: #e5e7eb;
-  font-size: 13px;
-}
-.search-wrapper input:focus {
-  outline: none;
-  border-color: #2563eb;
-}
+
 .search-icon {
   position: absolute;
-  left: 8px;
+  left: 10px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 11px;
-}
-.checkbox {
-  font-size: 12px;
-  color: #e5e7eb;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  opacity: 0.7;
 }
 
-/* Résumé */
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-@media (max-width: 900px) {
-  .summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (max-width: 600px) {
-  .summary-grid {
-    grid-template-columns: 1fr;
-  }
-}
-.summary-card {
-  padding: 10px 12px;
+.search-input {
+  padding: 10px 10px 10px 32px;
   border-radius: 10px;
-  background: radial-gradient(circle at top left, #111827, #020617);
-  border: 1px solid #1f2937;
-}
-.summary-label {
-  font-size: 11px;
-  color: #9ca3af;
-}
-.summary-value {
-  font-size: 16px;
-  font-weight: 600;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
   color: #e5e7eb;
+  outline: none;
+  width: 320px;
+  max-width: 70vw;
 }
 
-/* Layout */
-.layout {
-  display: grid;
-  gap: 14px;
-}
-@media (max-width: 900px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* Carte comptes */
-.accounts-card {
-  border-radius: 14px;
-  border: 1px solid #1f2937;
-  background: #020617;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  padding: 6px 0 0;
-  min-width: 0;
-}
-.group + .group {
-  border-top: 1px solid #111827;
-}
-.group-header {
-  width: 100%;
-  padding: 6px 14px;
-  background: linear-gradient(to right, #0b1120, #020617);
-  border: none;
-  border-bottom: 1px solid #111827;
-  color: #e5e7eb;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.group-header-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.group-toggle {
-  font-size: 11px;
-}
-.group-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-.group-subtitle {
-  font-size: 11px;
-  color: #9ca3af;
-}
-.group-table-wrapper {
-  overflow-x: auto;
-}
-
-/* Table */
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.table thead {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #9ca3af;
-}
-.table th,
-.table td {
-  padding: 8px 14px;
-  white-space: nowrap;
-}
-.account-row {
-  cursor: pointer;
-}
-.account-row:hover {
-  background: rgba(15, 23, 42, 0.8);
-}
-.cell-main {
-  display: flex;
-  flex-direction: column;
-}
-.cell-title {
-  font-weight: 500;
-}
-.cell-sub {
-  font-size: 11px;
-  color: #9ca3af;
-}
-.money {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-/* Sous-total + total */
-.subtotal-row {
-  background: #020617;
-  border-top: 1px solid #111827;
-}
-.subtotal-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #e5e7eb;
-}
-.total-footer {
-  margin-top: 4px;
-  padding: 6px 14px;
-  border-top: 1px solid #111827;
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: #e5e7eb;
-}
-
-/* Panneau tâches */
-.tasks-panel {
-  border-radius: 14px;
-  border: 1px solid #1f2937;
-  background: #020617;
-  padding: 10px 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  font-size: 12px;
-}
-.tasks-panel h2 {
-  margin: 0 0 4px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.tasks-panel ul {
-  margin: 0 0 10px;
-  padding-left: 0;
-  list-style: none;
-}
-.tasks-panel li + li {
-  margin-top: 4px;
-}
-.tasks-panel button {
-  background: none;
-  border: none;
-  padding: 0;
-  color: #60a5fa;
-  cursor: pointer;
-  font-size: 12px;
-}
-.tasks-panel button:hover {
-  text-decoration: underline;
-}
-
-/* Badges / boutons */
-.badge {
+.toggle {
   display: inline-flex;
+  gap: 8px;
   align-items: center;
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 11px;
+  font-size: 13px;
+  color: #cbd5e1;
+  user-select: none;
 }
-.badge-warning {
-  background: rgba(234, 179, 8, 0.15);
-  color: #facc15;
-}
-.badge-muted {
-  background: rgba(55, 65, 81, 0.6);
-  color: #e5e7eb;
+.toggle input {
+  accent-color: #60a5fa;
 }
 
 .btn {
-  border-radius: 999px;
-  border: 1px solid #374151;
-  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
   color: #e5e7eb;
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 10px;
   cursor: pointer;
-  display: inline-flex;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.alert {
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  color: #fecaca;
+}
+
+.skeleton,
+.empty {
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 14px;
+  color: #cbd5e1;
+}
+
+.groups {
+  display: grid;
+  gap: 14px;
+}
+
+.group {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.group-header {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  padding: 14px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
-.btn-primary {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
-  border-color: transparent;
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.btn:hover {
-  opacity: 0.92;
-}
-.btn-icon {
+.group-title h2 {
+  margin: 0;
   font-size: 16px;
-  line-height: 1;
 }
+
+.pill {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  color: #bfdbfe;
+}
+
 .icon-btn {
   border: none;
   background: transparent;
-  color: #9ca3af;
-  cursor: pointer;
-  font-size: 15px;
-}
-.icon-btn:hover {
   color: #e5e7eb;
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0.85;
+}
+
+.cards {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 6, 23, 0.45);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.name-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
+.name-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.name {
+  margin: 0;
+  font-size: 16px;
+}
+.code {
+  color: #93c5fd;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  background: rgba(96, 165, 250, 0.10);
+}
+
+.desc {
+  margin: 6px 0 0;
+  color: #9ca3af;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.badge {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(148, 163, 184, 0.10);
+  color: #e5e7eb;
+}
+.badge.soft {
+  background: rgba(148, 163, 184, 0.06);
+}
+.badge.danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.10);
+  color: #fecaca;
+}
+.badge.warn {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.10);
+  color: #fde68a;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kv .k {
+  color: #9ca3af;
+  font-size: 12px;
+}
+.kv .v {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+.mono {
+  font-variant-numeric: tabular-nums;
 }
 </style>
