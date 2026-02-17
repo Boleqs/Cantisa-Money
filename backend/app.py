@@ -75,7 +75,12 @@ def init_db():
     user1_account2 = Accounts(user_id=user1_id, name='Compte Investissment', currency_id=user1_commodity_id2,
                              description='Loris second account', account_type='Assets')
     DB.session.add(user1_account)
+    DB.session.commit()
+    user1_account3 = Accounts(user_id=user1_id, name='Sous compte courant', currency_id=user1_commodity_id,
+                              parent_id=user1_account.id, description='Loris sub account')
+    print(user1_account3)
     DB.session.add(user1_account2)
+    DB.session.add(user1_account3)
     DB.session.commit()
 
 

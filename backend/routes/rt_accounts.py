@@ -74,7 +74,7 @@ class AccountsRoutes:
             except Exception as error:
                 return json_response(str(error), HttpCode.SERVER_ERROR)
 
-        @app.route(f"{ROUTE_PATH}", methods=["UPDATE"])
+        @app.route(f"{ROUTE_PATH}", methods=["PATCH"])
         @jwt_required()
         def update_account():
             try:

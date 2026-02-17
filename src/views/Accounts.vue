@@ -115,7 +115,7 @@
 
               <div class="kv" v-if="acc.parent_id">
                 <div class="k">Parent</div>
-                <div class="v mono">
+                <div class="v">
                   {{ acc.parent_id }}
                 </div>
               </div>
