@@ -1,9 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import axios from 'axios'
-import {defineEmits} from "vue";
-import showEventBool from "@/App.vue"
-//import createRouter from 'vue-router'
-//import createWebHistory from 'vue-router'
 
 axios.defaults.withCredentials = true
 axios.defaults.baseURL = 'http://localhost:5000'
@@ -12,7 +8,8 @@ const routes = [
     {
         path: '/',
         name: 'Home',
-        component: () => import('../views/Home.vue')
+        component: () => import('../views/Home.vue'),
+        meta: { requiresAuth: true }
     },
     {
         path: '/Dashboard',
@@ -23,12 +20,14 @@ const routes = [
     {
         path: '/Signin',
         name: 'Signin',
-        component: () => import('../views/Signin.vue')
+        component: () => import('../views/Signin.vue'),
+        meta: { guestOnly: true }
     },
     {
         path: '/init/Signup',
         name: 'Signup',
-        component: () => import('../views/initialization/Signup.vue')
+        component: () => import('../views/initialization/Signup.vue'),
+        meta: { guestOnly: true }
     },
     {
         path: '/error',
@@ -38,41 +37,76 @@ const routes = [
     {
         path: '/accounts',
         name: 'Accounts',
-        component: () => import('../views/Accounts.vue')
+        component: () => import('../views/Accounts.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/transactions',
+        name: 'Transactions',
+        component: () => import('../views/Transactions.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/budgets',
+        name: 'Budgets',
+        component: () => import('../views/Budgets.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/categories',
+        name: 'Categories',
+        component: () => import('../views/Categories.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/tags',
+        name: 'Tags',
+        component: () => import('../views/Tags.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/subscriptions',
+        name: 'Subscriptions',
+        component: () => import('../views/Subscriptions.vue'),
+        meta: { requiresAuth: true }
     }
-
 ]
 
 const router = createRouter({
     history: createWebHistory(),
     routes
-  })
-
-router.beforeEach(async (to, from, next) => {
-  document.title = 'CMM | ' + to.name;
-
-    if (!to.meta.requiresAuth) {
-    return next()
-  }
-
-  try {
-    // demande à Flask : "est-ce que l'utilisateur est connecté ?"
-    await axios.get('http://localhost:5000/api/auth/check-auth', {
-      withCredentials: true
-    })
-    // si Flask ne renvoie PAS d'erreur → OK
-    next()
-
-  } catch (err) {
-        // si erreur network → pas de connexion à l'api
-    if (err.message === 'Network Error') {
-        next('/error')
-    } else {
-        // sinon, go to signin
-        next('/Signin')
-    }
-  }
 })
 
+async function checkAuth() {
+    try {
+        await axios.get('/api/auth/check-auth', { withCredentials: true })
+        return true
+    } catch (err) {
+        if (err.message === 'Network Error') return 'network_error'
+        return false
+    }
+}
 
-  export default router
+router.beforeEach(async (to, from, next) => {
+    document.title = 'CMM | ' + to.name
+
+    if (to.meta.requiresAuth || to.meta.guestOnly) {
+        const authStatus = await checkAuth()
+
+        if (authStatus === 'network_error') {
+            return next('/error')
+        }
+
+        if (to.meta.requiresAuth && !authStatus) {
+            return next('/Signin')
+        }
+
+        if (to.meta.guestOnly && authStatus === true) {
+            return next('/Dashboard')
+        }
+    }
+
+    next()
+})
+
+export default router

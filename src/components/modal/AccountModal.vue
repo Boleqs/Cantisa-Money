@@ -4,9 +4,7 @@
       <header class="modal-header">
         <div>
           <h2>{{ isEdit ? 'Modifier le compte' : 'Nouveau compte' }}</h2>
-          <p class="subtitle">
-            Définissez les informations du compte et ses soldes.
-          </p>
+          <p class="subtitle">Définissez les informations du compte.</p>
         </div>
         <button class="icon-btn" type="button" @click="close">✕</button>
       </header>
@@ -19,58 +17,60 @@
           </div>
 
           <div class="field">
-            <label>Type</label>
-            <select v-model="form.type">
-              <option value="bank">Bank account</option>
-              <option value="investment">Investment account</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <label>Institution</label>
-            <input
-              v-model="form.institution"
-              placeholder="Banque, courtier…"
-            />
-          </div>
-
-          <div class="field">
-            <label>Devise</label>
-            <input v-model="form.currency" placeholder="EUR, USD…" />
-          </div>
-
-          <div class="field">
-            <label>Bank balance</label>
-            <input
-              v-model.number="form.bank_balance"
-              type="number"
-              step="0.01"
-            />
-          </div>
-
-          <div class="field">
-            <label>Adj. balance</label>
-            <input
-              v-model.number="form.adjusted_balance"
-              type="number"
-              step="0.01"
-            />
-          </div>
-
-          <div class="field">
             <label>Code interne</label>
             <input v-model="form.code" placeholder="CCP-BRS…" />
           </div>
 
+          <div class="field field-full">
+            <label>Description *</label>
+            <input v-model="form.description" required />
+          </div>
+
           <div class="field">
-            <label>Dernière mise à jour</label>
-            <input v-model="form.last_updated" type="date" />
+            <label>Devise *</label>
+            <select v-model="form.currency_id" required>
+              <option value="" disabled>Sélectionner…</option>
+              <option v-for="c in commodities" :key="c.id" :value="c.id">
+                {{ c.name }} ({{ c.short_name?.toUpperCase() }})
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Compte parent</label>
+            <select v-model="form.parent_id">
+              <option :value="null">Aucun</option>
+              <option v-for="a in parentAccounts" :key="a.id" :value="a.id">
+                {{ a.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Type</label>
+            <select v-model="form.account_type">
+              <option value="">— Aucun —</option>
+              <option value="Current">Current</option>
+              <option value="Assets">Assets</option>
+              <option value="Equity">Equity</option>
+              <option value="Income">Income</option>
+              <option value="Expense">Expense</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Sous-type</label>
+            <input v-model="form.account_subtype" placeholder="Optionnel" />
           </div>
 
           <div class="field field-full toggles">
             <label>
-              <input type="checkbox" v-model="form.is_archived" />
-              Compte archivé
+              <input type="checkbox" v-model="form.is_hidden" />
+              Compte caché
+            </label>
+            <label>
+              <input type="checkbox" v-model="form.is_virtual" />
+              Compte virtuel
             </label>
           </div>
         </div>
@@ -90,9 +90,11 @@
 import { computed, reactive, watch } from 'vue'
 
 const props = defineProps({
-  modelValue: { type: Boolean, required: true }, // v-model:visible
-  mode: { type: String, default: 'create' },     // 'create' | 'edit'
-  account: { type: Object, default: null }       // compte à éditer
+  modelValue: { type: Boolean, required: true },
+  mode: { type: String, default: 'create' },
+  account: { type: Object, default: null },
+  commodities: { type: Array, default: () => [] },
+  parentAccounts: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
@@ -102,27 +104,22 @@ const isEdit = computed(() => props.mode === 'edit')
 const emptyForm = () => ({
   id: null,
   name: '',
-  type: 'bank',
-  institution: '',
-  currency: 'EUR',
-  bank_balance: 0,
-  adjusted_balance: 0,
-  last_updated: new Date().toISOString().slice(0, 10),
+  description: '',
+  currency_id: '',
+  parent_id: null,
+  account_type: '',
+  account_subtype: '',
+  is_hidden: false,
+  is_virtual: false,
   code: '',
-  is_archived: false
 })
 
 const form = reactive(emptyForm())
 
-// quand on ouvre en mode édition, on copie les valeurs du compte
 watch(
   () => props.account,
   (acc) => {
-    Object.assign(
-      form,
-      emptyForm(),
-      acc ? { ...acc } : {}
-    )
+    Object.assign(form, emptyForm(), acc ? { ...acc } : {})
   },
   { immediate: true }
 )
@@ -152,7 +149,7 @@ const onSubmit = () => {
 }
 
 .modal {
-  width: 520px;
+  width: 540px;
   max-width: 100%;
   background: #020617;
   border-radius: 16px;
@@ -232,7 +229,6 @@ const onSubmit = () => {
   gap: 8px;
 }
 
-/* boutons */
 .btn {
   border-radius: 999px;
   border: 1px solid #374151;
@@ -245,10 +241,12 @@ const onSubmit = () => {
   align-items: center;
   gap: 6px;
 }
+
 .btn-primary {
   background: linear-gradient(90deg, #2563eb, #4f46e5);
   border-color: transparent;
 }
+
 .btn:hover {
   opacity: 0.92;
 }
@@ -260,6 +258,7 @@ const onSubmit = () => {
   cursor: pointer;
   font-size: 16px;
 }
+
 .icon-btn:hover {
   color: #e5e7eb;
 }

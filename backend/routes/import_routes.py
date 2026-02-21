@@ -3,4 +3,8 @@ from .rt_commodities import CommoditiesRoutes
 from .rt_auth import AuthRoutes
 from .rt_transactions import TransactionsRoutes
 from .rt_accounts import AccountsRoutes
+from .rt_budgets import BudgetsRoutes
+from .rt_categories import CategoriesRoutes
+from .rt_tags import TagsRoutes
+from .rt_subscriptions import SubscriptionsRoutes
 from .rt_test import TestRoutes

@@ -31,7 +31,11 @@ UsersRoutes(app, DB, Users, UserRoles)
 CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
 AccountsRoutes(app, DB, Users, Accounts)
-TransactionsRoutes(app, DB, Transactions, Splits)
+TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits)
+BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags)
+CategoriesRoutes(app, DB, Categories)
+TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions)
+SubscriptionsRoutes(app, DB, Subscriptions)
 TestRoutes(app, DB, Users, Accounts)
 
 

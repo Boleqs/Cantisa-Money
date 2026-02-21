@@ -34,6 +34,8 @@
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
         </button>
+
+        <button class="btn btn-primary" @click="openCreate">+ Nouveau compte</button>
       </div>
     </header>
 
@@ -115,9 +117,7 @@
 
               <div class="kv" v-if="acc.parent_id">
                 <div class="k">Parent</div>
-                <div class="v">
-                  {{ acc.parent_id }}
-                </div>
+                <div class="v">{{ parentName(acc.parent_id) }}</div>
               </div>
 
               <div class="kv">
@@ -130,19 +130,39 @@
                 <div class="v">{{ fmtDate(acc.updated_at) }}</div>
               </div>
             </div>
+
+            <div class="card-actions">
+              <button class="btn-action" @click="openEdit(acc)">✎ Modifier</button>
+              <button class="btn-action btn-danger" @click="deleteAccount(acc)">✕ Supprimer</button>
+            </div>
           </div>
         </div>
       </article>
     </section>
   </div>
+
+  <AccountModal
+    v-model="showModal"
+    :mode="modalMode"
+    :account="selectedAccount"
+    :commodities="commodities"
+    :parent-accounts="accounts"
+    @save="handleSave"
+  />
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import axios from "axios";
+import AccountModal from "@/components/modal/AccountModal.vue";
 
 const accounts = ref([]);
 const commodities = ref([]);
+
+// Modal state
+const showModal = ref(false);
+const modalMode = ref("create");
+const selectedAccount = ref(null);
 
 const loading = ref(false);
 const error = ref("");
@@ -240,6 +260,69 @@ async function reload() {
   } finally {
     loading.value = false;
   }
+}
+
+function openCreate() {
+  selectedAccount.value = null;
+  modalMode.value = "create";
+  showModal.value = true;
+}
+
+function openEdit(acc) {
+  selectedAccount.value = { ...acc };
+  modalMode.value = "edit";
+  showModal.value = true;
+}
+
+async function handleSave(form) {
+  try {
+    if (modalMode.value === "create") {
+      await axios.post("/api/accounts", {
+        name: form.name,
+        description: form.description,
+        currency_id: form.currency_id,
+        parent_id: form.parent_id || undefined,
+        account_type: form.account_type || undefined,
+        account_subtype: form.account_subtype || undefined,
+        is_virtual: form.is_virtual,
+        is_hidden: form.is_hidden,
+        code: form.code || undefined,
+      });
+    } else {
+      await axios.patch("/api/accounts", {
+        account_id: form.id,
+        name: form.name,
+        description: form.description,
+        currency_id: form.currency_id,
+        parent_id: form.parent_id || undefined,
+        account_type: form.account_type || undefined,
+        account_subtype: form.account_subtype || undefined,
+        is_virtual: form.is_virtual,
+        is_hidden: form.is_hidden,
+        code: form.code || undefined,
+      });
+    }
+    await reload();
+  } catch (e) {
+    error.value =
+      e?.response?.data?.response_data || e?.message || "Erreur inconnue";
+  }
+}
+
+async function deleteAccount(acc) {
+  if (!confirm(`Supprimer le compte « ${acc.name} » ?`)) return;
+  try {
+    await axios.delete("/api/accounts", { params: { account_id: acc.id } });
+    await reload();
+  } catch (e) {
+    error.value =
+      e?.response?.data?.response_data || e?.message || "Erreur inconnue";
+  }
+}
+
+function parentName(parentId) {
+  const p = accounts.value.find((a) => String(a.id) === String(parentId));
+  return p ? p.name : String(parentId);
 }
 
 onMounted(() => {
@@ -569,5 +652,41 @@ const groupedAccounts = computed(() => {
 }
 .mono {
   font-variant-numeric: tabular-nums;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+.btn-action {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-action:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.btn-danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.btn-primary {
+  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  border-color: transparent;
+  color: #fff;
 }
 </style>

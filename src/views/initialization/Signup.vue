@@ -37,23 +37,19 @@
   const API_BASE = 'http://localhost:5000/api/user'
 
   async function createAccount () {
+    loading.value = true
     try {
-      const { data } = await axios.post(`${API_BASE}`, {
+      await axios.post(`${API_BASE}`, {
         username: username.value,
         email: email.value,
         password: password.value,
         role_id: '00000000-cafe-46fe-9a04-a03b4c253f1f'
       })
-      emit('msg-event', { type: 'info', content: `The account ${username} has been created!`})
+      emit('msg-event', { type: 'info', content: `Le compte ${username.value} a été créé !` })
+      router.push('/Signin')
     } catch (e) {
-      try {
-        // if missing value error
-        error.value = e.response.data.response_data || 'Server error.'
-      }
-      catch (e) {
-        // if other error, typically network error
-        error.value = e
-      }
+      const msg = e?.response?.data?.response_data || e?.message || 'Erreur serveur.'
+      emit('msg-event', { type: 'error', content: msg })
     } finally {
       loading.value = false
     }

@@ -43,9 +43,10 @@ export default {
           <SidebarGroup label="Comptes Bancaires">
             <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
             <SidebarLink to="/Accounts">Liste des comptes</SidebarLink>
+            <SidebarLink to="/transactions">Transactions</SidebarLink>
           </SidebarGroup>
           <SidebarLink to="/test4">Factures</SidebarLink>
-          <SidebarLink to="/test5">Budgets</SidebarLink>
+          <SidebarLink to="/budgets">Budgets</SidebarLink>
         <SidebarSectionTitle label="Gestion financière"/>
           <SidebarGroup label="Portfolio">
             <SidebarLink to="/test3">Liste des comptes</SidebarLink>
@@ -54,6 +55,11 @@ export default {
         <SidebarSectionTitle label="Reporting"/>
           <SidebarLink to="/test1">Rapports prédéfinis</SidebarLink>
         <SidebarSectionTitle label="Paramètres"/>
+        <SidebarGroup label="Référentiels">
+          <SidebarLink to="/categories">Catégories</SidebarLink>
+          <SidebarLink to="/tags">Tags</SidebarLink>
+          <SidebarLink to="/subscriptions">Abonnements</SidebarLink>
+        </SidebarGroup>
         <SidebarGroup label="Administration">
           <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
         </SidebarGroup>

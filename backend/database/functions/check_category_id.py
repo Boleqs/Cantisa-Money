@@ -5,6 +5,9 @@ check_category_id = DDL("""
 CREATE OR REPLACE FUNCTION check_category_id()
 RETURNS TRIGGER AS $$
 BEGIN
+    IF NEW.category_id IS NULL THEN
+        RETURN NEW;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM categories WHERE id = NEW.category_id AND user_id = NEW.user_id) THEN
         RAISE EXCEPTION 'Invalid category_id %% for user_id %%', NEW.category_id, NEW.user_id;
     END IF;

@@ -56,3 +56,6 @@ docs/_build/
 # PyBuilder
 target/
 /node_modules/
+
+# Local database credentials — do not commit
+backend/database/config.py
