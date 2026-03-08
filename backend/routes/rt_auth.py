@@ -22,6 +22,14 @@ class AuthRoutes:
     def __init__(self, app, DB, Users):
         ROUTE_PATH = f"{ROOT_PATH}/auth"
 
+        @app.route(f"{ROUTE_PATH}/me", methods=["GET"])
+        @jwt_required()
+        def me():
+            user = Users.query.filter(Users.id == get_jwt_identity()).first()
+            if not user:
+                return json_response("User not found", HttpCode.NOT_FOUND)
+            return json_response({'id': str(user.id), 'username': user.username, 'email': user.email}, HttpCode.OK)
+
         @app.route(f"{ROUTE_PATH}/check-auth", methods=["GET"])
         @jwt_required(optional=True)
         def check_auth():

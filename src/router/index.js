@@ -69,6 +69,36 @@ const routes = [
         name: 'Subscriptions',
         component: () => import('../views/Subscriptions.vue'),
         meta: { requiresAuth: true }
+    },
+    {
+        path: '/portfolio',
+        name: 'Portfolio',
+        component: () => import('../views/Portfolio.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/markets',
+        name: 'Markets',
+        component: () => import('../views/Markets.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/invoices',
+        name: 'Invoices',
+        component: () => import('../views/Invoices.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/reports',
+        name: 'Reports',
+        component: () => import('../views/Reports.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/admin/users',
+        name: 'AdminUsers',
+        component: () => import('../views/AdminUsers.vue'),
+        meta: { requiresAuth: true }
     }
 ]
 

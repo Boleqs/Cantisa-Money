@@ -58,10 +58,15 @@
             </select>
           </div>
 
-          <div class="field">
-            <label>Sous-type</label>
-            <input v-model="form.account_subtype" placeholder="Optionnel" />
+          <div class="field" v-if="isEquity">
+            <label>Sous-type (Equity)</label>
+            <select v-model="form.account_subtype">
+              <option value="">— Aucun —</option>
+              <option value="fr_PEA">fr_PEA</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
+          <div class="field" v-else></div>
 
           <div class="field field-full toggles">
             <label>
@@ -100,6 +105,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
 
 const isEdit = computed(() => props.mode === 'edit')
+const isEquity = computed(() => form.account_type === 'Equity')
 
 const emptyForm = () => ({
   id: null,
@@ -107,7 +113,7 @@ const emptyForm = () => ({
   description: '',
   currency_id: '',
   parent_id: null,
-  account_type: '',
+  account_type: 'Current',
   account_subtype: '',
   is_hidden: false,
   is_virtual: false,
@@ -122,6 +128,14 @@ watch(
     Object.assign(form, emptyForm(), acc ? { ...acc } : {})
   },
   { immediate: true }
+)
+
+// Réinitialise le sous-type si on quitte le type Equity
+watch(
+  () => form.account_type,
+  (type) => {
+    if (type !== 'Equity') form.account_subtype = ''
+  }
 )
 
 const close = () => {

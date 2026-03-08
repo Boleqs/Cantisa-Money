@@ -40,27 +40,27 @@ export default {
         <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
 
         <SidebarSectionTitle label="Gestion bancaire"/>
-          <SidebarGroup label="Comptes Bancaires">
+          <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions']">
             <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
-            <SidebarLink to="/Accounts">Liste des comptes</SidebarLink>
+            <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
             <SidebarLink to="/transactions">Transactions</SidebarLink>
           </SidebarGroup>
-          <SidebarLink to="/test4">Factures</SidebarLink>
+          <SidebarLink to="/invoices">Factures</SidebarLink>
           <SidebarLink to="/budgets">Budgets</SidebarLink>
         <SidebarSectionTitle label="Gestion financière"/>
-          <SidebarGroup label="Portfolio">
-            <SidebarLink to="/test3">Liste des comptes</SidebarLink>
+          <SidebarGroup label="Portfolio" :paths="['/portfolio']">
+            <SidebarLink to="/portfolio">Liste des actifs</SidebarLink>
           </SidebarGroup>
-          <SidebarLink to="/test2">Marchés</SidebarLink>
+          <SidebarLink to="/markets">Marchés</SidebarLink>
         <SidebarSectionTitle label="Reporting"/>
-          <SidebarLink to="/test1">Rapports prédéfinis</SidebarLink>
+          <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>
         <SidebarSectionTitle label="Paramètres"/>
-        <SidebarGroup label="Référentiels">
+        <SidebarGroup label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
           <SidebarLink to="/categories">Catégories</SidebarLink>
           <SidebarLink to="/tags">Tags</SidebarLink>
           <SidebarLink to="/subscriptions">Abonnements</SidebarLink>
         </SidebarGroup>
-        <SidebarGroup label="Administration">
+        <SidebarGroup label="Administration" :paths="['/admin/users']">
           <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
         </SidebarGroup>
         <span>

@@ -40,32 +40,42 @@ BEGIN
                 WHERE bt.budget_id = b.id AND tos.split_id = split_ref.id
             )
     LOOP
-        -- Recalculer amount_spent pour ce budget (chaque split compté une seule fois)
-        SELECT COALESCE(SUM(sub.qty), 0) INTO new_amount_spent
-        FROM (
-            SELECT s.id, s.quantity AS qty
-            FROM splits s
-            JOIN transactions t ON t.id = s.tx_id
-            WHERE
-                t.post_date BETWEEN affected_budget.start_date AND affected_budget.end_date
-                AND (
-                    EXISTS (
-                        SELECT 1 FROM budget_accounts ba
-                        WHERE ba.budget_id = affected_budget.id AND ba.account_id = s.account_id
+        -- Recalculer amount_spent pour ce budget.
+        -- Pour les budgets par compte  : on somme tous les splits (+ et -) du compte ciblé
+        --   → permet de compter les remboursements.
+        -- Pour les budgets par catégorie/tag : on exclut les comptes Expense/Income
+        --   (contreparties comptables double-entrée) pour éviter les annulations.
+        SELECT COALESCE(SUM(s.quantity), 0) INTO new_amount_spent
+        FROM splits s
+        JOIN transactions t ON t.id = s.tx_id
+        JOIN accounts a ON a.id = s.account_id
+        WHERE
+            t.post_date BETWEEN affected_budget.start_date AND affected_budget.end_date
+            AND (
+                -- Budgets par compte : tous les splits du compte ciblé
+                EXISTS (
+                    SELECT 1 FROM budget_accounts ba
+                    WHERE ba.budget_id = affected_budget.id AND ba.account_id = s.account_id
+                )
+                OR (
+                    -- Budgets par catégorie : seulement les comptes réels (pas Expense/Income)
+                    a.account_type NOT IN ('Expense', 'Income')
+                    AND t.category_id IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1 FROM budget_categories bc
+                        WHERE bc.budget_id = affected_budget.id AND bc.category_id = t.category_id
                     )
-                    OR (
-                        t.category_id IS NOT NULL AND EXISTS (
-                            SELECT 1 FROM budget_categories bc
-                            WHERE bc.budget_id = affected_budget.id AND bc.category_id = t.category_id
-                        )
-                    )
-                    OR EXISTS (
+                )
+                OR (
+                    -- Budgets par tag : seulement les comptes réels (pas Expense/Income)
+                    a.account_type NOT IN ('Expense', 'Income')
+                    AND EXISTS (
                         SELECT 1 FROM tags_on_split tos
                         JOIN budget_tags bt ON bt.tag_id = tos.tag_id
                         WHERE tos.split_id = s.id AND bt.budget_id = affected_budget.id
                     )
                 )
-        ) sub;
+            );
 
         UPDATE budgets SET amount_spent = new_amount_spent WHERE id = affected_budget.id;
     END LOOP;

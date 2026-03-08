@@ -71,10 +71,17 @@
         </div>
 
         <div v-if="!isCollapsed(group.key)" class="cards">
-          <div v-for="acc in group.items" :key="acc.id" class="card">
+          <div
+            v-for="acc in group.items"
+            :key="acc.id"
+            class="card"
+            :class="{ 'card--child': acc._depth > 0 }"
+            :style="acc._depth > 0 ? { marginLeft: (acc._depth * 28) + 'px' } : {}"
+          >
             <div class="card-top">
               <div class="name-wrap">
                 <div class="name-row">
+                  <span v-if="acc._depth > 0" class="tree-prefix">└</span>
                   <h3 class="name">{{ acc.name }}</h3>
                   <span v-if="acc.code" class="code">#{{ acc.code }}</span>
                 </div>
@@ -282,7 +289,7 @@ async function handleSave(form) {
         description: form.description,
         currency_id: form.currency_id,
         parent_id: form.parent_id || undefined,
-        account_type: form.account_type || undefined,
+        account_type: form.account_type || 'Current',
         account_subtype: form.account_subtype || undefined,
         is_virtual: form.is_virtual,
         is_hidden: form.is_hidden,
@@ -295,7 +302,7 @@ async function handleSave(form) {
         description: form.description,
         currency_id: form.currency_id,
         parent_id: form.parent_id || undefined,
-        account_type: form.account_type || undefined,
+        account_type: form.account_type || 'Current',
         account_subtype: form.account_subtype || undefined,
         is_virtual: form.is_virtual,
         is_hidden: form.is_hidden,
@@ -351,19 +358,41 @@ const filteredAccounts = computed(() => {
     });
 });
 
+// Construit un tableau ordonné en profondeur (DFS) avec la propriété _depth
+function buildTreeFlat(items) {
+  const itemIds = new Set(items.map((a) => String(a.id)));
+  const byParent = new Map();
+  byParent.set(null, []);
+
+  for (const item of items) {
+    // Si le parent existe dans le groupe, on l'utilise ; sinon on traite comme racine
+    const pid =
+      item.parent_id && itemIds.has(String(item.parent_id))
+        ? String(item.parent_id)
+        : null;
+    if (!byParent.has(pid)) byParent.set(pid, []);
+    byParent.get(pid).push(item);
+  }
+
+  const result = [];
+  function traverse(parentId, depth) {
+    const children = [...(byParent.get(parentId) || [])].sort((a, b) =>
+      normalizeText(a.name).localeCompare(normalizeText(b.name), "fr")
+    );
+    for (const child of children) {
+      result.push({ ...child, _depth: depth });
+      traverse(String(child.id), depth + 1);
+    }
+  }
+  traverse(null, 0);
+  return result;
+}
+
 // Grouping by account_type + ordering
 const groupedAccounts = computed(() => {
-  const list = filteredAccounts.value.slice();
-
-  // sort inside groups by name
-  list.sort((a, b) => {
-    const an = normalizeText(a.name);
-    const bn = normalizeText(b.name);
-    return an.localeCompare(bn, "fr");
-  });
-
+  // Regrouper par type
   const map = new Map();
-  for (const acc of list) {
+  for (const acc of filteredAccounts.value) {
     const t = acc.account_type || "Other";
     if (!map.has(t)) map.set(t, []);
     map.get(t).push(acc);
@@ -371,7 +400,7 @@ const groupedAccounts = computed(() => {
 
   const keys = Array.from(map.keys());
 
-  // order groups by known order first, then rest alpha
+  // Ordonner les groupes selon TYPE_ORDER, puis alphanumérique
   keys.sort((a, b) => {
     const ia = TYPE_ORDER.indexOf(a);
     const ib = TYPE_ORDER.indexOf(b);
@@ -386,7 +415,8 @@ const groupedAccounts = computed(() => {
   return keys.map((key) => ({
     key,
     label: TYPE_LABELS[key] || key,
-    items: map.get(key),
+    // Chaque groupe est ordonné en arborescence parent → enfants
+    items: buildTreeFlat(map.get(key)),
   }));
 });
 </script>
@@ -553,6 +583,17 @@ const groupedAccounts = computed(() => {
   background: rgba(2, 6, 23, 0.45);
   border-radius: 14px;
   padding: 14px;
+}
+
+.card--child {
+  border-left: 2px solid rgba(96, 165, 250, 0.35);
+}
+
+.tree-prefix {
+  color: rgba(148, 163, 184, 0.35);
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-right: 2px;
 }
 
 .card-top {

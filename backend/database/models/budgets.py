@@ -17,6 +17,7 @@ class Budgets(Base):
     )
     user_id:uuid = Column(UUID(as_uuid=True))
     id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
+    name:str = Column(String(100), nullable=False, default='Budget')
     amount_allocated:int = Column(Numeric, nullable=False)
     amount_spent:int = Column(Numeric, default=0, nullable=False)
     start_date:datetime = Column(DateTime, default=datetime.now(), nullable=False)

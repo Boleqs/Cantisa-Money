@@ -1,19 +1,27 @@
 <script>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { collapsed } from './state'
 
 export default {
   name: 'SidebarGroup',
   props: {
     label: { type: String, required: true },
-    iconFile: { type: String, default: null } // icon is optional
+    iconFile: { type: String, default: null },
+    paths: { type: Array, default: () => [] },
   },
   setup (props) {
-    const isOpen = ref(false)
+    const route = useRoute()
+
+    const isChildActive = (path) => props.paths.includes(path)
+    const isOpen = ref(isChildActive(route.path))
+
+    // Auto-ouvrir quand on navigue vers une route du groupe
+    watch(() => route.path, (path) => {
+      if (isChildActive(path)) isOpen.value = true
+    })
 
     const toggleOpen = () => {
-      // même si la sidebar est globalement collapsée,
-      // on garde quand même l’état du groupe
       isOpen.value = !isOpen.value
     }
 
@@ -41,7 +49,7 @@ export default {
         <span v-if="!collapsed" class="label">{{ label }}</span>
       </div>
       <span v-if="!collapsed" class="chevron">
-        <!-- petit indicateur d’ouverture/fermeture -->
+        <!-- petit indicateur d'ouverture/fermeture -->
         {{ isOpen ? '⮟' : '⮞' }}
       </span>
     </div>

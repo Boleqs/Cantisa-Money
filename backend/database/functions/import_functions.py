@@ -1,3 +1,4 @@
 from .check_category_id import check_category_id
+from .update_account_totals import update_account_totals
 from .update_budget_spent import update_budget_spent
 from .update_timestamp import update_timestamp

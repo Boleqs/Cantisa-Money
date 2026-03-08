@@ -1,7 +1,5 @@
 import uuid
 
-from sqlalchemy.testing.util import drop_all_tables
-
 from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \

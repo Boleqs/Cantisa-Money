@@ -60,6 +60,7 @@ html, body, #app {
   height: 100%;
   display: flex;
   flex-direction: column;
+  padding-top: 56px; /* hauteur de la topbar fixe */
   transition: padding-left 0.5s;
 }
 
