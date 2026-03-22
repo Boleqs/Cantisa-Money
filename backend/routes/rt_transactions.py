@@ -38,6 +38,7 @@ class UpdateTransactionSchema(Schema):
 
 class GetTransactionsSchema(Schema):
     transaction_id = fields.UUID()
+    account_id = fields.UUID()
 
 
 class DeleteTransactionSchema(Schema):
@@ -100,10 +101,12 @@ class TransactionsRoutes:
                     return json_response('Transaction not found', HttpCode.NOT_FOUND)
                 return json_response(_tx_to_dict(tx, Splits, TagsOnSplits), HttpCode.OK)
 
-            txs = (Transactions.query
-                   .filter(Transactions.user_id == get_jwt_identity())
-                   .order_by(Transactions.post_date.desc())
-                   .all())
+            query = Transactions.query.filter(Transactions.user_id == get_jwt_identity())
+            if data.get('account_id'):
+                query = query.join(Splits, Splits.tx_id == Transactions.id).filter(
+                    Splits.account_id == data['account_id']
+                )
+            txs = query.order_by(Transactions.post_date.desc()).all()
             return json_response([_tx_to_dict(tx, Splits, TagsOnSplits) for tx in txs], HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])

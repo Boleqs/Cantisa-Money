@@ -10,4 +10,5 @@ from .rt_subscriptions import SubscriptionsRoutes
 from .rt_dashboard import DashboardRoutes
 from .rt_assets import AssetsRoutes
 from .rt_reports import ReportsRoutes
+from .rt_roles import RolesRoutes
 from .rt_test import TestRoutes

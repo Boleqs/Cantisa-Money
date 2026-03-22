@@ -39,6 +39,7 @@ SubscriptionsRoutes(app, DB, Subscriptions)
 DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories)
 AssetsRoutes(app, DB, Assets, AssetPossession)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories)
+RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 TestRoutes(app, DB, Users, Accounts)
 
 

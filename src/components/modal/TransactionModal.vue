@@ -4,9 +4,19 @@
       <header class="modal-header">
         <div>
           <h2>{{ isEdit ? 'Modifier la transaction' : 'Nouvelle transaction' }}</h2>
-          <p class="subtitle">Renseignez les informations et les splits.</p>
+          <p class="subtitle">{{ advancedMode ? 'Mode avancé — saisissez les splits manuellement.' : 'Mode simple — saisissez le montant et les comptes.' }}</p>
         </div>
-        <button class="icon-btn" type="button" @click="close">✕</button>
+        <div class="header-actions">
+          <button
+            v-if="!forcedAdvanced"
+            type="button"
+            class="mode-toggle"
+            @click="toggleMode"
+          >
+            {{ advancedMode ? '← Mode simple' : 'Mode avancé →' }}
+          </button>
+          <button class="icon-btn" type="button" @click="close">✕</button>
+        </div>
       </header>
 
       <form class="modal-body" @submit.prevent="onSubmit">
@@ -55,8 +65,45 @@
           </div>
         </div>
 
-        <!-- Splits -->
-        <div class="splits-section">
+        <!-- MODE SIMPLE -->
+        <div v-if="!advancedMode" class="simple-section">
+          <div class="simple-grid">
+            <div class="field">
+              <label>Montant *</label>
+              <input
+                v-model.number="simple.amount"
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                required
+              />
+            </div>
+
+            <div class="field">
+              <label>Compte source (débité) *</label>
+              <select v-model="simple.from_account_id" required>
+                <option value="" disabled>Compte…</option>
+                <option v-for="a in accounts" :key="a.id" :value="a.id">
+                  {{ a.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Compte destination (crédité) *</label>
+              <select v-model="simple.to_account_id" required>
+                <option value="" disabled>Compte…</option>
+                <option v-for="a in accounts" :key="a.id" :value="a.id">
+                  {{ a.name }}
+                </option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- MODE AVANCÉ -->
+        <div v-else class="splits-section">
           <div class="splits-header">
             <span class="splits-title">Splits</span>
             <span :class="['balance-badge', balanceOk ? 'ok' : 'warn']">
@@ -93,7 +140,7 @@
 
         <footer class="modal-footer">
           <button type="button" class="btn" @click="close">Annuler</button>
-          <button type="submit" class="btn btn-primary" :disabled="!balanceOk">
+          <button type="submit" class="btn btn-primary" :disabled="!canSubmit">
             {{ isEdit ? 'Enregistrer' : 'Créer la transaction' }}
           </button>
         </footer>
@@ -112,7 +159,6 @@ const props = defineProps({
   transaction: { type: Object, default: null },
 })
 
-// Le modal charge ses propres données au moment de l'ouverture
 const commodities = ref([])
 const accounts = ref([])
 const categories = ref([])
@@ -140,6 +186,37 @@ const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
 
 const isEdit = computed(() => props.mode === 'edit')
 
+// Forcé en mode avancé si la transaction a plus de 2 splits
+const forcedAdvanced = computed(() =>
+  isEdit.value && props.transaction?.splits?.length > 2
+)
+
+const advancedMode = ref(false)
+
+function toggleMode() {
+  if (!advancedMode.value) {
+    // Simple → Avancé : convertir les valeurs simple en splits
+    if (simple.amount && simple.from_account_id && simple.to_account_id) {
+      form.splits = [
+        { account_id: simple.from_account_id, quantity: -Math.abs(simple.amount) },
+        { account_id: simple.to_account_id, quantity: Math.abs(simple.amount) },
+      ]
+    }
+  } else {
+    // Avancé → Simple : extraire si exactement 2 splits
+    if (form.splits.length === 2) {
+      const neg = form.splits.find(s => s.quantity < 0)
+      const pos = form.splits.find(s => s.quantity > 0)
+      if (neg && pos) {
+        simple.amount = Math.abs(neg.quantity)
+        simple.from_account_id = neg.account_id
+        simple.to_account_id = pos.account_id
+      }
+    }
+  }
+  advancedMode.value = !advancedMode.value
+}
+
 const emptyForm = () => ({
   id: null,
   description: '',
@@ -155,6 +232,12 @@ const emptyForm = () => ({
 })
 
 const form = reactive(emptyForm())
+
+const simple = reactive({
+  amount: null,
+  from_account_id: '',
+  to_account_id: '',
+})
 
 watch(
   () => props.transaction,
@@ -173,14 +256,41 @@ watch(
         : [{ account_id: '', quantity: 0 }, { account_id: '', quantity: 0 }]
     }
     Object.assign(form, base)
+
+    // Détermine le mode initial
+    if (forcedAdvanced.value) {
+      advancedMode.value = true
+    } else if (tx?.splits?.length === 2) {
+      const neg = base.splits.find(s => s.quantity < 0)
+      const pos = base.splits.find(s => s.quantity > 0)
+      if (neg && pos) {
+        simple.amount = Math.abs(neg.quantity)
+        simple.from_account_id = neg.account_id
+        simple.to_account_id = pos.account_id
+        advancedMode.value = false
+      } else {
+        advancedMode.value = true
+      }
+    } else {
+      simple.amount = null
+      simple.from_account_id = ''
+      simple.to_account_id = ''
+      advancedMode.value = false
+    }
   },
   { immediate: true }
 )
 
+// Validité selon le mode
+const simpleOk = computed(() =>
+  simple.amount > 0 && simple.from_account_id && simple.to_account_id
+)
 const balance = computed(() =>
   form.splits.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0)
 )
 const balanceOk = computed(() => Math.abs(balance.value) < 0.001)
+const canSubmit = computed(() => advancedMode.value ? balanceOk.value : simpleOk.value)
+
 const fmtBalance = computed(() => {
   const n = balance.value
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2, signDisplay: 'always' }).format(n)
@@ -200,7 +310,18 @@ const close = () => {
 }
 
 const onSubmit = () => {
-  if (!balanceOk.value) return
+  if (!canSubmit.value) return
+
+  let splits
+  if (advancedMode.value) {
+    splits = form.splits.map(s => ({ account_id: s.account_id, quantity: Number(s.quantity) }))
+  } else {
+    splits = [
+      { account_id: simple.from_account_id, quantity: -Math.abs(simple.amount) },
+      { account_id: simple.to_account_id, quantity: Math.abs(simple.amount) },
+    ]
+  }
+
   emit('save', {
     id: form.id,
     description: form.description,
@@ -209,7 +330,7 @@ const onSubmit = () => {
     currency_id: form.currency_id,
     category_id: form.category_id || null,
     is_cleared: form.is_cleared,
-    splits: form.splits.map(s => ({ account_id: s.account_id, quantity: Number(s.quantity) })),
+    splits,
   })
   emit('update:modelValue', false)
 }
@@ -244,6 +365,30 @@ const onSubmit = () => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 10px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.mode-toggle {
+  background: transparent;
+  border: 1px solid #374151;
+  border-radius: 999px;
+  color: #6b7280;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.mode-toggle:hover {
+  color: #cbd5e1;
+  border-color: #6b7280;
 }
 
 .subtitle {
@@ -302,6 +447,19 @@ const onSubmit = () => {
   gap: 8px;
   font-size: 13px;
   color: #cbd5e1;
+}
+
+/* Mode simple */
+.simple-section {
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.simple-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr 1fr;
+  gap: 10px 12px;
 }
 
 /* Splits */

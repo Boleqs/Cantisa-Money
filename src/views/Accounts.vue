@@ -82,7 +82,7 @@
               <div class="name-wrap">
                 <div class="name-row">
                   <span v-if="acc._depth > 0" class="tree-prefix">└</span>
-                  <h3 class="name">{{ acc.name }}</h3>
+                  <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc.name }}</h3>
                   <span v-if="acc.code" class="code">#{{ acc.code }}</span>
                 </div>
                 <p v-if="acc.description" class="desc">
@@ -160,8 +160,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import axios from "axios";
 import AccountModal from "@/components/modal/AccountModal.vue";
+
+const router = useRouter();
 
 const accounts = ref([]);
 const commodities = ref([]);
@@ -617,6 +620,15 @@ const groupedAccounts = computed(() => {
 .name {
   margin: 0;
   font-size: 16px;
+}
+
+.account-link {
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.account-link:hover {
+  color: #93c5fd;
+  text-decoration: underline;
 }
 .code {
   color: #93c5fd;

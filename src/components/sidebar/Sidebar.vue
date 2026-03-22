@@ -37,55 +37,62 @@ export default {
         <h1>
             <span class="sidebar-title" :class="{ schmall: collapsed, bwig: !collapsed }">CMM</span>
         </h1>
-        <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
 
-        <SidebarSectionTitle label="Gestion bancaire"/>
-          <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions']">
-            <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
-            <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
-            <SidebarLink to="/transactions">Transactions</SidebarLink>
-          </SidebarGroup>
-          <SidebarLink to="/invoices">Factures</SidebarLink>
-          <SidebarLink to="/budgets">Budgets</SidebarLink>
-        <SidebarSectionTitle label="Gestion financière"/>
-          <SidebarGroup label="Portfolio" :paths="['/portfolio']">
-            <SidebarLink to="/portfolio">Liste des actifs</SidebarLink>
-          </SidebarGroup>
-          <SidebarLink to="/markets">Marchés</SidebarLink>
-        <SidebarSectionTitle label="Reporting"/>
-          <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>
-        <SidebarSectionTitle label="Paramètres"/>
-        <SidebarGroup label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
-          <SidebarLink to="/categories">Catégories</SidebarLink>
-          <SidebarLink to="/tags">Tags</SidebarLink>
-          <SidebarLink to="/subscriptions">Abonnements</SidebarLink>
-        </SidebarGroup>
-        <SidebarGroup label="Administration" :paths="['/admin/users']">
-          <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
-        </SidebarGroup>
-        <span>
+        <!-- Zone scrollable des liens -->
+        <div class="sidebar-nav">
+            <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
+
+            <SidebarSectionTitle label="Gestion bancaire"/>
+              <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions']">
+                <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
+                <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
+                <SidebarLink to="/transactions">Transactions</SidebarLink>
+              </SidebarGroup>
+              <SidebarLink to="/invoices">Factures</SidebarLink>
+              <SidebarLink to="/budgets">Budgets</SidebarLink>
+            <SidebarSectionTitle label="Gestion financière"/>
+              <SidebarGroup label="Portfolio" :paths="['/portfolio']">
+                <SidebarLink to="/portfolio">Liste des actifs</SidebarLink>
+              </SidebarGroup>
+              <SidebarLink to="/markets">Marchés</SidebarLink>
+            <SidebarSectionTitle label="Reporting"/>
+              <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>
+            <SidebarSectionTitle label="Paramètres"/>
+            <SidebarGroup label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
+              <SidebarLink to="/categories">Catégories</SidebarLink>
+              <SidebarLink to="/tags">Tags</SidebarLink>
+              <SidebarLink to="/subscriptions">Abonnements</SidebarLink>
+            </SidebarGroup>
+            <SidebarGroup label="Administration" :paths="['/admin/users', '/admin/roles']">
+              <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
+              <SidebarLink to="/admin/roles">Rôles &amp; Permissions</SidebarLink>
+            </SidebarGroup>
+        </div>
+
+        <!-- Barre d'icônes du bas, toujours visible -->
+        <div class="sidebar-footer">
             <span class="collapse-icon" @click="toggleSidebar">
                 <img class="collapse-icon-img" :class="{ 'collapse-icon-img collapsed': collapsed}" src="../icons/double_fleche.png"></img>
             </span>
             <span>
-                <img 
-                    class="icon_account" 
-                    :class="{'icon_account collapsed': collapsed, 'logo disabled': showMyAccount || showSettings}" 
-                    src="../icons/Users.png" 
+                <img
+                    class="icon_account"
+                    :class="{'logo disabled': showMyAccount || showSettings}"
+                    src="../icons/Users.png"
                     @click="openMyAccount"
                 />
                 <MyAccount v-if="showMyAccount" @close="showMyAccount = false"/>
             </span>
             <span>
-                <img 
-                    class="parameter" 
-                    :class="{'parameter collapsed': collapsed, 'logo disabled': showMyAccount || showSettings}" 
-                    src="../icons/Cog.png" 
+                <img
+                    class="parameter"
+                    :class="{'logo disabled': showMyAccount || showSettings}"
+                    src="../icons/Cog.png"
                     @click="openSettings"
                 />
                 <Settings v-if="showSettings" @close="showSettings = false"/>
             </span>
-        </span>
+        </div>
     </div>
 </template>
 
@@ -103,9 +110,8 @@ export default {
     color: white;
     background-color: var(--sidebar-bg-color);
 
-    float: left;
     position: fixed;
-    z-index: 0;
+    z-index: 1;
     top: 0;
     left: 0;
     bottom: 0;
@@ -117,19 +123,39 @@ export default {
     flex-direction: column;
 }
 
+.sidebar-nav {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+
+.sidebar-footer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0.5em 0.25em;
+    border-top: 1px solid rgba(255,255,255,0.15);
+    margin-top: 0.5em;
+}
+
 .sidebar-title {
     display: flex;
-    justify-content: center; /* Center horizontally */
-    align-items: center; /* Center vertically */
+    justify-content: center;
+    align-items: center;
     width: 100%;
-    height: 100px; /* Adjust the height as needed */
+    height: 100px;
+    flex-shrink: 0;
 }
+
 .collapse-icon {
     cursor: pointer;
-    position: absolute;
-    bottom: 0;
-    padding: 1em;
+    padding: 0.5em;
     color: rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
 }
 
 .collapse-icon-img {
@@ -143,42 +169,31 @@ export default {
     rotate: 0deg;
     transition: 0.5s ease;
 }
+
 .parameter {
     cursor: pointer;
-    position: absolute;
-    bottom: 0.75em;
-    left: 8em;
-    padding: 0.5em;
-    width: 50px;
+    padding: 0.25em;
+    width: 36px;
     transition: 0.3s ease-in-out;
 }
-.parameter.collapsed {
-    bottom: 8em;
-    left: 0.8em;
-}
+
 .logo.disabled {
     cursor: default;
 }
+
 .icon_account {
     cursor: pointer;
-    position: absolute;
-    bottom: 0.75em;
-    left: 4.25em;
-    padding: 0.5em;
-    width: 50px;
-
+    padding: 0.25em;
+    width: 36px;
     transition: 0.3s ease-in-out;
 }
-.icon_account.collapsed {
-    bottom: 4em;
-    left: 0.8em;
-}
+
 .schmall {
-    font-size: 0.50em; /* Adjust the size as needed */
+    font-size: 0.50em;
     transition: 0.3s ease;
 }
 .bwig {
-    font-size: 1.10em; /* Adjust the size as needed */
+    font-size: 1.10em;
     transition: 0.3s ease;
 }
 </style>
