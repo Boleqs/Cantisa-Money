@@ -50,7 +50,7 @@
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Transactions</div>
-        <div class="kpi-value">{{ transactions.length }}</div>
+        <div class="kpi-value">{{ txTotal }}</div>
       </div>
     </div>
 
@@ -133,6 +133,7 @@ const commodities = ref([])
 
 const loading = ref(false)
 const error = ref('')
+const txTotal = ref(0)
 
 const search = ref('')
 const onlyCleared = ref(false)
@@ -152,7 +153,9 @@ async function reload() {
       axios.get('/api/commodities'),
     ])
     account.value = accRes.data?.response_data ?? null
-    transactions.value = Array.isArray(txRes.data?.response_data) ? txRes.data.response_data : []
+    const rd = txRes.data?.response_data
+    transactions.value = Array.isArray(rd?.transactions) ? rd.transactions : []
+    txTotal.value = rd?.total ?? transactions.value.length
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
   } catch (e) {

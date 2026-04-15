@@ -28,9 +28,60 @@
           <span v-else>Chargement…</span>
         </button>
 
+        <button class="btn btn-filter" :class="{ active: activeFilterCount > 0 }" @click="filtersOpen = !filtersOpen">
+          ⚙ Filtres<span v-if="activeFilterCount > 0" class="filter-badge">{{ activeFilterCount }}</span>
+        </button>
+
+        <div class="export-menu">
+          <button class="btn" @click="exportMenuOpen = !exportMenuOpen">↓ Exporter</button>
+          <div v-if="exportMenuOpen" class="export-dropdown">
+            <button @click="exportTransactions('csv')">📄 CSV (.csv)</button>
+            <button @click="exportTransactions('pdf')">🖨️ PDF (.pdf)</button>
+          </div>
+        </div>
+
         <button class="btn btn-primary" @click="openCreate">+ Nouvelle transaction</button>
       </div>
     </header>
+
+    <!-- Filter panel -->
+    <div v-if="filtersOpen" class="filter-panel">
+      <div class="filter-grid">
+        <div class="filter-group">
+          <label class="filter-label">Date de début</label>
+          <input type="date" v-model="filters.date_from" class="filter-input" @change="onFilterChange" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Date de fin</label>
+          <input type="date" v-model="filters.date_to" class="filter-input" @change="onFilterChange" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Montant min (€)</label>
+          <input type="number" v-model.number="filters.amount_min" class="filter-input" min="0" step="0.01" placeholder="0" @input="onAmountInput" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Montant max (€)</label>
+          <input type="number" v-model.number="filters.amount_max" class="filter-input" min="0" step="0.01" placeholder="∞" @input="onAmountInput" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Catégorie</label>
+          <select v-model="filters.category_id" class="filter-input" @change="onFilterChange">
+            <option value="">— Toutes —</option>
+            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Tag</label>
+          <select v-model="filters.tag_id" class="filter-input" @change="onFilterChange">
+            <option value="">— Tous —</option>
+            <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="filter-actions">
+        <button class="btn btn-sm" @click="resetFilters">✕ Réinitialiser les filtres</button>
+      </div>
+    </div>
 
     <!-- Error -->
     <div v-if="error" class="alert">
@@ -42,13 +93,13 @@
       Chargement des transactions…
     </div>
 
-    <div v-else-if="!loading && !filteredTransactions.length" class="empty">
+    <div v-else-if="!loading && !transactions.length" class="empty">
       Aucune transaction à afficher.
     </div>
 
     <!-- Liste -->
     <div v-else class="list">
-      <div v-for="tx in filteredTransactions" :key="tx.id" class="card">
+      <div v-for="tx in transactions" :key="tx.id" class="card">
         <div class="card-top">
           <div class="meta">
             <div class="date-row">
@@ -83,6 +134,21 @@
         </div>
       </div>
     </div>
+
+    <!-- Pagination -->
+    <div v-if="pages > 1 || total > 0" class="pagination">
+      <span class="pagination-info">{{ total }} transaction(s) — page {{ page }} / {{ pages }}</span>
+      <div class="pagination-controls">
+        <button class="btn-page" :disabled="page <= 1" @click="goToPage(1)">«</button>
+        <button class="btn-page" :disabled="page <= 1" @click="goToPage(page - 1)">‹</button>
+        <template v-for="p in pageRange" :key="p">
+          <button v-if="p !== '…'" class="btn-page" :class="{ active: p === page }" @click="goToPage(p)">{{ p }}</button>
+          <span v-else class="page-ellipsis">…</span>
+        </template>
+        <button class="btn-page" :disabled="page >= pages" @click="goToPage(page + 1)">›</button>
+        <button class="btn-page" :disabled="page >= pages" @click="goToPage(pages)">»</button>
+      </div>
+    </div>
   </div>
 
   <TransactionModal
@@ -94,7 +160,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
 
@@ -110,12 +176,21 @@ const loading = ref(false)
 const error = ref('')
 const search = ref('')
 const showCleared = ref(false)
+const exportMenuOpen = ref(false)
+const filtersOpen = ref(false)
+
+// Advanced filters
+const filters = ref({ date_from: '', date_to: '', amount_min: '', amount_max: '', category_id: '', tag_id: '' })
+const categories = ref([])
+const tags = ref([])
+
+// Pagination
+const page = ref(1)
+const perPage = ref(50)
+const total = ref(0)
+const pages = ref(1)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-function normalizeText(v) {
-  return (v ?? '').toString().toLowerCase().trim()
-}
 
 function fmtDate(v) {
   if (!v) return '—'
@@ -128,8 +203,7 @@ function fmtAmount(v) {
   if (v === null || v === undefined) return '0'
   const n = Number(v)
   if (Number.isNaN(n)) return String(v)
-  const fmt = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2, signDisplay: 'always' })
-  return fmt.format(n)
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2, signDisplay: 'always' }).format(n)
 }
 
 function accountName(id) {
@@ -144,32 +218,140 @@ function currencyShort(id) {
 
 // ── data fetching ─────────────────────────────────────────────────────────────
 
-async function fetchAll() {
-  // Charger devises et comptes en premier (nécessaires pour les dropdowns du modal)
-  const [comRes, accRes] = await Promise.all([
+async function fetchReferentials() {
+  const [comRes, accRes, catRes, tagRes] = await Promise.all([
     axios.get('/api/commodities'),
     axios.get('/api/accounts'),
+    axios.get('/api/categories'),
+    axios.get('/api/tags'),
   ])
   commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
-  accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
+  accounts.value   = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
+  categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
+  tags.value       = Array.isArray(tagRes.data?.response_data) ? tagRes.data.response_data : []
+}
 
-  // Charger les transactions séparément
-  const txRes = await axios.get('/api/transactions')
-  transactions.value = Array.isArray(txRes.data?.response_data) ? txRes.data.response_data : []
+function buildParams() {
+  const params = { page: page.value, per_page: perPage.value }
+  if (search.value.trim())          params.search      = search.value.trim()
+  if (showCleared.value)            params.is_cleared  = true
+  if (filters.value.date_from)      params.date_from   = filters.value.date_from
+  if (filters.value.date_to)        params.date_to     = filters.value.date_to
+  if (filters.value.amount_min !== '') params.amount_min = filters.value.amount_min
+  if (filters.value.amount_max !== '') params.amount_max = filters.value.amount_max
+  if (filters.value.category_id)    params.category_id = filters.value.category_id
+  if (filters.value.tag_id)         params.tag_id      = filters.value.tag_id
+  return params
+}
+
+async function fetchTransactions() {
+  const txRes = await axios.get('/api/transactions', { params: buildParams() })
+  const rd = txRes.data?.response_data
+  transactions.value = Array.isArray(rd?.transactions) ? rd.transactions : []
+  total.value = rd?.total ?? 0
+  pages.value = rd?.pages ?? 1
 }
 
 async function reload() {
   loading.value = true
   error.value = ''
   try {
-    await fetchAll()
+    await Promise.all([fetchReferentials(), fetchTransactions()])
   } catch (e) {
-    error.value =
-      e?.response?.data?.response_data || e?.response?.statusText || e?.message || 'Erreur inconnue'
+    error.value = e?.response?.data?.response_data || e?.response?.statusText || e?.message || 'Erreur inconnue'
   } finally {
     loading.value = false
   }
 }
+
+async function reloadTx() {
+  loading.value = true
+  error.value = ''
+  try {
+    await fetchTransactions()
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    loading.value = false
+  }
+}
+
+// ── pagination ────────────────────────────────────────────────────────────────
+
+function goToPage(p) {
+  if (p < 1 || p > pages.value) return
+  page.value = p
+  reloadTx()
+}
+
+// ── search / filter with debounce ─────────────────────────────────────────────
+
+let searchTimer = null
+watch(search, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { page.value = 1; reloadTx() }, 300)
+})
+
+watch(showCleared, () => { page.value = 1; reloadTx() })
+
+onUnmounted(() => { clearTimeout(searchTimer); clearTimeout(amountTimer) })
+
+// ── advanced filters ──────────────────────────────────────────────────────────
+
+const activeFilterCount = computed(() =>
+  Object.values(filters.value).filter(v => v !== '' && v !== null && v !== undefined).length
+)
+
+function onFilterChange() { page.value = 1; reloadTx() }
+
+let amountTimer = null
+function onAmountInput() {
+  clearTimeout(amountTimer)
+  amountTimer = setTimeout(() => { page.value = 1; reloadTx() }, 400)
+}
+
+function resetFilters() {
+  filters.value = { date_from: '', date_to: '', amount_min: '', amount_max: '', category_id: '', tag_id: '' }
+  page.value = 1
+  reloadTx()
+}
+
+// ── export ────────────────────────────────────────────────────────────────────
+
+async function exportTransactions(fmt) {
+  exportMenuOpen.value = false
+  try {
+    const p = buildParams()
+    p.format = fmt
+    delete p.page
+    delete p.per_page
+    const params = new URLSearchParams(Object.entries(p).filter(([, v]) => v !== undefined && v !== ''))
+    const res = await axios.get(`/api/transactions/export?${params}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `transactions.${fmt}`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    error.value = 'Erreur lors de l\'export'
+  }
+}
+
+// Numéros de pages à afficher (max 7 boutons avec ellipses)
+const pageRange = computed(() => {
+  const p = pages.value
+  if (p <= 7) return Array.from({ length: p }, (_, i) => i + 1)
+  const cur = page.value
+  const set = new Set([1, 2, p - 1, p, cur - 1, cur, cur + 1].filter(x => x >= 1 && x <= p))
+  const sorted = [...set].sort((a, b) => a - b)
+  const result = []
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) result.push('…')
+    result.push(sorted[i])
+  }
+  return result
+})
 
 // ── modal ─────────────────────────────────────────────────────────────────────
 
@@ -209,10 +391,9 @@ async function handleSave(form) {
         splits: form.splits,
       })
     }
-    await reload()
+    await reloadTx()
   } catch (e) {
-    error.value =
-      e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
 }
 
@@ -220,31 +401,18 @@ async function deleteTransaction(tx) {
   if (!confirm(`Supprimer la transaction « ${tx.description || tx.id} » ?`)) return
   try {
     await axios.delete('/api/transactions', { params: { transaction_id: tx.id } })
-    await reload()
+    await reloadTx()
   } catch (e) {
-    error.value =
-      e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
 }
 
-// ── filtering ─────────────────────────────────────────────────────────────────
+function closeExportMenu(e) {
+  if (!e.target.closest('.export-menu')) exportMenuOpen.value = false
+}
 
-const filteredTransactions = computed(() => {
-  const q = normalizeText(search.value)
-
-  return transactions.value
-    .filter(tx => (showCleared.value ? tx.is_cleared : true))
-    .filter(tx => {
-      if (!q) return true
-      const accountNames = (tx.splits || [])
-        .map(s => normalizeText(accountName(s.account_id)))
-        .join(' ')
-      const blob = [tx.description, accountNames].map(normalizeText).join(' ')
-      return blob.includes(q)
-    })
-})
-
-onMounted(() => reload())
+onMounted(() => document.addEventListener('click', closeExportMenu))
+onUnmounted(() => document.removeEventListener('click', closeExportMenu))
 </script>
 
 <style scoped>
@@ -488,5 +656,167 @@ onMounted(() => reload())
 
 .btn-danger:hover {
   background: rgba(239, 68, 68, 0.1);
+}
+
+/* Filter button */
+.btn-filter { position: relative; }
+.btn-filter.active { border-color: rgba(96, 165, 250, 0.5); color: #93c5fd; }
+
+.filter-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+/* Filter panel */
+.filter-panel {
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 14px;
+}
+
+.filter-group { display: flex; flex-direction: column; gap: 5px; }
+
+.filter-label {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.filter-input {
+  padding: 7px 10px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: #e5e7eb;
+  font-size: 13px;
+  outline: none;
+}
+
+.filter-input:focus { border-color: rgba(96, 165, 250, 0.5); }
+.filter-input option { background: #1e293b; }
+
+.filter-actions { display: flex; gap: 8px; }
+
+.btn-sm {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #9ca3af;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-sm:hover { background: rgba(148, 163, 184, 0.1); color: #e5e7eb; }
+
+/* Export menu */
+.export-menu {
+  position: relative;
+}
+
+.export-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: #1e293b;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.export-dropdown button {
+  background: transparent;
+  border: none;
+  color: #cbd5e1;
+  padding: 8px 12px;
+  border-radius: 7px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.export-dropdown button:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.pagination-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.btn-page {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.7);
+  color: #cbd5e1;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.btn-page:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-page:not(:disabled):hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.btn-page.active {
+  background: rgba(37, 99, 235, 0.25);
+  border-color: rgba(96, 165, 250, 0.5);
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.page-ellipsis {
+  color: #6b7280;
+  padding: 0 4px;
+  font-size: 13px;
 }
 </style>

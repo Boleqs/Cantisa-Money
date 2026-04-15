@@ -25,6 +25,8 @@
           <th>Nom</th>
           <th>Montant</th>
           <th>Récurrence</th>
+          <th>Prochaine échéance</th>
+          <th>Dernière exéc.</th>
           <th>Compte débit</th>
           <th>Compte crédit</th>
           <th>Catégorie</th>
@@ -32,14 +34,23 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="s in subscriptions" :key="s.id">
-          <td>{{ s.name }}</td>
+        <tr v-for="s in subscriptions" :key="s.id" :class="{ 'row-overdue': s.is_overdue }">
+          <td>
+            {{ s.name }}
+            <span v-if="s.is_overdue" class="badge-overdue">En retard</span>
+          </td>
           <td>{{ fmtAmount(s.amount) }}</td>
           <td class="muted">tous les {{ s.recurrence }} j.</td>
+          <td :class="s.is_overdue ? 'overdue' : 'muted'">{{ fmtDate(s.next_due_at) }}</td>
+          <td class="muted">{{ s.last_executed_at ? fmtDate(s.last_executed_at) : '—' }}</td>
           <td class="muted">{{ accountName(s.from_account_id) }}</td>
           <td class="muted">{{ accountName(s.to_account_id) }}</td>
           <td class="muted">{{ categoryName(s.category_id) }}</td>
           <td class="actions">
+            <button class="btn-action btn-execute" :disabled="s.executing" @click="executeSubscription(s)" title="Exécuter maintenant">
+              <span v-if="s.executing">…</span>
+              <span v-else>▶</span>
+            </button>
             <button class="btn-action" @click="openEdit(s)">✎</button>
             <button class="btn-action btn-danger" @click="deleteSubscription(s)">✕</button>
           </td>
@@ -107,6 +118,11 @@ const form = ref({ name: '', amount: '', recurrence: 30, from_account_id: '', to
 function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0))
 }
+
+function fmtDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
   return a ? a.name : id || '—'
@@ -126,7 +142,8 @@ async function reload() {
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
     ])
-    subscriptions.value = Array.isArray(subRes.data?.response_data) ? subRes.data.response_data : []
+    subscriptions.value = (Array.isArray(subRes.data?.response_data) ? subRes.data.response_data : [])
+      .map(s => ({ ...s, executing: false }))
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
   } catch (e) {
@@ -178,6 +195,18 @@ async function save() {
     await reload()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+async function executeSubscription(s) {
+  s.executing = true
+  error.value = ''
+  try {
+    const { data } = await axios.post('/api/subscriptions/execute', { subscription_id: s.id })
+    Object.assign(s, data.response_data, { executing: false })
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de l\'exécution'
+    s.executing = false
   }
 }
 
@@ -273,6 +302,23 @@ onMounted(() => reload())
 .btn-action:hover { background: rgba(148, 163, 184, 0.1); }
 .btn-danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
 .btn-danger:hover { background: rgba(239,68,68,0.1); }
+.btn-execute { border-color: rgba(16,185,129,0.4); color: #6ee7b7; }
+.btn-execute:hover { background: rgba(16,185,129,0.1); }
+.btn-execute:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.row-overdue td { background: rgba(245, 158, 11, 0.04); }
+.overdue { color: #fde68a !important; font-weight: 600; }
+.badge-overdue {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(245,158,11,0.4);
+  background: rgba(245,158,11,0.1);
+  color: #fde68a;
+  margin-left: 6px;
+  vertical-align: middle;
+}
 
 .modal-backdrop {
   position: fixed;

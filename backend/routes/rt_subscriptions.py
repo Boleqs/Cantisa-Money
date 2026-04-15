@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from marshmallow import Schema, fields, ValidationError
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -33,7 +35,13 @@ class DeleteSubscriptionSchema(Schema):
     subscription_id = fields.UUID(required=True)
 
 
+def _next_due(s):
+    ref = s.last_executed_at.date() if s.last_executed_at else s.created_at.date()
+    return ref + timedelta(days=s.recurrence)
+
+
 def _sub_to_dict(s):
+    next_due = _next_due(s)
     return {
         'id': str(s.id),
         'user_id': str(s.user_id),
@@ -43,13 +51,16 @@ def _sub_to_dict(s):
         'from_account_id': str(s.from_account_id) if s.from_account_id else None,
         'to_account_id': str(s.to_account_id) if s.to_account_id else None,
         'category_id': str(s.category_id) if s.category_id else None,
+        'last_executed_at': s.last_executed_at.isoformat() if s.last_executed_at else None,
+        'next_due_at': next_due.isoformat(),
+        'is_overdue': next_due <= date.today(),
         'created_at': s.created_at.isoformat() if s.created_at else None,
         'updated_at': s.updated_at.isoformat() if s.updated_at else None,
     }
 
 
 class SubscriptionsRoutes:
-    def __init__(self, app, DB, Subscriptions):
+    def __init__(self, app, DB, Subscriptions, Transactions=None, Splits=None, Accounts=None):
         ROUTE_PATH = f"{ROOT_PATH}/subscriptions"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -149,6 +160,31 @@ class SubscriptionsRoutes:
                 DB.session.delete(s)
                 DB.session.commit()
                 return json_response('Subscription deleted', HttpCode.OK)
+            except Exception as error:
+                DB.session.rollback()
+                return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/execute", methods=['POST'])
+        @jwt_required()
+        def execute_subscription():
+            if not Transactions or not Splits or not Accounts:
+                return json_response('Scheduler non configuré', HttpCode.SERVER_ERROR)
+            try:
+                data = DeleteSubscriptionSchema().load(request.json or {})
+            except Exception as err:
+                return json_response(str(err), HttpCode.BAD_REQUEST)
+
+            s = Subscriptions.query.filter(
+                Subscriptions.id == data['subscription_id'],
+                Subscriptions.user_id == get_jwt_identity()
+            ).first()
+            if not s:
+                return json_response('Subscription not found', HttpCode.NOT_FOUND)
+
+            try:
+                from backend.scheduler import execute_one_subscription
+                execute_one_subscription(s, date.today(), DB, Transactions, Splits, Accounts)
+                return json_response(_sub_to_dict(s), HttpCode.CREATED)
             except Exception as error:
                 DB.session.rollback()
                 return json_response(str(error), HttpCode.SERVER_ERROR)

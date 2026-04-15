@@ -28,5 +28,6 @@ class Subscriptions(Base):
     from_account_id:uuid = Column(UUID(as_uuid=True))
     to_account_id: uuid = Column(UUID(as_uuid=True))
     category_id:uuid = Column(UUID(as_uuid=True))
+    last_executed_at: datetime = Column(DateTime, nullable=True)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())
     updated_at: datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

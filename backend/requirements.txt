@@ -8,3 +8,5 @@ sqlalchemy
 pyjwt
 marshmallow
 anthropic
+APScheduler
+fpdf2

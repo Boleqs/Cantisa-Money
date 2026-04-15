@@ -15,17 +15,19 @@
 
     <!-- KPI Cards -->
     <div class="kpi-grid">
+      <div class="kpi-card kpi-card--featured">
+        <div class="kpi-label">Patrimoine net</div>
+        <div class="kpi-value" :class="kpis.net_worth >= 0 ? 'pos' : 'neg'">
+          {{ fmtAmount(kpis.net_worth) }}
+        </div>
+        <div class="kpi-sub">Current + Assets + Equity</div>
+      </div>
       <div class="kpi-card">
         <div class="kpi-label">Solde courant</div>
         <div class="kpi-value" :class="kpis.current_balance >= 0 ? 'pos' : 'neg'">
           {{ fmtAmount(kpis.current_balance) }}
         </div>
         <div class="kpi-sub">Comptes courants</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Actifs</div>
-        <div class="kpi-value pos">{{ fmtAmount(kpis.assets_balance) }}</div>
-        <div class="kpi-sub">Comptes Assets</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Revenus du mois</div>
@@ -36,6 +38,58 @@
         <div class="kpi-label">Dépenses du mois</div>
         <div class="kpi-value neg">- {{ fmtAmount(kpis.monthly_expenses) }}</div>
         <div class="kpi-sub">{{ currentMonthLabel }}</div>
+      </div>
+    </div>
+
+    <!-- Net worth history -->
+    <div class="card">
+      <div class="card-title">Évolution du patrimoine net — 12 derniers mois</div>
+      <div v-if="networthHistory.length < 2" class="no-data">Pas assez de données.</div>
+      <div v-else class="svg-wrapper">
+        <svg :viewBox="`0 0 ${SVG_W} ${SVG_H}`" preserveAspectRatio="none" class="chart-svg">
+          <defs>
+            <linearGradient id="nwGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#10b981" stop-opacity="0.30"/>
+              <stop offset="100%" stop-color="#10b981" stop-opacity="0.02"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Zero line -->
+          <line v-if="nwZeroY !== null"
+            :x1="NW_PAD.l" :y1="nwZeroY" :x2="SVG_W - NW_PAD.r" :y2="nwZeroY"
+            stroke="rgba(148,163,184,0.2)" stroke-width="1" stroke-dasharray="4,3"
+          />
+
+          <!-- Area fill -->
+          <polygon :points="nwAreaPoints" fill="url(#nwGrad)" />
+
+          <!-- Line -->
+          <polyline :points="nwLinePoints" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linejoin="round"/>
+
+          <!-- Dots at each data point -->
+          <circle
+            v-for="(d, i) in networthHistory"
+            :key="d.month"
+            :cx="nwScaleX(i)" :cy="nwScaleY(d.net_worth)"
+            r="2.5" fill="#10b981"
+          />
+
+          <!-- Y labels -->
+          <text :x="NW_PAD.l - 4" :y="NW_PAD.t + 4" text-anchor="end" class="svg-label">
+            {{ fmtAmountShort(nwMax) }}
+          </text>
+          <text :x="NW_PAD.l - 4" :y="SVG_H - NW_PAD.b" text-anchor="end" class="svg-label">
+            {{ fmtAmountShort(nwMin) }}
+          </text>
+
+          <!-- X labels -->
+          <text
+            v-for="lbl in nwXLabels"
+            :key="lbl.label"
+            :x="lbl.x" :y="SVG_H - 4"
+            text-anchor="middle" class="svg-label"
+          >{{ lbl.label }}</text>
+        </svg>
       </div>
     </div>
 
@@ -184,8 +238,9 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
-const kpis = ref({ current_balance: 0, assets_balance: 0, monthly_income: 0, monthly_expenses: 0 })
+const kpis = ref({ current_balance: 0, assets_balance: 0, monthly_income: 0, monthly_expenses: 0, net_worth: 0 })
 const balanceHistory = ref([])
+const networthHistory = ref([])
 const expensesByCategory = ref([])
 const accounts = ref([])
 const budgets = ref([])
@@ -200,6 +255,9 @@ const SVG_H = 130
 const PAD = { t: 14, b: 18, l: 44, r: 10 }
 const innerW = SVG_W - PAD.l - PAD.r
 const innerH = SVG_H - PAD.t - PAD.b
+
+// net worth chart uses same dimensions
+const NW_PAD = { t: 14, b: 22, l: 52, r: 10 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const currentMonthLabel = computed(() => {
@@ -314,6 +372,43 @@ const zeroY = computed(() => {
   return scaleY(0)
 })
 
+// ── Net worth SVG chart ────────────────────────────────────────────────────────
+const nwInnerW = SVG_W - NW_PAD.l - NW_PAD.r
+const nwInnerH = SVG_H - NW_PAD.t - NW_PAD.b
+
+const nwMin = computed(() => Math.min(...networthHistory.value.map(d => d.net_worth), 0))
+const nwMax = computed(() => Math.max(...networthHistory.value.map(d => d.net_worth), 1))
+
+function nwScaleX(i) {
+  const n = networthHistory.value.length
+  return NW_PAD.l + (n <= 1 ? 0 : (i / (n - 1)) * nwInnerW)
+}
+function nwScaleY(val) {
+  const range = nwMax.value - nwMin.value || 1
+  return NW_PAD.t + (1 - (val - nwMin.value) / range) * nwInnerH
+}
+
+const nwLinePoints = computed(() =>
+  networthHistory.value.map((d, i) => `${nwScaleX(i)},${nwScaleY(d.net_worth)}`).join(' ')
+)
+const nwAreaPoints = computed(() => {
+  if (!networthHistory.value.length) return ''
+  const n = networthHistory.value.length
+  const bottom = NW_PAD.t + nwInnerH
+  return `${NW_PAD.l},${bottom} ${nwLinePoints.value} ${nwScaleX(n - 1)},${bottom}`
+})
+const nwZeroY = computed(() => {
+  if (nwMin.value >= 0 || nwMax.value <= 0) return null
+  return nwScaleY(0)
+})
+// X-axis label positions: first, middle, last
+const nwXLabels = computed(() => {
+  const h = networthHistory.value
+  if (!h.length) return []
+  const idxs = [0, Math.floor((h.length - 1) / 2), h.length - 1]
+  return [...new Set(idxs)].map(i => ({ x: nwScaleX(i), label: h[i].month }))
+})
+
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 async function reload() {
   loading.value = true
@@ -323,15 +418,17 @@ async function reload() {
       axios.get('/api/dashboard/stats'),
       axios.get('/api/accounts'),
       axios.get('/api/budgets'),
-      axios.get('/api/transactions'),
+      axios.get('/api/transactions', { params: { per_page: 10, page: 1 } }),
     ])
     const stats = statsRes.data?.response_data
     kpis.value = stats?.kpis ?? kpis.value
     balanceHistory.value = Array.isArray(stats?.balance_history) ? stats.balance_history : []
+    networthHistory.value = Array.isArray(stats?.networth_history) ? stats.networth_history : []
     expensesByCategory.value = Array.isArray(stats?.expenses_by_category) ? stats.expenses_by_category : []
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     budgets.value = Array.isArray(budRes.data?.response_data) ? budRes.data.response_data : []
-    transactions.value = Array.isArray(txRes.data?.response_data) ? txRes.data.response_data : []
+    const txRd = txRes.data?.response_data
+    transactions.value = Array.isArray(txRd?.transactions) ? txRd.transactions : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
@@ -396,6 +493,10 @@ onMounted(() => reload())
   border: 1px solid rgba(148,163,184,0.15);
   border-radius: 14px;
   padding: 18px 20px;
+}
+.kpi-card--featured {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.06);
 }
 .kpi-label { font-size: 12px; color: #9ca3af; margin-bottom: 6px; }
 .kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }

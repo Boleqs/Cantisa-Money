@@ -34,17 +34,18 @@ UsersRoutes(app, DB, Users, UserRoles, Roles)
 CommoditiesRoutes(app, DB, Users, Commodities)
 AuthRoutes(app, DB, Users)
 AccountsRoutes(app, DB, Users, Accounts)
-TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits)
+TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Accounts, Categories)
 BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags)
 CategoriesRoutes(app, DB, Categories)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions)
-SubscriptionsRoutes(app, DB, Subscriptions)
+SubscriptionsRoutes(app, DB, Subscriptions, Transactions, Splits, Accounts)
 DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories)
 AssetsRoutes(app, DB, Assets, AssetPossession)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits)
 AIRoutes(app, DB, Categories, Accounts)
+ReconcileRoutes(app, DB, Transactions, Splits, Accounts)
 TestRoutes(app, DB, Users, Accounts)
 
 
@@ -260,7 +261,13 @@ with app.app_context():
     insert_roles()
     assign_permissions_to_roles()
     init_db()
-    pass
+
+import os
+from scheduler import start_scheduler
+# Le reloader Werkzeug (debug=True) démarre le processus deux fois.
+# On ne lance le scheduler que dans le processus fils (pas le watcher).
+if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts)
 
 uuid.uuid4()
 if __name__ == '__main__':
