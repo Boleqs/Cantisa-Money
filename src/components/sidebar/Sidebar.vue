@@ -43,10 +43,11 @@ export default {
             <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
 
             <SidebarSectionTitle label="Gestion bancaire"/>
-              <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions']">
+              <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import']">
                 <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
                 <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
                 <SidebarLink to="/transactions">Transactions</SidebarLink>
+                <SidebarLink to="/import">Importer</SidebarLink>
               </SidebarGroup>
               <SidebarLink to="/invoices">Factures</SidebarLink>
               <SidebarLink to="/budgets">Budgets</SidebarLink>

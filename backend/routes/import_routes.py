@@ -11,4 +11,6 @@ from .rt_dashboard import DashboardRoutes
 from .rt_assets import AssetsRoutes
 from .rt_reports import ReportsRoutes
 from .rt_roles import RolesRoutes
+from .rt_import import ImportRoutes
+from .rt_ai import AIRoutes
 from .rt_test import TestRoutes

@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager
 from flask_sqlalchemy import SQLAlchemy
@@ -40,6 +43,8 @@ DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories)
 AssetsRoutes(app, DB, Assets, AssetPossession)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
+ImportRoutes(app, DB, Transactions, Splits)
+AIRoutes(app, DB, Categories, Accounts)
 TestRoutes(app, DB, Users, Accounts)
 
 

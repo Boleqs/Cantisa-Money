@@ -111,6 +111,12 @@ const routes = [
         name: 'AdminRoles',
         component: () => import('../views/AdminRoles.vue'),
         meta: { requiresAuth: true }
+    },
+    {
+        path: '/import',
+        name: 'Import',
+        component: () => import('../views/Import.vue'),
+        meta: { requiresAuth: true }
     }
 ]
 

@@ -60,3 +60,7 @@ target/
 
 # Local database credentials — do not commit
 backend/database/config.py
+
+# Environment variables — do not commit
+backend/.env
+.env
