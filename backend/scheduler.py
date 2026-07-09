@@ -44,7 +44,63 @@ def execute_one_subscription(sub, exec_date, DB, Transactions, Splits, Accounts)
     DB.session.commit()
 
 
-def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts):
+def refresh_tracked_asset_prices(app, DB, Assets, Commodities):
+    """Rafraîchit value_per_unit (converti dans la devise de l'actif) pour tous les actifs
+    suivis en temps réel. Appelé par le scheduler."""
+    from utils.market_price import fetch_live_prices_bulk, convert_amount
+    with app.app_context():
+        tracked = Assets.query.filter(Assets.track_live_price == True).all()
+        if not tracked:
+            return
+        results = fetch_live_prices_bulk([a.symbol for a in tracked])
+        commodities_by_id = {c.id: c for c in Commodities.query.all()}
+        for a in tracked:
+            r = results.get(a.symbol)
+            commodity = commodities_by_id.get(a.commodity_id)
+            if not (r and r['valid'] and r['price'] is not None and commodity):
+                continue
+            converted = convert_amount(r['price'], r['currency'], commodity.short_name)
+            if converted is None:
+                continue
+            a.value_per_unit = converted
+            a.last_price_updated_at = datetime.now()
+        DB.session.commit()
+
+
+def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot):
+    """Enregistre un point quotidien (bancaire + portefeuille, converti en EUR) par utilisateur.
+    Appelé par le scheduler et une fois au démarrage (voir app.py)."""
+    from utils.wealth import compute_bank_net_worth, compute_portfolio_value
+    with app.app_context():
+        today = date.today()
+        user_ids = {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
+        for user_id in user_ids:
+            bank_nw = compute_bank_net_worth(Accounts, Commodities, user_id, 'EUR')
+            portfolio_val = compute_portfolio_value(Assets, AssetPossession, Commodities, user_id, 'EUR')
+            total = round(bank_nw + portfolio_val, 2)
+            existing = WealthSnapshot.query.filter_by(user_id=user_id, snapshot_date=today).first()
+            if existing:
+                existing.bank_net_worth = bank_nw
+                existing.portfolio_value = portfolio_val
+                existing.total = total
+            else:
+                DB.session.add(WealthSnapshot(
+                    user_id=user_id, snapshot_date=today,
+                    bank_net_worth=bank_nw, portfolio_value=portfolio_val, total=total,
+                ))
+        DB.session.commit()
+
+
+def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot):
+    """Rattrape l'historique pour toute date d'achat pas encore couverte (ex: nouvel actif ajouté
+    avec une date d'achat passée pendant que le backend tournait déjà). Appelé par le scheduler."""
+    from utils.wealth import backfill_wealth_history
+    with app.app_context():
+        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot)
+
+
+def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities,
+                     AssetPossession, WealthSnapshot):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=execute_due_subscriptions,
@@ -52,6 +108,30 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts):
         trigger='interval',
         hours=1,
         id='subscriptions_job',
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=refresh_tracked_asset_prices,
+        args=[app, DB, Assets, Commodities],
+        trigger='interval',
+        minutes=15,
+        id='asset_price_refresh_job',
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=backfill_wealth_history_job,
+        args=[app, DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot],
+        trigger='interval',
+        hours=24,
+        id='wealth_backfill_job',
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=snapshot_wealth,
+        args=[app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot],
+        trigger='interval',
+        hours=24,
+        id='wealth_snapshot_job',
         replace_existing=True,
     )
     scheduler.start()

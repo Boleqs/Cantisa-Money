@@ -83,9 +83,21 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
-        path: '/markets',
-        name: 'Markets',
-        component: () => import('../views/Markets.vue'),
+        path: '/markets/analyse',
+        name: 'MarketsAnalyse',
+        component: () => import('../views/MarketsAnalyse.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/markets/watchlist',
+        name: 'MarketsWatchlist',
+        component: () => import('../views/MarketsWatchlist.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/markets/scan',
+        name: 'MarketsScan',
+        component: () => import('../views/MarketsScan.vue'),
         meta: { requiresAuth: true }
     },
     {
@@ -122,6 +134,18 @@ const routes = [
         path: '/reconcile',
         name: 'Reconcile',
         component: () => import('../views/Reconcile.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/parametres',
+        name: 'Parametres',
+        component: () => import('../views/Parametres.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/patrimoine',
+        name: 'WealthOverview',
+        component: () => import('../views/WealthOverview.vue'),
         meta: { requiresAuth: true }
     }
 ]

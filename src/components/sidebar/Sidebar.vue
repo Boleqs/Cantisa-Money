@@ -42,6 +42,9 @@ export default {
         <div class="sidebar-nav">
             <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
 
+            <SidebarSectionTitle label="Gestion patrimoniale"/>
+              <SidebarLink to="/patrimoine">Vue d'ensemble</SidebarLink>
+
             <SidebarSectionTitle label="Gestion bancaire"/>
               <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import', '/reconcile']">
                 <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
@@ -56,10 +59,15 @@ export default {
               <SidebarGroup label="Portfolio" :paths="['/portfolio']">
                 <SidebarLink to="/portfolio">Liste des actifs</SidebarLink>
               </SidebarGroup>
-              <SidebarLink to="/markets">Marchés</SidebarLink>
+              <SidebarGroup label="Marchés" :paths="['/markets/analyse', '/markets/watchlist', '/markets/scan']">
+                <SidebarLink to="/markets/analyse">Analyse fondamentale</SidebarLink>
+                <SidebarLink to="/markets/watchlist">Watchlist</SidebarLink>
+                <SidebarLink to="/markets/scan">Scanner</SidebarLink>
+              </SidebarGroup>
             <SidebarSectionTitle label="Reporting"/>
               <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>
             <SidebarSectionTitle label="Paramètres"/>
+              <SidebarLink to="/parametres">Paramétrage</SidebarLink>
             <SidebarGroup label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
               <SidebarLink to="/categories">Catégories</SidebarLink>
               <SidebarLink to="/tags">Tags</SidebarLink>

@@ -10,3 +10,5 @@ marshmallow
 anthropic
 APScheduler
 fpdf2
+yfinance
+pytickersymbols

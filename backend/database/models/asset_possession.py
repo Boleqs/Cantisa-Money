@@ -24,4 +24,7 @@ class AssetPossession(Base):
     asset_id:uuid = Column(UUID(as_uuid=True))
     account_id:uuid = Column(UUID(as_uuid=True))
     quantity:int = Column(Integer, nullable=False, default=0)
+    purchase_price:int = Column(Numeric, nullable=True)
+    purchase_price_native:int = Column(Numeric, nullable=True)
+    purchase_date:datetime = Column(DateTime, nullable=True)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())

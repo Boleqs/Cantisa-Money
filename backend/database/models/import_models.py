@@ -18,3 +18,6 @@ from .roles import Roles
 from .permissions import Permissions
 from .user_roles import UserRoles
 from .role_permissions import RolePermissions
+from .watchlist import Watchlist
+from .market_index import MarketIndex
+from .wealth_snapshot import WealthSnapshot

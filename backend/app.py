@@ -40,13 +40,15 @@ CategoriesRoutes(app, DB, Categories)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions)
 SubscriptionsRoutes(app, DB, Subscriptions, Transactions, Splits, Accounts)
 DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories)
-AssetsRoutes(app, DB, Assets, AssetPossession)
+AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, Accounts, Transactions, Splits, WealthSnapshot)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits)
 AIRoutes(app, DB, Categories, Accounts)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts)
 TestRoutes(app, DB, Users, Accounts)
+MarketsRoutes(app, DB, Watchlist, MarketIndex)
+WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot)
 
 
 def reset_db():
@@ -255,19 +257,41 @@ def assign_permissions_to_roles():
         DB.session.add(RolePermissions(role_id=role_id, permission_id=role_permissions[role_id]))
     DB.session.commit()
 
+def seed_market_indices():
+    """Peuple la table market_index si elle est vide."""
+    if DB.session.query(MarketIndex).count() > 0:
+        return
+    from database.index_seed import build_index_data
+    for index_name, tickers in build_index_data().items():
+        seen = set()
+        for ticker in tickers:
+            t = ticker.strip().upper()
+            if t and t not in seen:
+                seen.add(t)
+                DB.session.add(MarketIndex(index_name=index_name, ticker=t))
+    DB.session.commit()
+
+from scheduler import snapshot_wealth, start_scheduler
+from utils.wealth import backfill_wealth_history
+
 with app.app_context():
     reset_db()
     insert_permissions()
     insert_roles()
     assign_permissions_to_roles()
     init_db()
+    seed_market_indices()
+    # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
+    # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
+    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot)
+    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot)
 
 import os
-from scheduler import start_scheduler
 # Le reloader Werkzeug (debug=True) démarre le processus deux fois.
 # On ne lance le scheduler que dans le processus fils (pas le watcher).
 if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts)
+    start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities,
+                     AssetPossession, WealthSnapshot)
 
 uuid.uuid4()
 if __name__ == '__main__':

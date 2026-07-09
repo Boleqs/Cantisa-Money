@@ -15,3 +15,5 @@ from .rt_import import ImportRoutes
 from .rt_ai import AIRoutes
 from .rt_reconcile import ReconcileRoutes
 from .rt_test import TestRoutes
+from .rt_markets import MarketsRoutes
+from .rt_wealth import WealthRoutes

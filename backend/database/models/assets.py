@@ -3,7 +3,7 @@ import uuid
 from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \
-    PrimaryKeyConstraint, Numeric, CheckConstraint
+    PrimaryKeyConstraint, Numeric, CheckConstraint, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from dataclasses import dataclass
 
@@ -17,7 +17,8 @@ class Assets(Base):
 
         UniqueConstraint('name', 'asset_type', 'commodity_id'),
         CheckConstraint("asset_type IN ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')"),
-        CheckConstraint("asset_type IN ('Stock', 'ETF') OR sector IS NULL")
+        CheckConstraint("asset_type IN ('Stock', 'ETF') OR sector IS NULL"),
+        CheckConstraint("track_live_price = false OR asset_type IN ('Stock', 'ETF')")
     )
 
     user_id:uuid = Column(UUID(as_uuid=True))
@@ -28,5 +29,7 @@ class Assets(Base):
     sector:str = Column(String(50), nullable=True)
     commodity_id:uuid = Column(UUID(as_uuid=True))
     value_per_unit:int = Column(Numeric, default=0, nullable=False)
+    track_live_price:bool = Column(Boolean, default=False, nullable=False)
+    last_price_updated_at:datetime = Column(DateTime, nullable=True)
     created_at:datetime = Column(DateTime, default=datetime.now(), nullable=False)
 
