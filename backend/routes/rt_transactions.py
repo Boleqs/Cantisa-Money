@@ -2,15 +2,21 @@ import csv
 import io
 import uuid
 from datetime import datetime
-from marshmallow import Schema, fields, ValidationError
+from marshmallow import Schema, fields, ValidationError, validate
 from sqlalchemy import func as sql_func
 
 from flask import request, make_response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from backend.config import (HttpCode,
-                            VAR_API_ROOT_PATH as ROOT_PATH)
+                            VAR_API_ROOT_PATH as ROOT_PATH,
+                            VAR_PERMISSIONS_LIST)
 from backend.utils.api_responses import json_response
+from backend.utils.market_price import get_fx_rate
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+TRANSACTIONS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
+BALANCE_TOLERANCE = 0.01
 
 
 class SplitInputSchema(Schema):
@@ -20,23 +26,21 @@ class SplitInputSchema(Schema):
 
 class AddTransactionSchema(Schema):
     description = fields.String(load_default=None)
-    currency_id = fields.UUID(required=True)
     post_date = fields.String(required=True)
     effective_date = fields.String(load_default=None)
     category_id = fields.UUID(load_default=None)
     is_cleared = fields.Boolean(load_default=False)
-    splits = fields.List(fields.Nested(SplitInputSchema), required=True)
+    splits = fields.List(fields.Nested(SplitInputSchema), required=True, validate=validate.Length(min=1))
 
 
 class UpdateTransactionSchema(Schema):
     transaction_id = fields.UUID(required=True)
     description = fields.String(load_default=None)
-    currency_id = fields.UUID(required=True)
     post_date = fields.String(required=True)
     effective_date = fields.String(load_default=None)
     category_id = fields.UUID(load_default=None)
     is_cleared = fields.Boolean(load_default=False)
-    splits = fields.List(fields.Nested(SplitInputSchema), required=True)
+    splits = fields.List(fields.Nested(SplitInputSchema), required=True, validate=validate.Length(min=1))
 
 
 class GetTransactionsSchema(Schema):
@@ -67,8 +71,52 @@ def _parse_date(s):
         return datetime.strptime(s, '%Y-%m-%d')
 
 
+def _derive_tx_currency(Accounts, splits_data):
+    """La transaction n'a plus de devise choisie par l'utilisateur : elle est prise sur le compte
+    du premier split (même logique que les transactions générées automatiquement, cf. rt_assets.py
+    et scheduler.py::_execute_subscription). Retourne (currency_id, error_response)."""
+    account = Accounts.query.filter_by(id=splits_data[0]['account_id']).first()
+    if not account:
+        return None, json_response('Account not found', HttpCode.NOT_FOUND)
+    return account.currency_id, None
+
+
+def _resolve_split_fx_rates(Accounts, Commodities, FxRates, tx_currency_id, on_date, splits_data):
+    """Pour chaque split, calcule le taux permettant de convertir son `quantity` (devise du compte du
+    split) vers la devise de la transaction : valeur_en_devise_tx = quantity * fx_rate. Retourne
+    (liste de (account_id, quantity, fx_rate), all_rates_resolved). Si un taux est introuvable
+    (yfinance + cache indisponibles), on retombe sur 1.0 pour ce split et all_rates_resolved passe à
+    False — la vérification d'équilibre est alors ignorée plutôt que de bloquer la saisie."""
+    tx_commodity = Commodities.query.filter_by(id=tx_currency_id).first()
+    tx_code = tx_commodity.short_name if tx_commodity else None
+
+    account_ids = {s['account_id'] for s in splits_data}
+    accounts_by_id = {a.id: a for a in Accounts.query.filter(Accounts.id.in_(account_ids)).all()}
+    commodities_by_id = {c.id: c for c in Commodities.query.all()}
+
+    resolved = []
+    all_ok = True
+    for s in splits_data:
+        account = accounts_by_id.get(s['account_id'])
+        account_commodity = commodities_by_id.get(account.currency_id) if account else None
+        account_code = account_commodity.short_name if account_commodity else tx_code
+
+        if not tx_code or not account_code or account_code == tx_code:
+            fx_rate = 1.0
+        else:
+            fx_rate = get_fx_rate(account_code, tx_code, FxRates, on_date=on_date)
+            if fx_rate is None:
+                fx_rate = 1.0
+                all_ok = False
+        resolved.append((s['account_id'], s['quantity'], fx_rate))
+    return resolved, all_ok
+
+
 def _tx_to_dict(tx, Splits, TagsOnSplits):
-    splits = Splits.query.filter(Splits.tx_id == tx.id).all()
+    # Ordre stable (débit d'abord) : le frontend traite le 1er split comme le compte "principal"
+    # (devise de la transaction, cible des tags) — sans ORDER BY explicite, Postgres ne garantit
+    # aucun ordre, ce qui ferait apparemment "changer" de compte principal à chaque rechargement.
+    splits = Splits.query.filter(Splits.tx_id == tx.id).order_by(Splits.quantity).all()
     return {
         'id': str(tx.id),
         'user_id': str(tx.user_id),
@@ -83,6 +131,7 @@ def _tx_to_dict(tx, Splits, TagsOnSplits):
                 'id': str(s.id),
                 'account_id': str(s.account_id),
                 'quantity': float(s.quantity),
+                'fx_rate': float(s.fx_rate) if s.fx_rate is not None else 1.0,
                 'tag_ids': [
                     str(tos.tag_id)
                     for tos in TagsOnSplits.query.filter(TagsOnSplits.split_id == s.id).all()
@@ -194,11 +243,13 @@ def _export_pdf(rows, tx_count):
 
 
 class TransactionsRoutes:
-    def __init__(self, app, DB, Transactions, Splits, TagsOnSplits, Accounts=None, Categories=None):
+    def __init__(self, app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts=None, Categories=None,
+                 Commodities=None, FxRates=None):
         ROUTE_PATH = f"{ROOT_PATH}/transactions"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, TRANSACTIONS_PERM)
         def get_transactions():
             try:
                 data = GetTransactionsSchema().load(request.args)
@@ -235,16 +286,28 @@ class TransactionsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, TRANSACTIONS_PERM)
         def add_transaction():
             try:
                 data = AddTransactionSchema().load(request.json)
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.NOT_FOUND)
+            post_date = _parse_date(data['post_date'])
+            currency_id, error = _derive_tx_currency(Accounts, data['splits'])
+            if error:
+                return error
+            fx_rates_resolved, all_ok = _resolve_split_fx_rates(
+                Accounts, Commodities, FxRates, currency_id, post_date.date(), data['splits'])
+            if all_ok:
+                total = sum(float(qty) * fx_rate for _, qty, fx_rate in fx_rates_resolved)
+                if abs(total) > BALANCE_TOLERANCE:
+                    return json_response(
+                        f"Les splits ne s'équilibrent pas une fois convertis dans la devise de la transaction (écart : {round(total, 2)})",
+                        HttpCode.BAD_REQUEST)
             try:
-                post_date = _parse_date(data['post_date'])
                 tx = Transactions(
                     user_id=get_jwt_identity(),
-                    currency_id=data['currency_id'],
+                    currency_id=currency_id,
                     post_date=post_date,
                     effective_date=_parse_date(data.get('effective_date')) or post_date,
                     description=data.get('description'),
@@ -253,11 +316,12 @@ class TransactionsRoutes:
                 )
                 DB.session.add(tx)
                 DB.session.flush()
-                for split in data['splits']:
+                for account_id, quantity, fx_rate in fx_rates_resolved:
                     DB.session.add(Splits(
                         tx_id=tx.id,
-                        account_id=split['account_id'],
-                        quantity=split['quantity'],
+                        account_id=account_id,
+                        quantity=quantity,
+                        fx_rate=fx_rate,
                     ))
                 DB.session.commit()
                 return json_response(_tx_to_dict(tx, Splits, TagsOnSplits), HttpCode.CREATED)
@@ -267,6 +331,7 @@ class TransactionsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, TRANSACTIONS_PERM)
         def update_transaction():
             try:
                 data = UpdateTransactionSchema().load(request.json)
@@ -279,21 +344,55 @@ class TransactionsRoutes:
             ).first()
             if not tx:
                 return json_response('Transaction not found', HttpCode.NOT_FOUND)
+
+            post_date = _parse_date(data['post_date'])
+            currency_id, error = _derive_tx_currency(Accounts, data['splits'])
+            if error:
+                return error
+            fx_rates_resolved, all_ok = _resolve_split_fx_rates(
+                Accounts, Commodities, FxRates, currency_id, post_date.date(), data['splits'])
+            if all_ok:
+                total = sum(float(qty) * fx_rate for _, qty, fx_rate in fx_rates_resolved)
+                if abs(total) > BALANCE_TOLERANCE:
+                    return json_response(
+                        f"Les splits ne s'équilibrent pas une fois convertis dans la devise de la transaction (écart : {round(total, 2)})",
+                        HttpCode.BAD_REQUEST)
             try:
-                post_date = _parse_date(data['post_date'])
-                tx.currency_id = data['currency_id']
+                tx.currency_id = currency_id
                 tx.post_date = post_date
                 tx.effective_date = _parse_date(data.get('effective_date')) or post_date
                 tx.description = data.get('description')
                 tx.category_id = data.get('category_id')
                 tx.is_cleared = data.get('is_cleared', False)
+
+                # Les tags (TagsOnSplits, ON DELETE CASCADE) et le pointage sont attachés aux splits ;
+                # comme les splits sont entièrement recréés à chaque modification (pas de colonne
+                # stable permettant de les mettre à jour en place), on capture cet état par compte
+                # avant suppression pour le réappliquer aux nouveaux splits du même compte.
+                old_splits = Splits.query.filter(Splits.tx_id == tx.id).all()
+                tags_by_account = {}
+                reconciled_accounts = set()
+                for s in old_splits:
+                    tag_ids = [t.tag_id for t in TagsOnSplits.query.filter(TagsOnSplits.split_id == s.id).all()]
+                    if tag_ids:
+                        tags_by_account.setdefault(str(s.account_id), set()).update(tag_ids)
+                    if s.is_reconciled:
+                        reconciled_accounts.add(str(s.account_id))
+
                 Splits.query.filter(Splits.tx_id == tx.id).delete()
-                for split in data['splits']:
-                    DB.session.add(Splits(
+                for account_id, quantity, fx_rate in fx_rates_resolved:
+                    new_split = Splits(
                         tx_id=tx.id,
-                        account_id=split['account_id'],
-                        quantity=split['quantity'],
-                    ))
+                        account_id=account_id,
+                        quantity=quantity,
+                        fx_rate=fx_rate,
+                        is_reconciled=str(account_id) in reconciled_accounts,
+                    )
+                    DB.session.add(new_split)
+                    DB.session.flush()
+                    for tag_id in tags_by_account.get(str(account_id), ()):
+                        DB.session.add(TagsOnSplits(split_id=new_split.id, tag_id=tag_id))
+
                 DB.session.commit()
                 return json_response(_tx_to_dict(tx, Splits, TagsOnSplits), HttpCode.OK)
             except Exception as error:
@@ -302,6 +401,7 @@ class TransactionsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, TRANSACTIONS_PERM)
         def delete_transaction():
             try:
                 data = DeleteTransactionSchema().load(request.args)
@@ -324,6 +424,7 @@ class TransactionsRoutes:
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, TRANSACTIONS_PERM)
         def export_transactions():
             user_id = get_jwt_identity()
             fmt = request.args.get('format', 'csv').lower()

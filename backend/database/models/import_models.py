@@ -8,12 +8,14 @@ from .budget_tags import BudgetTags
 from .budgets import Budgets
 from .categories import Categories
 from .commodities import Commodities
+from .fx_rates import FxRates
 from .splits import Splits
 from .subscriptions import Subscriptions
 from .tags import Tags
 from .tags_on_split import TagsOnSplits
 from .transactions import Transactions
 from .users import Users
+from .user_settings import UserSettings
 from .roles import Roles
 from .permissions import Permissions
 from .user_roles import UserRoles

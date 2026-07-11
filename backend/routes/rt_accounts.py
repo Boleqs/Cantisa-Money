@@ -12,10 +12,14 @@ from backend.config import (HttpCode,
                             JsonResponseType,
                             VAR_API_ROOT_PATH as ROOT_PATH,
                             VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS as JWT_ACCESS_TOKEN_LIFETIME,
-                            VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS
+                            VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS,
+                            VAR_PERMISSIONS_LIST
                             )
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+ACCOUNTS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 
 class AddAccountSchema(Schema):
@@ -57,6 +61,7 @@ class AccountsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=["POST"])
         @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
         def add_account():
             try:
                 # Validate request body against schema data types
@@ -89,6 +94,7 @@ class AccountsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=["PATCH"])
         @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
         def update_account():
             try:
                 # Validate request body against schema data types
@@ -115,6 +121,7 @@ class AccountsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=["GET"])
         @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
         def get_account():
             try:
                 # Validate request body against schema data types
@@ -133,6 +140,7 @@ class AccountsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=["DELETE"])
         @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
         def delete_account():
             try:
                 # Validate request body against schema data types

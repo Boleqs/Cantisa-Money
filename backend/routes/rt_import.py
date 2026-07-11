@@ -7,8 +7,12 @@ from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from backend.config import (HttpCode,
-                            VAR_API_ROOT_PATH as ROOT_PATH)
+                            VAR_API_ROOT_PATH as ROOT_PATH,
+                            VAR_PERMISSIONS_LIST)
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+IMPORT_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 DATE_FORMATS = ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y', '%d/%m/%y', '%Y/%m/%d', '%m/%d/%y']
 
@@ -192,11 +196,12 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
 
 
 class ImportRoutes:
-    def __init__(self, app, DB, Transactions, Splits):
+    def __init__(self, app, DB, Transactions, Splits, Users):
         ROUTE_PATH = f"{ROOT_PATH}/import"
 
         @app.route(f"{ROUTE_PATH}/parse", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, IMPORT_PERM)
         def parse_import():
             file = request.files.get('file')
             if not file:
@@ -319,6 +324,7 @@ class ImportRoutes:
 
         @app.route(f"{ROUTE_PATH}/confirm", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, IMPORT_PERM)
         def confirm_import():
             try:
                 data = ConfirmImportSchema().load(request.json)

@@ -1,10 +1,12 @@
 <script>
+import { computed } from 'vue';
 import SidebarLink from './SidebarLink.vue';
 import SidebarGroup from './SidebarGroup.vue';
 import SidebarSectionTitle from './SidebarSectionTitle.vue';
 import { collapsed, toggleSidebar, sidebarWidth } from './state';
 import Settings from '../modal/settings.vue';
-import MyAccount from '../modal/MyAccount.vue'; 
+import MyAccount from '../modal/MyAccount.vue';
+import { hasPermission } from '@/utils/permissions.js';
 
 export default {
     props: {},
@@ -26,7 +28,8 @@ export default {
         }
     },
     setup() {
-        return { collapsed, toggleSidebar, sidebarWidth }
+        const isAdmin = computed(() => hasPermission('Delete users'))
+        return { collapsed, toggleSidebar, sidebarWidth, hasPermission, isAdmin }
     }
 }
 
@@ -42,20 +45,22 @@ export default {
         <div class="sidebar-nav">
             <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
 
-            <SidebarSectionTitle label="Gestion patrimoniale"/>
-              <SidebarLink to="/patrimoine">Vue d'ensemble</SidebarLink>
-
-            <SidebarSectionTitle label="Gestion bancaire"/>
-              <SidebarGroup label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import', '/reconcile']">
-                <SidebarLink to="/Dashboard">Dashboard</SidebarLink>
-                <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
-                <SidebarLink to="/transactions">Transactions</SidebarLink>
-                <SidebarLink to="/import">Importer</SidebarLink>
-              <SidebarLink to="/reconcile">Rapprochement</SidebarLink>
+            <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')">
+              <SidebarSectionTitle label="Gestion bancaire"/>
+              <SidebarGroup v-if="hasPermission('Comptabilité') || hasPermission('Pilotage')" label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import', '/reconcile']">
+                <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard">Dashboard</SidebarLink>
+                <SidebarLink v-if="hasPermission('Comptabilité')" to="/accounts">Liste des comptes</SidebarLink>
+                <SidebarLink v-if="hasPermission('Comptabilité')" to="/transactions">Transactions</SidebarLink>
+                <SidebarLink v-if="hasPermission('Comptabilité')" to="/import">Importer</SidebarLink>
+                <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile">Rapprochement</SidebarLink>
               </SidebarGroup>
               <SidebarLink to="/invoices">Factures</SidebarLink>
-              <SidebarLink to="/budgets">Budgets</SidebarLink>
-            <SidebarSectionTitle label="Gestion financière"/>
+              <SidebarLink v-if="hasPermission('Planification')" to="/budgets">Budgets</SidebarLink>
+            </template>
+
+            <template v-if="hasPermission('Patrimoine')">
+              <SidebarSectionTitle label="Gestion financière"/>
+              <SidebarLink to="/patrimoine">Vue d'ensemble</SidebarLink>
               <SidebarGroup label="Portfolio" :paths="['/portfolio']">
                 <SidebarLink to="/portfolio">Liste des actifs</SidebarLink>
               </SidebarGroup>
@@ -64,16 +69,24 @@ export default {
                 <SidebarLink to="/markets/watchlist">Watchlist</SidebarLink>
                 <SidebarLink to="/markets/scan">Scanner</SidebarLink>
               </SidebarGroup>
-            <SidebarSectionTitle label="Reporting"/>
+            </template>
+
+            <template v-if="hasPermission('Pilotage')">
+              <SidebarSectionTitle label="Reporting"/>
               <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>
-            <SidebarSectionTitle label="Paramètres"/>
+            </template>
+
+            <template v-if="hasPermission('Réglages personnels')">
+              <SidebarSectionTitle label="Paramètres"/>
               <SidebarLink to="/parametres">Paramétrage</SidebarLink>
-            <SidebarGroup label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
-              <SidebarLink to="/categories">Catégories</SidebarLink>
-              <SidebarLink to="/tags">Tags</SidebarLink>
-              <SidebarLink to="/subscriptions">Abonnements</SidebarLink>
+            </template>
+
+            <SidebarGroup v-if="hasPermission('Comptabilité') || hasPermission('Planification')" label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
+              <SidebarLink v-if="hasPermission('Comptabilité')" to="/categories">Catégories</SidebarLink>
+              <SidebarLink v-if="hasPermission('Comptabilité')" to="/tags">Tags</SidebarLink>
+              <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions">Abonnements</SidebarLink>
             </SidebarGroup>
-            <SidebarGroup label="Administration" :paths="['/admin/users', '/admin/roles']">
+            <SidebarGroup v-if="isAdmin" label="Administration" :paths="['/admin/users', '/admin/roles']">
               <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
               <SidebarLink to="/admin/roles">Rôles &amp; Permissions</SidebarLink>
             </SidebarGroup>

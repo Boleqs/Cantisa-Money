@@ -160,7 +160,13 @@
         <h2>{{ possessionEditTarget ? 'Modifier la position' : 'Ajouter une position' }} — {{ possessionTarget?.name }}</h2>
         <label>Compte *
           <select v-model="possessionForm.account_id" :disabled="!!possessionEditTarget">
-            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in investmentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+          </select>
+        </label>
+        <label>Compte débité (facultatif)
+          <select v-model="possessionForm.source_account_id" :disabled="!!possessionEditTarget">
+            <option :value="null">Aucun — saisie manuelle</option>
+            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
           </select>
         </label>
         <label>Quantité *
@@ -214,7 +220,10 @@ const assetTypes = [
 ]
 
 const form = ref({ symbol: '', name: '', asset_type: 'Stock', sector: '', commodity_id: '', value_per_unit: 0, track_live_price: false })
-const possessionForm = ref({ account_id: '', quantity: 1, purchase_price: null, purchase_date: null })
+const possessionForm = ref({ account_id: '', source_account_id: null, quantity: 1, purchase_price: null, purchase_date: null })
+
+const investmentAccounts = computed(() => accounts.value.filter(a => ['Assets', 'Equity'].includes(a.account_type)))
+const debitableAccounts = computed(() => accounts.value.filter(a => ['Current', 'Assets', 'Equity'].includes(a.account_type)))
 
 const validatingSymbol = ref(false)
 const symbolValidationError = ref('')
@@ -327,7 +336,11 @@ async function validateSymbol() {
 function openAddPossession(a) {
   possessionTarget.value = a
   possessionEditTarget.value = null
-  possessionForm.value = { account_id: accounts.value[0]?.id || '', quantity: 1, purchase_price: null, purchase_date: null }
+  possessionForm.value = {
+    account_id: investmentAccounts.value[0]?.id || '',
+    source_account_id: null,
+    quantity: 1, purchase_price: null, purchase_date: null,
+  }
   showPossessionModal.value = true
 }
 
@@ -336,6 +349,7 @@ function openEditPossession(p, a) {
   possessionEditTarget.value = p
   possessionForm.value = {
     account_id: p.account_id,
+    source_account_id: p.source_account_id || null,
     quantity: p.quantity,
     purchase_price: p.purchase_price_native != null ? p.purchase_price_native : p.purchase_price,
     purchase_date: p.purchase_date ? p.purchase_date.slice(0, 10) : null,
@@ -393,6 +407,7 @@ async function savePossession() {
       await axios.post('/api/assets/possessions', {
         asset_id: possessionTarget.value.id,
         account_id: possessionForm.value.account_id,
+        source_account_id: possessionForm.value.source_account_id || null,
         quantity: possessionForm.value.quantity,
         purchase_price: possessionForm.value.purchase_price,
         purchase_date: possessionForm.value.purchase_date,

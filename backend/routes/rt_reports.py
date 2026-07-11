@@ -4,18 +4,23 @@ from sqlalchemy import func
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
 
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
+REPORTS_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
+PLANIFICATION_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
 
 
 class ReportsRoutes:
-    def __init__(self, app, DB, Accounts, Transactions, Splits, Categories):
+    def __init__(self, app, DB, Accounts, Transactions, Splits, Categories, Users,
+                 Budgets, Subscriptions, Tags, TagsOnSplits):
         ROUTE_PATH = f"{ROOT_PATH}/reports"
 
         @app.route(f"{ROUTE_PATH}/monthly", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, REPORTS_PERM)
         def get_monthly_report():
             user_id = get_jwt_identity()
             today = date.today()
@@ -85,6 +90,7 @@ class ReportsRoutes:
 
         @app.route(f"{ROUTE_PATH}/by-category", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, REPORTS_PERM)
         def get_by_category_report():
             user_id = get_jwt_identity()
             today = date.today()
@@ -142,6 +148,7 @@ class ReportsRoutes:
 
         @app.route(f"{ROUTE_PATH}/by-account", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, REPORTS_PERM)
         def get_by_account_report():
             user_id = get_jwt_identity()
             today = date.today()
@@ -207,4 +214,142 @@ class ReportsRoutes:
                 'start_date': str(start),
                 'end_date': str(end),
                 'by_account': by_account,
+            }, HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/by-tag", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, REPORTS_PERM)
+        def get_by_tag_report():
+            user_id = get_jwt_identity()
+            today = date.today()
+            month_start = today.replace(day=1)
+
+            start_str = request.args.get('start_date')
+            end_str = request.args.get('end_date')
+            try:
+                start = date.fromisoformat(start_str) if start_str else month_start
+                end = date.fromisoformat(end_str) if end_str else today
+            except ValueError:
+                return json_response('Invalid date format (YYYY-MM-DD expected)', HttpCode.BAD_REQUEST)
+
+            # Un split peut porter plusieurs tags : les totaux par tag peuvent donc se chevaucher
+            # (une même dépense comptée sous plusieurs tags) — contrairement à "Par catégorie" où
+            # chaque transaction n'a qu'une seule catégorie.
+            tag_rows = DB.session.query(
+                Tags.name,
+                func.sum(Splits.quantity).label('total')
+            ).join(TagsOnSplits, TagsOnSplits.tag_id == Tags.id
+            ).join(Splits, Splits.id == TagsOnSplits.split_id
+            ).join(Transactions, Splits.tx_id == Transactions.id
+            ).join(Accounts, Splits.account_id == Accounts.id
+            ).filter(
+                Tags.user_id == user_id,
+                Transactions.user_id == user_id,
+                Transactions.post_date >= start,
+                Transactions.post_date <= end,
+                Splits.quantity < 0,
+                Accounts.account_type.in_(WEALTH_TYPES)
+            ).group_by(Tags.name).order_by(func.sum(Splits.quantity)).all()
+
+            result = [{'name': r.name, 'total': round(abs(float(r.total)), 2)} for r in tag_rows]
+
+            return json_response({
+                'start_date': str(start),
+                'end_date': str(end),
+                'by_tag': result,
+                'total': round(sum(r['total'] for r in result), 2),
+            }, HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/budgets", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, REPORTS_PERM)
+        @restricted_by_permission(Users, PLANIFICATION_PERM)
+        def get_budgets_report():
+            user_id = get_jwt_identity()
+            budgets = Budgets.query.filter(Budgets.user_id == user_id).order_by(Budgets.start_date.desc()).all()
+            today = date.today()
+
+            result = []
+            total_allocated = 0.0
+            total_spent = 0.0
+            for b in budgets:
+                allocated = float(b.amount_allocated or 0)
+                spent = float(b.amount_spent or 0)
+                pct = round((spent / allocated) * 100, 1) if allocated else None
+                start = b.start_date.date() if hasattr(b.start_date, 'date') else b.start_date
+                end = b.end_date.date() if hasattr(b.end_date, 'date') else b.end_date
+                if today < start:
+                    status = 'upcoming'
+                elif today > end:
+                    status = 'past'
+                else:
+                    status = 'active'
+                result.append({
+                    'id': str(b.id),
+                    'name': b.name,
+                    'amount_allocated': round(allocated, 2),
+                    'amount_spent': round(spent, 2),
+                    'pct': pct,
+                    'start_date': start.isoformat(),
+                    'end_date': end.isoformat(),
+                    'status': status,
+                })
+                total_allocated += allocated
+                total_spent += spent
+
+            return json_response({
+                'budgets': result,
+                'total_allocated': round(total_allocated, 2),
+                'total_spent': round(total_spent, 2),
+                'overall_pct': round((total_spent / total_allocated) * 100, 1) if total_allocated else None,
+            }, HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/subscriptions", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, REPORTS_PERM)
+        @restricted_by_permission(Users, PLANIFICATION_PERM)
+        def get_subscriptions_report():
+            user_id = get_jwt_identity()
+            subs = Subscriptions.query.filter(Subscriptions.user_id == user_id).order_by(Subscriptions.name).all()
+            cat_map = {c.id: c.name for c in Categories.query.filter_by(user_id=user_id).all()}
+            today = date.today()
+
+            result = []
+            by_category = {}
+            total_monthly = 0.0
+            for s in subs:
+                amount = float(s.amount or 0)
+                recurrence = s.recurrence or 30
+                monthly_equiv = round(amount * 30 / recurrence, 2)
+                total_monthly += monthly_equiv
+
+                ref = s.last_executed_at or s.created_at
+                ref_date = ref.date() if hasattr(ref, 'date') else ref
+                next_due = ref_date + timedelta(days=recurrence)
+                while next_due <= today:
+                    next_due += timedelta(days=recurrence)
+
+                cat_name = cat_map.get(s.category_id, 'Sans catégorie')
+                by_category[cat_name] = by_category.get(cat_name, 0) + monthly_equiv
+
+                result.append({
+                    'id': str(s.id),
+                    'name': s.name,
+                    'amount': round(amount, 2),
+                    'recurrence': recurrence,
+                    'monthly_equivalent': monthly_equiv,
+                    'category': cat_name,
+                    'next_due_date': next_due.isoformat(),
+                })
+
+            result.sort(key=lambda r: r['next_due_date'])
+
+            return json_response({
+                'subscriptions': result,
+                'total_monthly': round(total_monthly, 2),
+                'total_annual': round(total_monthly * 12, 2),
+                'by_category': [
+                    {'name': k, 'monthly_total': round(v, 2)}
+                    for k, v in sorted(by_category.items(), key=lambda kv: -kv[1])
+                ],
             }, HttpCode.OK)

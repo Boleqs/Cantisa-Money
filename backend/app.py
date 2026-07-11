@@ -30,25 +30,26 @@ DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
 JWTManager(app)
 # Routes declaration
-UsersRoutes(app, DB, Users, UserRoles, Roles)
-CommoditiesRoutes(app, DB, Users, Commodities)
+UsersRoutes(app, DB, Users, UserRoles, Roles, Permissions, RolePermissions)
+CommoditiesRoutes(app, DB, Users, Commodities, FxRates, UserSettings, Accounts, Transactions, Assets)
 AuthRoutes(app, DB, Users)
 AccountsRoutes(app, DB, Users, Accounts)
-TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Accounts, Categories)
-BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags)
-CategoriesRoutes(app, DB, Categories)
-TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions)
-SubscriptionsRoutes(app, DB, Subscriptions, Transactions, Splits, Accounts)
-DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories)
-AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, Accounts, Transactions, Splits, WealthSnapshot)
-ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories)
+TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts, Categories, Commodities, FxRates)
+BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users)
+CategoriesRoutes(app, DB, Categories, Users)
+TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)
+SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts)
+DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users)
+AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users)
+ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
-ImportRoutes(app, DB, Transactions, Splits)
-AIRoutes(app, DB, Categories, Accounts)
-ReconcileRoutes(app, DB, Transactions, Splits, Accounts)
+ImportRoutes(app, DB, Transactions, Splits, Users)
+AIRoutes(app, DB, Categories, Accounts, Users)
+ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
-MarketsRoutes(app, DB, Watchlist, MarketIndex)
-WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot)
+MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
+WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
+SettingsRoutes(app, DB, UserSettings, Users)
 
 
 def reset_db():
@@ -221,10 +222,16 @@ def init_db():
     DB.session.add_all([asset_apple, asset_etf, asset_immo])
     DB.session.flush()
 
+    # purchase_date renseignée : sans elle, backfill_wealth_history() (utilisé par la page
+    # Patrimoine et le rapport correspondant) n'a aucune date de départ et n'installe qu'un seul
+    # point d'historique (celui du jour), ce qui casse les graphiques d'évolution.
     DB.session.add_all([
-        AssetPossession(user_id=loris.id, asset_id=asset_apple.id, account_id=acc_invest.id, quantity=15),
-        AssetPossession(user_id=loris.id, asset_id=asset_etf.id,   account_id=acc_invest.id, quantity=8),
-        AssetPossession(user_id=loris.id, asset_id=asset_immo.id,  account_id=acc_invest.id, quantity=1),
+        AssetPossession(user_id=loris.id, asset_id=asset_apple.id, account_id=acc_invest.id, quantity=15,
+                        purchase_date=dt(2026, 1, 10), purchase_price=150, purchase_price_native=150),
+        AssetPossession(user_id=loris.id, asset_id=asset_etf.id,   account_id=acc_invest.id, quantity=8,
+                        purchase_date=dt(2026, 1, 15), purchase_price=480, purchase_price_native=480),
+        AssetPossession(user_id=loris.id, asset_id=asset_immo.id,  account_id=acc_invest.id, quantity=1,
+                        purchase_date=dt(2026, 2, 1), purchase_price=200000, purchase_price_native=200000),
     ])
     DB.session.commit()
 
@@ -248,13 +255,16 @@ def insert_roles():
 
 
 def assign_permissions_to_roles():
-    role_permissions = {
-        Roles.query.filter(Roles.name == "Global administrator").first().id:
-            Permissions.query.filter(Permissions.name == "Delete users").first().id,
+    admin_role_id = Roles.query.filter(Roles.name == "Global administrator").first().id
+    standard_role_id = Roles.query.filter(Roles.name == "Standard user").first().id
+    all_perms = Permissions.query.all()
 
-    }
-    for role_id in role_permissions.keys():
-        DB.session.add(RolePermissions(role_id=role_id, permission_id=role_permissions[role_id]))
+    for perm in all_perms:
+        # Admin : toutes les permissions. Standard user : tous les modules métier sauf
+        # "Delete users" (gestion des comptes réservée à l'admin).
+        DB.session.add(RolePermissions(role_id=admin_role_id, permission_id=perm.id))
+        if perm.name != "Delete users":
+            DB.session.add(RolePermissions(role_id=standard_role_id, permission_id=perm.id))
     DB.session.commit()
 
 def seed_market_indices():
@@ -283,15 +293,15 @@ with app.app_context():
     seed_market_indices()
     # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
     # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
-    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot)
-    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot)
+    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
+    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
 
 import os
 # Le reloader Werkzeug (debug=True) démarre le processus deux fois.
 # On ne lance le scheduler que dans le processus fils (pas le watcher).
 if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities,
-                     AssetPossession, WealthSnapshot)
+    start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
+                     AssetPossession, WealthSnapshot, UserSettings)
 
 uuid.uuid4()
 if __name__ == '__main__':

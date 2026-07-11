@@ -38,13 +38,8 @@
           </div>
 
           <div class="field">
-            <label>Devise *</label>
-            <select v-model="form.currency_id" required>
-              <option value="" disabled>Sélectionner…</option>
-              <option v-for="c in commodities" :key="c.id" :value="c.id">
-                {{ c.name }} ({{ c.short_name?.toUpperCase() }})
-              </option>
-            </select>
+            <label>Devise</label>
+            <input :value="txCurrencyCode || '—'" disabled title="Déterminée automatiquement par le compte source" />
           </div>
 
           <div class="field">
@@ -62,6 +57,24 @@
               <input type="checkbox" v-model="form.is_cleared" />
               Pointé / Rapproché
             </label>
+          </div>
+
+          <div class="field field-full">
+            <label>Tags</label>
+            <div v-if="form.splits[0]?.id" class="tag-picker">
+              <span v-if="!allTags.length" class="hint">Aucun tag créé — gérez-les depuis la page Tags.</span>
+              <button
+                v-for="t in allTags"
+                :key="t.id"
+                type="button"
+                class="tag-chip"
+                :class="{ on: primarySplitTagIds.has(t.id) }"
+                :style="{ '--tag-color': colorHex(t.color) }"
+                :disabled="togglingTag === t.id"
+                @click="toggleTag(t.id)"
+              >{{ t.name }}</button>
+            </div>
+            <span v-else class="hint">Enregistrez la transaction pour pouvoir lui attribuer des tags.</span>
           </div>
         </div>
 
@@ -100,6 +113,10 @@
               </select>
             </div>
           </div>
+          <p v-if="simpleMixedCurrencies" class="fx-hint">
+            <template v-if="isRatePending(simple.to_account_id)">Récupération du taux {{ txCurrencyCode }} → {{ simpleDestCode }}…</template>
+            <template v-else>{{ simple.amount || 0 }} {{ txCurrencyCode }} ≈ {{ simpleDestAmount }} {{ simpleDestCode }} (taux du jour, recalculé côté serveur à l'enregistrement)</template>
+          </p>
         </div>
 
         <!-- MODE AVANCÉ -->
@@ -107,9 +124,12 @@
           <div class="splits-header">
             <span class="splits-title">Splits</span>
             <span :class="['balance-badge', balanceOk ? 'ok' : 'warn']">
-              Balance : {{ fmtBalance }}
+              Balance ({{ txCurrencyCode || '…' }}) : {{ fmtBalance }}
             </span>
           </div>
+          <p v-if="hasMixedCurrencies" class="fx-hint">
+            Conversion automatique appliquée entre comptes de devises différentes (taux du jour de la transaction, calculé côté serveur à l'enregistrement).
+          </p>
 
           <div class="split-row" v-for="(split, i) in form.splits" :key="i">
             <select v-model="split.account_id" required>
@@ -125,6 +145,7 @@
               placeholder="Montant (+/-)"
               required
             />
+            <span class="fx-badge">{{ splitFxLabel(split) }}</span>
             <button
               type="button"
               class="remove-btn"
@@ -150,7 +171,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch, ref } from 'vue'
+import { computed, reactive, watch, ref, nextTick } from 'vue'
 import axios from 'axios'
 
 const props = defineProps({
@@ -162,17 +183,20 @@ const props = defineProps({
 const commodities = ref([])
 const accounts = ref([])
 const categories = ref([])
+const allTags = ref([])
 
 async function loadReferenceData() {
   try {
-    const [comRes, accRes, catRes] = await Promise.all([
+    const [comRes, accRes, catRes, tagRes] = await Promise.all([
       axios.get('/api/commodities'),
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
+      axios.get('/api/tags'),
     ])
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
+    allTags.value = Array.isArray(tagRes.data?.response_data) ? tagRes.data.response_data : []
   } catch (e) {
     console.error('Erreur chargement données du modal', e)
   }
@@ -195,11 +219,13 @@ const advancedMode = ref(false)
 
 function toggleMode() {
   if (!advancedMode.value) {
-    // Simple → Avancé : convertir les valeurs simple en splits
+    // Simple → Avancé : convertir les valeurs simple en splits (montant converti, pas la valeur brute)
     if (simple.amount && simple.from_account_id && simple.to_account_id) {
+      const rate = splitRate(simple.to_account_id)
+      const destAmount = Math.round((Math.abs(simple.amount) / rate) * 100) / 100
       form.splits = [
         { account_id: simple.from_account_id, quantity: -Math.abs(simple.amount) },
-        { account_id: simple.to_account_id, quantity: Math.abs(simple.amount) },
+        { account_id: simple.to_account_id, quantity: destAmount },
       ]
     }
   } else {
@@ -222,7 +248,6 @@ const emptyForm = () => ({
   description: '',
   post_date: new Date().toISOString().slice(0, 10),
   effective_date: '',
-  currency_id: '',
   category_id: '',
   is_cleared: false,
   splits: [
@@ -239,23 +264,173 @@ const simple = reactive({
   to_account_id: '',
 })
 
+// ── Conversion inter-devises (aperçu du taux appliqué côté serveur) ────────
+// La transaction n'a plus de devise choisie manuellement : elle est dérivée du compte source
+// (1er split en mode avancé, compte débité en mode simple), comme le fait déjà le backend.
+const ratesCache = reactive({}) // "FROM_TO_DATE" -> taux (float) | 'pending' | 'error'
+
+function commodityCode(commodityId) {
+  return commodities.value.find(c => c.id === commodityId)?.short_name?.toUpperCase() || null
+}
+
+function splitAccountCode(accountId) {
+  const acc = accounts.value.find(a => a.id === accountId)
+  return acc ? commodityCode(acc.currency_id) : null
+}
+
+const primaryAccountId = computed(() =>
+  advancedMode.value ? form.splits[0]?.account_id : simple.from_account_id
+)
+const txCurrencyCode = computed(() => splitAccountCode(primaryAccountId.value))
+
+// ── Tags ─────────────────────────────────────────────────────────────────
+// Un split n'existe (et n'a un id réel) qu'une fois la transaction enregistrée : les tags ne
+// peuvent donc être attribués qu'en modification, sur le split "principal" (le 1er, cf. seed).
+const primarySplitTagIds = ref(new Set())
+const togglingTag = ref(null)
+
+const TAG_COLOR_HEX = {
+  green: '#22c55e', red: '#ef4444', blue: '#3b82f6',
+  white: '#f1f5f9', black: '#1e293b', yellow: '#eab308', purple: '#a855f7',
+}
+function colorHex(color) {
+  return TAG_COLOR_HEX[color] || TAG_COLOR_HEX.green
+}
+
+async function toggleTag(tagId) {
+  const splitId = form.splits[0]?.id
+  if (!splitId || togglingTag.value) return
+  togglingTag.value = tagId
+  try {
+    if (primarySplitTagIds.value.has(tagId)) {
+      await axios.delete('/api/tags/on-split', { params: { split_id: splitId, tag_id: tagId } })
+      primarySplitTagIds.value.delete(tagId)
+    } else {
+      await axios.post('/api/tags/on-split', { split_id: splitId, tag_id: tagId })
+      primarySplitTagIds.value.add(tagId)
+    }
+    primarySplitTagIds.value = new Set(primarySplitTagIds.value)
+  } catch (e) {
+    console.error('Erreur mise à jour du tag', e)
+  } finally {
+    togglingTag.value = null
+  }
+}
+
+// Comptes dont on a besoin du taux vs. txCurrencyCode, selon le mode actif — en mode simple,
+// form.splits n'est pas édité en direct donc il faut suivre simple.from/to_account_id séparément.
+const relevantAccountIds = computed(() =>
+  advancedMode.value
+    ? form.splits.map(s => s.account_id)
+    : [simple.from_account_id, simple.to_account_id]
+)
+
+function rateKey(fromCode, toCode) {
+  return `${fromCode}_${toCode}_${form.post_date || 'today'}`
+}
+
+async function ensureRate(fromCode, toCode) {
+  if (!fromCode || !toCode || fromCode === toCode) return
+  const key = rateKey(fromCode, toCode)
+  if (ratesCache[key] !== undefined) return
+  ratesCache[key] = 'pending'
+  try {
+    const res = await axios.get('/api/commodities/rate', {
+      params: { from_code: fromCode, to_code: toCode, on_date: form.post_date || undefined },
+    })
+    ratesCache[key] = res.data?.response_data?.rate ?? 'error'
+  } catch {
+    ratesCache[key] = 'error'
+  }
+}
+
+function refreshRates() {
+  const txCode = txCurrencyCode.value
+  if (!txCode) return
+  for (const accId of relevantAccountIds.value) {
+    const accCode = splitAccountCode(accId)
+    if (accCode) ensureRate(accCode, txCode)
+  }
+}
+
+watch(
+  () => [primaryAccountId.value, form.post_date, ...relevantAccountIds.value],
+  refreshRates,
+  { immediate: true }
+)
+
+/** Taux (compte -> devise de la transaction), à la date comptable saisie. 1 tant que le taux réel
+ * n'est pas encore chargé — le serveur recalcule et fait foi à l'enregistrement. */
+function splitRate(accountId) {
+  const txCode = txCurrencyCode.value
+  const accCode = splitAccountCode(accountId)
+  if (!txCode || !accCode || accCode === txCode) return 1
+  const r = ratesCache[rateKey(accCode, txCode)]
+  return typeof r === 'number' ? r : 1
+}
+
+function isRatePending(accountId) {
+  const txCode = txCurrencyCode.value
+  const accCode = splitAccountCode(accountId)
+  if (!txCode || !accCode || accCode === txCode) return false
+  return ratesCache[rateKey(accCode, txCode)] === 'pending'
+}
+
+function splitFxLabel(s) {
+  const txCode = txCurrencyCode.value
+  const accCode = splitAccountCode(s.account_id)
+  if (!txCode || !accCode || accCode === txCode) return ''
+  if (isRatePending(s.account_id)) return `${accCode} × …`
+  return `${accCode} × ${splitRate(s.account_id).toFixed(4)}`
+}
+
+// Mode avancé, cas courant à 2 splits : le 2e split (compte de contrepartie) suit automatiquement
+// le 1er pour que la transaction démarre déjà équilibrée, converti dans sa propre devise si besoin.
+// Désactivé pendant le chargement d'une transaction existante (cf. suppressAutoBalance) pour ne
+// pas écraser des montants réels par un recalcul approximatif.
+const suppressAutoBalance = ref(false)
+
+function autoBalanceSecondSplit() {
+  if (suppressAutoBalance.value || form.splits.length !== 2) return
+  const primary = form.splits[0]
+  const other = form.splits[1]
+  if (!primary?.account_id || !other?.account_id) return
+  const primaryQty = Number(primary.quantity) || 0
+  if (!primaryQty) return
+  const rate = splitRate(other.account_id)
+  const balanced = Math.round((-primaryQty / rate) * 100) / 100
+  if (other.quantity !== balanced) other.quantity = balanced
+}
+
+watch(
+  () => [
+    form.splits.length,
+    form.splits[0]?.account_id,
+    form.splits[0]?.quantity,
+    form.splits[1]?.account_id,
+    splitRate(form.splits[1]?.account_id),
+  ],
+  autoBalanceSecondSplit
+)
+
 watch(
   () => props.transaction,
   (tx) => {
+    suppressAutoBalance.value = true
     const base = emptyForm()
     if (tx) {
       base.id = tx.id
       base.description = tx.description || ''
       base.post_date = tx.post_date ? tx.post_date.slice(0, 10) : base.post_date
       base.effective_date = tx.effective_date ? tx.effective_date.slice(0, 10) : ''
-      base.currency_id = tx.currency_id || ''
       base.category_id = tx.category_id || ''
       base.is_cleared = tx.is_cleared || false
       base.splits = (tx.splits && tx.splits.length)
-        ? tx.splits.map(s => ({ account_id: s.account_id, quantity: s.quantity }))
+        ? tx.splits.map(s => ({ id: s.id, account_id: s.account_id, quantity: s.quantity }))
         : [{ account_id: '', quantity: 0 }, { account_id: '', quantity: 0 }]
     }
     Object.assign(form, base)
+    primarySplitTagIds.value = new Set(tx?.splits?.[0]?.tag_ids || [])
 
     // Détermine le mode initial
     if (forcedAdvanced.value) {
@@ -277,18 +452,36 @@ watch(
       simple.to_account_id = ''
       advancedMode.value = false
     }
+    nextTick(() => { suppressAutoBalance.value = false })
   },
   { immediate: true }
 )
 
 // Validité selon le mode
 const simpleOk = computed(() =>
-  simple.amount > 0 && simple.from_account_id && simple.to_account_id
+  simple.amount > 0 && simple.from_account_id && simple.to_account_id && !isRatePending(simple.to_account_id)
 )
 const balance = computed(() =>
-  form.splits.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0)
+  form.splits.reduce((sum, s) => sum + (Number(s.quantity) || 0) * splitRate(s.account_id), 0)
 )
-const balanceOk = computed(() => Math.abs(balance.value) < 0.001)
+const hasMixedCurrencies = computed(() => {
+  const txCode = txCurrencyCode.value
+  return form.splits.some(s => {
+    const accCode = splitAccountCode(s.account_id)
+    return accCode && txCode && accCode !== txCode
+  })
+})
+
+const simpleDestCode = computed(() => splitAccountCode(simple.to_account_id))
+const simpleMixedCurrencies = computed(() =>
+  txCurrencyCode.value && simpleDestCode.value && txCurrencyCode.value !== simpleDestCode.value
+)
+const simpleDestAmount = computed(() => {
+  if (!simple.amount) return 0
+  const rate = splitRate(simple.to_account_id)
+  return Math.round((Math.abs(simple.amount) / rate) * 100) / 100
+})
+const balanceOk = computed(() => Math.abs(balance.value) < 0.01)
 const canSubmit = computed(() => advancedMode.value ? balanceOk.value : simpleOk.value)
 
 const fmtBalance = computed(() => {
@@ -316,9 +509,13 @@ const onSubmit = () => {
   if (advancedMode.value) {
     splits = form.splits.map(s => ({ account_id: s.account_id, quantity: Number(s.quantity) }))
   } else {
+    // Le montant saisi est débité du compte source dans SA devise ; le compte destination reçoit
+    // l'équivalent converti (montant / taux compte_dest→devise_source) si sa devise diffère.
+    const rate = splitRate(simple.to_account_id)
+    const destAmount = Math.round((Math.abs(simple.amount) / rate) * 100) / 100
     splits = [
       { account_id: simple.from_account_id, quantity: -Math.abs(simple.amount) },
-      { account_id: simple.to_account_id, quantity: Math.abs(simple.amount) },
+      { account_id: simple.to_account_id, quantity: destAmount },
     ]
   }
 
@@ -327,7 +524,6 @@ const onSubmit = () => {
     description: form.description,
     post_date: form.post_date,
     effective_date: form.effective_date || null,
-    currency_id: form.currency_id,
     category_id: form.category_id || null,
     is_cleared: form.is_cleared,
     splits,
@@ -441,6 +637,46 @@ const onSubmit = () => {
   border-color: #2563eb;
 }
 
+.field input:disabled {
+  color: #6b7280;
+  cursor: default;
+}
+
+.hint {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.tag-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  --tag-color: #22c55e;
+  background: transparent;
+  border: 1px solid var(--tag-color);
+  color: var(--tag-color);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tag-chip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tag-color) 15%, transparent);
+}
+.tag-chip.on {
+  background: var(--tag-color);
+  color: #020617;
+  font-weight: 600;
+}
+.tag-chip:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .toggles {
   flex-direction: row;
   align-items: center;
@@ -504,9 +740,22 @@ const onSubmit = () => {
 
 .split-row {
   display: grid;
-  grid-template-columns: 1fr 130px 30px;
+  grid-template-columns: 1fr 130px 90px 30px;
   gap: 8px;
   align-items: center;
+}
+
+.fx-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #93c5fd;
+}
+
+.fx-badge {
+  font-size: 11px;
+  color: #93c5fd;
+  white-space: nowrap;
+  text-align: right;
 }
 
 .split-row select,

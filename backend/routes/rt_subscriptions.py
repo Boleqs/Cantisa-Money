@@ -4,8 +4,11 @@ from marshmallow import Schema, fields, ValidationError
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+SUBSCRIPTIONS_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
 
 
 class AddSubscriptionSchema(Schema):
@@ -60,11 +63,12 @@ def _sub_to_dict(s):
 
 
 class SubscriptionsRoutes:
-    def __init__(self, app, DB, Subscriptions, Transactions=None, Splits=None, Accounts=None):
+    def __init__(self, app, DB, Subscriptions, Users, Transactions=None, Splits=None, Accounts=None):
         ROUTE_PATH = f"{ROOT_PATH}/subscriptions"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
         def get_subscriptions():
             try:
                 data = GetSubscriptionSchema().load(request.args)
@@ -88,6 +92,7 @@ class SubscriptionsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
         def add_subscription():
             try:
                 data = AddSubscriptionSchema().load(request.json)
@@ -117,6 +122,7 @@ class SubscriptionsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
         def update_subscription():
             try:
                 data = UpdateSubscriptionSchema().load(request.json)
@@ -144,6 +150,7 @@ class SubscriptionsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
         def delete_subscription():
             try:
                 data = DeleteSubscriptionSchema().load(request.args)
@@ -166,6 +173,7 @@ class SubscriptionsRoutes:
 
         @app.route(f"{ROUTE_PATH}/execute", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
         def execute_subscription():
             if not Transactions or not Splits or not Accounts:
                 return json_response('Scheduler non configuré', HttpCode.SERVER_ERROR)

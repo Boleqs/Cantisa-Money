@@ -4,8 +4,11 @@ from sqlalchemy import func
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+RECONCILE_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 
 class ConfirmReconcileSchema(Schema):
@@ -14,11 +17,12 @@ class ConfirmReconcileSchema(Schema):
 
 
 class ReconcileRoutes:
-    def __init__(self, app, DB, Transactions, Splits, Accounts):
+    def __init__(self, app, DB, Transactions, Splits, Accounts, Users):
         ROUTE_PATH = f"{ROOT_PATH}/reconcile"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, RECONCILE_PERM)
         def get_reconcile_data():
             account_id = request.args.get('account_id')
             if not account_id:
@@ -72,6 +76,7 @@ class ReconcileRoutes:
 
         @app.route(f"{ROUTE_PATH}/confirm", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, RECONCILE_PERM)
         def confirm_reconcile():
             try:
                 data = ConfirmReconcileSchema().load(request.json or {})

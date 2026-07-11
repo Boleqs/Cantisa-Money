@@ -141,8 +141,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
-
-const currency = ref(localStorage.getItem('cmm_currency') || 'EUR')
+import { currency } from '@/utils/settings.js'
 
 const kpis = ref({ net_worth_total: 0, bank_net_worth: 0, portfolio_value: 0, unrealized_gain: 0, unrealized_gain_pct: null })
 const allocationByType = ref([])

@@ -17,8 +17,13 @@
     <div class="tabs">
       <button :class="['tab', { active: tab === 'monthly' }]"  @click="tab = 'monthly'">Mensuel</button>
       <button :class="['tab', { active: tab === 'category' }]" @click="tab = 'category'">Par catégorie</button>
+      <button :class="['tab', { active: tab === 'tag' }]"      @click="tab = 'tag'; loadTag()">Par tag</button>
       <button :class="['tab', { active: tab === 'account' }]"  @click="tab = 'account'">Par compte</button>
       <button :class="['tab', { active: tab === 'savings' }]"  @click="tab = 'savings'">Épargne</button>
+      <button v-if="hasPermission('Planification')" :class="['tab', { active: tab === 'budgets' }]" @click="tab = 'budgets'; loadBudgets()">Budgets</button>
+      <button v-if="hasPermission('Planification')" :class="['tab', { active: tab === 'subscriptions' }]" @click="tab = 'subscriptions'; loadSubscriptions()">Abonnements</button>
+      <button v-if="hasPermission('Patrimoine')" :class="['tab', { active: tab === 'wealth' }]" @click="tab = 'wealth'; loadWealth()">Patrimoine</button>
+      <button v-if="hasPermission('Patrimoine')" :class="['tab', { active: tab === 'portfolio' }]" @click="tab = 'portfolio'; loadWealth()">Portefeuille</button>
     </div>
 
     <!-- ── MENSUEL ─────────────────────────────────────────────────────── -->
@@ -176,6 +181,65 @@
                 </div>
                 <div class="cat-amount">{{ fmtAmount(c.total) }}</div>
                 <div class="cat-pct muted">{{ catPct(c.total).toFixed(1) }}%</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </template>
+    </div>
+
+    <!-- ── PAR TAG ─────────────────────────────────────────────────────── -->
+    <div v-if="tab === 'tag'">
+      <div class="filters">
+        <label>Du <input type="date" v-model="tagFilter.start" /></label>
+        <label>Au <input type="date" v-model="tagFilter.end" /></label>
+        <button class="btn btn-primary" @click="loadTag">Appliquer</button>
+      </div>
+
+      <div v-if="loadingTag" class="empty">Chargement…</div>
+      <div v-else-if="!tagData.by_tag?.length" class="empty">Aucune dépense taguée sur cette période.</div>
+      <template v-else>
+        <p class="hint">Un split peut porter plusieurs tags : les totaux peuvent se chevaucher (une dépense comptée sous plusieurs tags).</p>
+        <div class="cat-layout">
+
+          <div class="card donut-card">
+            <div class="card-title">Répartition</div>
+            <div class="donut-wrap">
+              <svg viewBox="0 0 200 200" class="donut-svg">
+                <g transform="rotate(-90, 100, 100)">
+                  <circle v-for="seg in tagDonutSegments" :key="seg.name"
+                    cx="100" cy="100" r="70"
+                    fill="none"
+                    :stroke="seg.color"
+                    stroke-width="28"
+                    :stroke-dasharray="seg.dashArray"
+                    :stroke-dashoffset="seg.dashOffset"
+                  />
+                </g>
+                <text x="100" y="95"  text-anchor="middle" class="donut-label-sm">Total tagué</text>
+                <text x="100" y="115" text-anchor="middle" class="donut-label-lg">{{ fmtAmountShort(tagData.total) }}</text>
+              </svg>
+            </div>
+            <div class="donut-legend">
+              <div v-for="seg in tagDonutSegments" :key="seg.name" class="donut-legend-row">
+                <span class="donut-dot" :style="{ background: seg.color }"></span>
+                <span class="donut-legend-name">{{ seg.name }}</span>
+                <span class="donut-legend-pct muted">{{ seg.pct }}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card bars-card">
+            <div class="card-title">Détail — Total tagué : {{ fmtAmount(tagData.total) }}</div>
+            <div class="cat-bars">
+              <div v-for="(t, i) in tagData.by_tag" :key="t.name" class="cat-row">
+                <div class="cat-name">{{ t.name }}</div>
+                <div class="cat-bar-wrap">
+                  <div class="cat-bar" :style="{ width: tagPct(t.total) + '%', background: DONUT_COLORS[i % DONUT_COLORS.length] }"></div>
+                </div>
+                <div class="cat-amount">{{ fmtAmount(t.total) }}</div>
+                <div class="cat-pct muted">{{ tagPct(t.total).toFixed(1) }}%</div>
               </div>
             </div>
           </div>
@@ -357,21 +421,321 @@
       </template>
     </div>
 
+    <!-- ── BUDGETS ─────────────────────────────────────────────────────── -->
+    <div v-if="tab === 'budgets'">
+      <div v-if="loadingBudgets" class="empty">Chargement…</div>
+      <div v-else-if="!budgetsData.budgets?.length" class="empty">Aucun budget créé.</div>
+      <template v-else>
+
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">Total alloué</div>
+            <div class="kpi-value">{{ fmtAmount(budgetsData.total_allocated) }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Total dépensé</div>
+            <div class="kpi-value">{{ fmtAmount(budgetsData.total_spent) }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Taux global</div>
+            <div class="kpi-value" :class="budgetsData.overall_pct > 100 ? 'neg' : 'pos'">
+              {{ budgetsData.overall_pct !== null ? budgetsData.overall_pct.toFixed(1) + ' %' : '—' }}
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Budgets actifs</div>
+            <div class="kpi-value">{{ budgetsData.budgets.filter(b => b.status === 'active').length }}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Tous les budgets</div>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th>Période</th>
+                <th>Statut</th>
+                <th class="num">Alloué</th>
+                <th class="num">Dépensé</th>
+                <th>Progression</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="b in budgetsData.budgets" :key="b.id">
+                <td>{{ b.name }}</td>
+                <td class="muted">{{ fmtDate(b.start_date) }} → {{ fmtDate(b.end_date) }}</td>
+                <td><span :class="['status-chip', b.status]">{{ STATUS_LABELS[b.status] }}</span></td>
+                <td class="num">{{ fmtAmount(b.amount_allocated) }}</td>
+                <td class="num">{{ fmtAmount(b.amount_spent) }}</td>
+                <td>
+                  <div class="acc-bar-track budget-track">
+                    <div class="acc-bar-fill" :class="(b.pct ?? 0) > 100 ? 'neg-fill' : 'pos-fill'"
+                      :style="{ width: Math.min(Math.abs(b.pct ?? 0), 100) + '%' }"></div>
+                  </div>
+                  <span class="muted" style="font-size:11px">{{ b.pct !== null ? b.pct.toFixed(1) + ' %' : '—' }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </template>
+    </div>
+
+    <!-- ── ABONNEMENTS ─────────────────────────────────────────────────── -->
+    <div v-if="tab === 'subscriptions'">
+      <div v-if="loadingSubs" class="empty">Chargement…</div>
+      <div v-else-if="!subsData.subscriptions?.length" class="empty">Aucun abonnement.</div>
+      <template v-else>
+
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">Coût mensuel</div>
+            <div class="kpi-value neg">{{ fmtAmount(subsData.total_monthly) }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Coût annuel</div>
+            <div class="kpi-value neg">{{ fmtAmount(subsData.total_annual) }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Abonnements actifs</div>
+            <div class="kpi-value">{{ subsData.subscriptions.length }}</div>
+          </div>
+        </div>
+
+        <div class="cat-layout">
+          <div class="card donut-card">
+            <div class="card-title">Répartition mensuelle par catégorie</div>
+            <div class="donut-wrap">
+              <svg viewBox="0 0 200 200" class="donut-svg">
+                <g transform="rotate(-90, 100, 100)">
+                  <circle v-for="seg in subsDonutSegments" :key="seg.name"
+                    cx="100" cy="100" r="70"
+                    fill="none" :stroke="seg.color" stroke-width="28"
+                    :stroke-dasharray="seg.dashArray" :stroke-dashoffset="seg.dashOffset"
+                  />
+                </g>
+                <text x="100" y="95"  text-anchor="middle" class="donut-label-sm">Par mois</text>
+                <text x="100" y="115" text-anchor="middle" class="donut-label-lg">{{ fmtAmountShort(subsData.total_monthly) }}</text>
+              </svg>
+            </div>
+            <div class="donut-legend">
+              <div v-for="seg in subsDonutSegments" :key="seg.name" class="donut-legend-row">
+                <span class="donut-dot" :style="{ background: seg.color }"></span>
+                <span class="donut-legend-name">{{ seg.name }}</span>
+                <span class="donut-legend-pct muted">{{ seg.pct }}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card bars-card">
+            <div class="card-title">Détail des abonnements</div>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Catégorie</th>
+                  <th class="num">Montant</th>
+                  <th class="num">Récurrence</th>
+                  <th class="num">Éq. mensuel</th>
+                  <th>Prochaine échéance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in subsData.subscriptions" :key="s.id">
+                  <td>{{ s.name }}</td>
+                  <td class="muted">{{ s.category }}</td>
+                  <td class="num">{{ fmtAmount(s.amount) }}</td>
+                  <td class="num muted">{{ s.recurrence }} j</td>
+                  <td class="num">{{ fmtAmount(s.monthly_equivalent) }}</td>
+                  <td class="muted">{{ fmtDate(s.next_due_date) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </template>
+    </div>
+
+    <!-- ── PATRIMOINE ──────────────────────────────────────────────────── -->
+    <div v-if="tab === 'wealth'">
+      <div class="filters">
+        <label>Du <input type="date" v-model="wealthFilter.start" /></label>
+        <label>Au <input type="date" v-model="wealthFilter.end" /></label>
+        <button class="btn btn-primary" @click="loadWealth(true)">Appliquer</button>
+        <button class="btn" @click="wealthFilter.start = ''; wealthFilter.end = ''; loadWealth(true)">Tout l'historique</button>
+      </div>
+
+      <div v-if="loadingWealth" class="empty">Chargement…</div>
+      <div v-else-if="!wealthOverview" class="empty">Pas encore de données de patrimoine.</div>
+      <template v-else>
+
+        <p class="hint">
+          <template v-if="wealthHistory.length">
+            Période affichée : {{ fmtDate(wealthHistory[0].date) }} → {{ fmtDate(wealthHistory[wealthHistory.length - 1].date) }}
+            ({{ wealthHistory.length }} jour{{ wealthHistory.length > 1 ? 's' : '' }}). Les 3 premières cartes reflètent la fin de cette période ; "Aujourd'hui" affiche l'état actuel réel.
+          </template>
+        </p>
+
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">Patrimoine ({{ wealthHistory.length ? 'fin période' : '—' }})</div>
+            <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.total) : '—' }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Bancaire</div>
+            <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.bank_net_worth) : '—' }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Portefeuille</div>
+            <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.portfolio_value) : '—' }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Évolution sur la période</div>
+            <div class="kpi-value" :class="wealthGrowth === null ? '' : (wealthGrowth >= 0 ? 'pos' : 'neg')">
+              {{ wealthGrowth === null ? '—' : (wealthGrowth >= 0 ? '+' : '') + fmtAmount(wealthGrowth) }}
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Patrimoine (aujourd'hui)</div>
+            <div class="kpi-value">{{ fmtAmount(wealthOverview.kpis.net_worth_total) }}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Évolution du patrimoine total</div>
+          <div v-if="wealthHistory.length < 2" class="empty">
+            Pas assez de points sur cette période pour tracer une évolution ({{ wealthHistory.length }} jour{{ wealthHistory.length > 1 ? 's' : '' }} disponible{{ wealthHistory.length > 1 ? 's' : '' }}). Essayez d'élargir la plage de dates.
+          </div>
+          <div v-else class="svg-wrap">
+            <svg :viewBox="`0 0 ${SW} ${SH}`" preserveAspectRatio="none" class="chart-svg">
+              <defs>
+                <linearGradient id="wealthGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.3"/>
+                  <stop offset="100%" stop-color="#60a5fa" stop-opacity="0.02"/>
+                </linearGradient>
+              </defs>
+              <polygon v-if="wealthAreaPoints" :points="wealthAreaPoints" fill="url(#wealthGrad)" />
+              <polyline v-if="wealthLinePoints" :points="wealthLinePoints"
+                fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round"/>
+              <circle v-for="(pt, i) in wealthPointCoords" :key="i" :cx="pt.x" :cy="pt.y" r="2.2" fill="#60a5fa">
+                <title>{{ fmtDate(wealthHistory[i].date) }} : {{ fmtAmount(wealthHistory[i].total) }}</title>
+              </circle>
+              <text :x="SP.l - 4" :y="SP.t + 8"      text-anchor="end" class="svg-label">{{ fmtShort(wealthMax) }}</text>
+              <text :x="SP.l - 4" :y="SH - SP.b + 4"  text-anchor="end" class="svg-label">{{ fmtShort(wealthMin) }}</text>
+              <text :x="SP.l" :y="SH - 2" text-anchor="start" class="svg-label">{{ fmtDate(wealthHistory[0].date) }}</text>
+              <text :x="SW - SP.r" :y="SH - 2" text-anchor="end" class="svg-label">{{ fmtDate(wealthHistory[wealthHistory.length-1].date) }}</text>
+            </svg>
+          </div>
+        </div>
+
+      </template>
+    </div>
+
+    <!-- ── PORTEFEUILLE ────────────────────────────────────────────────── -->
+    <div v-if="tab === 'portfolio'">
+      <div v-if="loadingWealth" class="empty">Chargement…</div>
+      <div v-else-if="!wealthOverview" class="empty">Aucun actif suivi.</div>
+      <template v-else>
+
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">Valeur du portefeuille</div>
+            <div class="kpi-value">{{ fmtAmount(wealthOverview.kpis.portfolio_value) }}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Plus-value latente</div>
+            <div class="kpi-value" :class="wealthOverview.kpis.unrealized_gain >= 0 ? 'pos' : 'neg'">
+              {{ fmtAmount(wealthOverview.kpis.unrealized_gain) }}
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Performance</div>
+            <div class="kpi-value" :class="(wealthOverview.kpis.unrealized_gain_pct ?? 0) >= 0 ? 'pos' : 'neg'">
+              {{ wealthOverview.kpis.unrealized_gain_pct !== null ? wealthOverview.kpis.unrealized_gain_pct.toFixed(1) + ' %' : '—' }}
+            </div>
+          </div>
+        </div>
+
+        <div class="cat-layout">
+          <div class="card donut-card">
+            <div class="card-title">Répartition par secteur</div>
+            <div v-if="!wealthOverview.allocation_by_sector?.length" class="empty">Pas de secteur renseigné.</div>
+            <template v-else>
+              <div class="donut-wrap">
+                <svg viewBox="0 0 200 200" class="donut-svg">
+                  <g transform="rotate(-90, 100, 100)">
+                    <circle v-for="seg in sectorDonutSegments" :key="seg.name"
+                      cx="100" cy="100" r="70"
+                      fill="none" :stroke="seg.color" stroke-width="28"
+                      :stroke-dasharray="seg.dashArray" :stroke-dashoffset="seg.dashOffset"
+                    />
+                  </g>
+                  <text x="100" y="105" text-anchor="middle" class="donut-label-lg">{{ fmtAmountShort(wealthOverview.kpis.portfolio_value) }}</text>
+                </svg>
+              </div>
+              <div class="donut-legend">
+                <div v-for="seg in sectorDonutSegments" :key="seg.name" class="donut-legend-row">
+                  <span class="donut-dot" :style="{ background: seg.color }"></span>
+                  <span class="donut-legend-name">{{ seg.name }}</span>
+                  <span class="donut-legend-pct muted">{{ seg.pct }}%</span>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div class="card bars-card">
+            <div class="card-title">Meilleures / pires performances</div>
+            <div v-if="!wealthOverview.top_movers?.length && !wealthOverview.worst_movers?.length" class="empty">Pas assez de données de plus-value.</div>
+            <template v-else>
+              <div class="movers-block" v-if="wealthOverview.top_movers?.length">
+                <div class="movers-title pos">▲ Meilleures performances</div>
+                <div v-for="a in wealthOverview.top_movers" :key="a.symbol" class="mover-row">
+                  <span>{{ a.symbol }} — {{ a.name }}</span>
+                  <span class="pos">+{{ a.gain_pct.toFixed(1) }}%</span>
+                </div>
+              </div>
+              <div class="movers-block" v-if="wealthOverview.worst_movers?.length">
+                <div class="movers-title neg">▼ Pires performances</div>
+                <div v-for="a in wealthOverview.worst_movers" :key="a.symbol" class="mover-row">
+                  <span>{{ a.symbol }} — {{ a.name }}</span>
+                  <span class="neg">{{ a.gain_pct.toFixed(1) }}%</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+      </template>
+    </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { hasPermission } from '@/utils/permissions.js'
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const monthly   = ref([])
 const catData   = ref({ by_category: [], total: 0 })
 const accData   = ref({ by_account: [] })
+const tagData   = ref({ by_tag: [], total: 0 })
+const budgetsData = ref({ budgets: [], total_allocated: 0, total_spent: 0, overall_pct: null })
+const subsData  = ref({ subscriptions: [], total_monthly: 0, total_annual: 0, by_category: [] })
+const wealthHistory  = ref([])
+const wealthOverview = ref(null)
 
 const loading    = ref(false)
 const loadingCat = ref(false)
 const loadingAcc = ref(false)
+const loadingTag = ref(false)
+const loadingBudgets = ref(false)
+const loadingSubs    = ref(false)
+const loadingWealth  = ref(false)
 const error      = ref('')
 const tab        = ref('monthly')
 
@@ -379,6 +743,10 @@ const today      = new Date().toISOString().slice(0, 10)
 const monthStart = today.slice(0, 8) + '01'
 const catFilter  = ref({ start: monthStart, end: today })
 const accFilter  = ref({ start: monthStart, end: today })
+const tagFilter  = ref({ start: monthStart, end: today })
+const wealthFilter = ref({ start: '', end: '' }) // vide = tout l'historique
+
+const STATUS_LABELS = { active: 'En cours', upcoming: 'À venir', past: 'Terminé' }
 
 // ── Colors ─────────────────────────────────────────────────────────────────────
 const DONUT_COLORS = ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#84cc16','#14b8a6']
@@ -471,6 +839,77 @@ function catPct(val) {
   if (!catData.value.total) return 0
   return (val / catData.value.total) * 100
 }
+
+/** Segments de donut génériques à partir d'une liste [{name, total|monthly_total}] et d'un total. */
+function makeDonutSegments(items, total, valueKey = 'total') {
+  const list = (items || []).slice(0, 10)
+  if (!list.length || !total) return []
+  let cumulative = 0
+  return list.map((item, i) => {
+    const pct = item[valueKey] / total
+    const len = pct * CIRC
+    const seg = {
+      color: DONUT_COLORS[i % DONUT_COLORS.length],
+      dashArray: `${len} ${CIRC}`,
+      dashOffset: -cumulative,
+      pct: (pct * 100).toFixed(1),
+      name: item.name,
+      total: item[valueKey],
+    }
+    cumulative += len
+    return seg
+  })
+}
+
+function fmtDate(v) {
+  if (!v) return '—'
+  return new Date(v).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+// ── Par tag ────────────────────────────────────────────────────────────────────
+const tagDonutSegments = computed(() => makeDonutSegments(tagData.value.by_tag, tagData.value.total))
+function tagPct(val) {
+  if (!tagData.value.total) return 0
+  return (val / tagData.value.total) * 100
+}
+
+// ── Abonnements ────────────────────────────────────────────────────────────────
+const subsDonutSegments = computed(() => makeDonutSegments(subsData.value.by_category, subsData.value.total_monthly, 'monthly_total'))
+
+// ── Patrimoine ─────────────────────────────────────────────────────────────────
+const wealthLatest = computed(() => wealthHistory.value[wealthHistory.value.length - 1] || null)
+const wealthGrowth = computed(() => {
+  if (wealthHistory.value.length < 2) return null
+  return wealthHistory.value[wealthHistory.value.length - 1].total - wealthHistory.value[0].total
+})
+const wealthRawMax = computed(() => Math.max(...wealthHistory.value.map(h => h.total), 0))
+const wealthRawMin = computed(() => Math.min(...wealthHistory.value.map(h => h.total), 0))
+const wealthPad = computed(() => Math.max((wealthRawMax.value - wealthRawMin.value) * 0.1, 1))
+const wealthMax = computed(() => wealthRawMax.value + wealthPad.value)
+const wealthMin = computed(() => wealthRawMin.value - wealthPad.value)
+const wealthPointCoords = computed(() => {
+  const n = wealthHistory.value.length
+  if (!n) return []
+  return wealthHistory.value.map((h, i) => ({
+    x: SP.l + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW),
+    y: scaleY(h.total, wealthMin.value, wealthMax.value),
+  }))
+})
+const wealthLinePoints = computed(() => wealthPointCoords.value.map(p => `${p.x},${p.y}`).join(' '))
+const wealthAreaPoints = computed(() => {
+  const pts = wealthPointCoords.value
+  if (!pts.length) return ''
+  const baseY = scaleY(wealthMin.value, wealthMin.value, wealthMax.value)
+  const line = pts.map(p => `${p.x},${p.y}`).join(' ')
+  return `${pts[0].x},${baseY} ${line} ${pts[pts.length - 1].x},${baseY}`
+})
+
+// ── Portefeuille ───────────────────────────────────────────────────────────────
+const sectorDonutSegments = computed(() => {
+  const sectors = wealthOverview.value?.allocation_by_sector || []
+  const total = sectors.reduce((s, x) => s + x.value, 0)
+  return makeDonutSegments(sectors.map(s => ({ name: s.sector, total: s.value })), total)
+})
 
 // ── Account chart ─────────────────────────────────────────────────────────────
 const sortedByAbsNet = computed(() =>
@@ -573,9 +1012,85 @@ async function loadAccount() {
   }
 }
 
+async function loadTag() {
+  loadingTag.value = true
+  error.value = ''
+  try {
+    const res = await axios.get('/api/reports/by-tag', {
+      params: { start_date: tagFilter.value.start, end_date: tagFilter.value.end }
+    })
+    tagData.value = res.data?.response_data || { by_tag: [], total: 0 }
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    loadingTag.value = false
+  }
+}
+
+let budgetsLoaded = false
+async function loadBudgets() {
+  if (budgetsLoaded) return
+  loadingBudgets.value = true
+  error.value = ''
+  try {
+    const res = await axios.get('/api/reports/budgets')
+    budgetsData.value = res.data?.response_data || { budgets: [], total_allocated: 0, total_spent: 0, overall_pct: null }
+    budgetsLoaded = true
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    loadingBudgets.value = false
+  }
+}
+
+let subsLoaded = false
+async function loadSubscriptions() {
+  if (subsLoaded) return
+  loadingSubs.value = true
+  error.value = ''
+  try {
+    const res = await axios.get('/api/reports/subscriptions')
+    subsData.value = res.data?.response_data || { subscriptions: [], total_monthly: 0, total_annual: 0, by_category: [] }
+    subsLoaded = true
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    loadingSubs.value = false
+  }
+}
+
+let wealthLoaded = false
+async function loadWealth(force = false) {
+  if (wealthLoaded && !force) return
+  loadingWealth.value = true
+  error.value = ''
+  try {
+    const [histRes, overviewRes] = await Promise.all([
+      axios.get('/api/wealth/history', {
+        params: { start_date: wealthFilter.value.start || undefined, end_date: wealthFilter.value.end || undefined },
+      }),
+      axios.get('/api/wealth/overview'),
+    ])
+    wealthHistory.value = Array.isArray(histRes.data?.response_data) ? histRes.data.response_data : []
+    wealthOverview.value = overviewRes.data?.response_data || null
+    wealthLoaded = true
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    loadingWealth.value = false
+  }
+}
+
 async function reload() {
+  budgetsLoaded = false
+  subsLoaded = false
+  wealthLoaded = false
   await loadMonthly()
   await Promise.all([loadCategory(), loadAccount()])
+  if (tab.value === 'tag') await loadTag()
+  if (tab.value === 'budgets') await loadBudgets()
+  if (tab.value === 'subscriptions') await loadSubscriptions()
+  if (tab.value === 'wealth' || tab.value === 'portfolio') await loadWealth()
 }
 
 onMounted(() => reload())
@@ -740,4 +1255,28 @@ onMounted(() => reload())
   vertical-align: middle; margin-right: 6px;
 }
 .rate-bar { display: block; height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+
+/* Hint */
+.hint { font-size: 12px; color: #9ca3af; margin: -4px 0 10px; }
+
+/* Status chip (budgets) */
+.status-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.2); color: #9ca3af;
+}
+.status-chip.active   { border-color: rgba(52,211,153,0.4); color: #34d399; }
+.status-chip.upcoming { border-color: rgba(96,165,250,0.4); color: #60a5fa; }
+.status-chip.past     { border-color: rgba(148,163,184,0.3); color: #9ca3af; }
+
+.budget-track { width: 120px; display: inline-block; margin-bottom: 2px; }
+
+/* Movers (portefeuille) */
+.movers-block { margin-bottom: 14px; }
+.movers-block:last-child { margin-bottom: 0; }
+.movers-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.mover-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(148,163,184,0.07);
+}
+.mover-row:last-child { border-bottom: none; }
 </style>

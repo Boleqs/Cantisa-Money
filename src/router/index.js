@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import axios from 'axios'
+import { ensureSettingsLoaded } from '@/utils/settings.js'
+import { ensurePermissionsLoaded } from '@/utils/permissions.js'
 
 axios.defaults.withCredentials = true
 axios.defaults.baseURL = 'http://localhost:5000'
@@ -181,6 +183,10 @@ router.beforeEach(async (to, from, next) => {
 
         if (to.meta.guestOnly && authStatus === true) {
             return next('/Dashboard')
+        }
+
+        if (authStatus === true) {
+            await Promise.all([ensureSettingsLoaded(), ensurePermissionsLoaded()])
         }
     }
 

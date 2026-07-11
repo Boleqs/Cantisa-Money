@@ -48,7 +48,7 @@ def _user_to_dict(user, user_roles, roles):
 
 
 class UsersRoutes:
-    def __init__(self, app, DB, Users, UserRoles, Roles):
+    def __init__(self, app, DB, Users, UserRoles, Roles, Permissions, RolePermissions):
         ROUTE_PATH = f"{ROOT_PATH}/user"
 
         @app.route(ROUTE_PATH, methods=['GET'])
@@ -64,6 +64,17 @@ class UsersRoutes:
         def list_roles():
             roles = Roles.query.order_by(Roles.name).all()
             return json_response([{'id': str(r.id), 'name': r.name, 'description': r.description} for r in roles], HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/me/permissions", methods=['GET'])
+        @jwt_required()
+        def get_my_permissions():
+            user_id = get_jwt_identity()
+            role_ids = [ur.role_id for ur in UserRoles.query.filter(UserRoles.user_id == user_id).all()]
+            if not role_ids:
+                return json_response([], HttpCode.OK)
+            perm_ids = {rp.permission_id for rp in RolePermissions.query.filter(RolePermissions.role_id.in_(role_ids)).all()}
+            perms = Permissions.query.filter(Permissions.id.in_(perm_ids)).all()
+            return json_response([p.name for p in perms], HttpCode.OK)
 
         @app.route(ROUTE_PATH, methods=['POST'])
         @jwt_required()

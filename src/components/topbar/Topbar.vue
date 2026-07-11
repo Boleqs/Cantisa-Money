@@ -45,6 +45,7 @@ import axios from 'axios'
 import { TOPBAR_HEIGHT } from './state.js'
 import { sidebarWidth } from '@/components/sidebar/state.js'
 import MyAccount from '@/components/modal/MyAccount.vue'
+import { clearPermissions } from '@/utils/permissions.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -142,6 +143,7 @@ function openAccount() {
 async function logout() {
   menuOpen.value = false
   try { await axios.post('/api/auth/logout') } catch { /* ignore */ }
+  clearPermissions()
   router.push('/Signin')
 }
 

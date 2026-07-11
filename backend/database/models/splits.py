@@ -19,3 +19,6 @@ class Splits(Base):
     quantity:int = Column(Numeric, nullable=False)
     account_id:uuid = Column(UUID(as_uuid=True))
     is_reconciled:bool = Column(Boolean, nullable=False, default=False)
+    # Taux appliqué pour convertir `quantity` (devise du compte du split) vers la devise de la
+    # transaction : valeur_en_devise_tx = quantity * fx_rate. 1 si même devise que la transaction.
+    fx_rate = Column(Numeric, nullable=False, default=1)

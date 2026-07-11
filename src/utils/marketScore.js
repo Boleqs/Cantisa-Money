@@ -3,71 +3,13 @@
  * Utilisé par MarketsAnalyse.vue et potentiellement d'autres vues.
  */
 
-const KEY_WEIGHTS     = 'cmm_market_score_weights'
-const KEY_THRESHOLDS  = 'cmm_market_score_thresholds'
+export { DEFAULT_METRICS } from './marketScoreMetrics.js'
 
-export const DEFAULT_METRICS = [
-  { key: 'pe_trailing',      label: 'P/E (trailing)',   direction: 'lower', great: 10,  bad: 35  },
-  { key: 'pe_forward',       label: 'P/E (forward)',    direction: 'lower', great: 10,  bad: 35  },
-  { key: 'pb_ratio',         label: 'P/B',              direction: 'lower', great: 1,   bad: 5   },
-  { key: 'dividend_yield',   label: 'Dividende',        direction: 'higher', great: 5,  bad: 0   },
-  { key: 'roe',              label: 'ROE',              direction: 'higher', great: 20, bad: 0   },
-  { key: 'roa',              label: 'ROA',              direction: 'higher', great: 15, bad: 0   },
-  { key: 'net_margin',       label: 'Marge nette',      direction: 'higher', great: 25, bad: 0   },
-  { key: 'gross_margin',     label: 'Marge brute',      direction: 'higher', great: 60, bad: 10  },
-  { key: 'operating_margin', label: 'Marge opérat.',    direction: 'higher', great: 25, bad: 0   },
-]
+// Persistance (désormais en base via user_settings, cf. settings.js) — mêmes signatures
+// synchrones qu'auparavant, ré-exportées ici pour ne rien changer aux vues consommatrices.
+export { loadWeights, saveWeights, loadThresholds, saveThresholds } from './settings.js'
 
-/** Charge les poids depuis le localStorage. */
-export function loadWeights() {
-  try {
-    const raw = localStorage.getItem(KEY_WEIGHTS)
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  // Valeurs par défaut : tout activé, poids égaux
-  const equal = Math.round(100 / DEFAULT_METRICS.length)
-  const weights = {}
-  DEFAULT_METRICS.forEach((m, i) => {
-    weights[m.key] = {
-      enabled: true,
-      weight: i < DEFAULT_METRICS.length - 1 ? equal : 100 - equal * (DEFAULT_METRICS.length - 1),
-    }
-  })
-  return weights
-}
-
-/** Sauvegarde les poids dans le localStorage. */
-export function saveWeights(weights) {
-  try {
-    localStorage.setItem(KEY_WEIGHTS, JSON.stringify(weights))
-  } catch {}
-}
-
-/** Charge les seuils personnalisés depuis le localStorage. */
-export function loadThresholds() {
-  try {
-    const raw = localStorage.getItem(KEY_THRESHOLDS)
-    if (raw) {
-      const stored = JSON.parse(raw)
-      // Fusionne avec les défauts pour les métriques éventuellement absentes
-      const result = {}
-      DEFAULT_METRICS.forEach(m => {
-        result[m.key] = stored[m.key] ?? { great: m.great, bad: m.bad }
-      })
-      return result
-    }
-  } catch {}
-  const result = {}
-  DEFAULT_METRICS.forEach(m => { result[m.key] = { great: m.great, bad: m.bad } })
-  return result
-}
-
-/** Sauvegarde les seuils dans le localStorage. */
-export function saveThresholds(thresholds) {
-  try {
-    localStorage.setItem(KEY_THRESHOLDS, JSON.stringify(thresholds))
-  } catch {}
-}
+import { DEFAULT_METRICS } from './marketScoreMetrics.js'
 
 /** Normalise une valeur sur 0–10 selon la direction et les bornes. */
 function normalize(val, direction, great, bad) {

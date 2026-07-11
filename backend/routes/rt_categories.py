@@ -2,8 +2,11 @@ from marshmallow import Schema, fields, ValidationError
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+CATEGORIES_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 
 class AddCategorySchema(Schema):
@@ -36,11 +39,12 @@ def _cat_to_dict(c):
 
 
 class CategoriesRoutes:
-    def __init__(self, app, DB, Categories):
+    def __init__(self, app, DB, Categories, Users):
         ROUTE_PATH = f"{ROOT_PATH}/categories"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, CATEGORIES_PERM)
         def get_categories():
             try:
                 data = GetCategorySchema().load(request.args)
@@ -64,6 +68,7 @@ class CategoriesRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, CATEGORIES_PERM)
         def add_category():
             try:
                 data = AddCategorySchema().load(request.json)
@@ -89,6 +94,7 @@ class CategoriesRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, CATEGORIES_PERM)
         def update_category():
             try:
                 data = UpdateCategorySchema().load(request.json)
@@ -112,6 +118,7 @@ class CategoriesRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, CATEGORIES_PERM)
         def delete_category():
             try:
                 data = DeleteCategorySchema().load(request.args)

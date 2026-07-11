@@ -15,6 +15,10 @@ class AssetPossession(Base):
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['asset_id'], ['assets.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['account_id'], ['accounts.id'], ondelete='CASCADE', onupdate='CASCADE'),
+        ForeignKeyConstraint(['source_account_id'], ['accounts.id'], ondelete='SET NULL', onupdate='CASCADE'),
+        ForeignKeyConstraint(['tx_id'], ['transactions.id'], ondelete='SET NULL'),
+        ForeignKeyConstraint(['source_split_id'], ['splits.id'], ondelete='SET NULL'),
+        ForeignKeyConstraint(['dest_split_id'], ['splits.id'], ondelete='SET NULL'),
 
         CheckConstraint("quantity <= 1000000000 AND quantity >= 0")
     )
@@ -23,6 +27,10 @@ class AssetPossession(Base):
     id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
     asset_id:uuid = Column(UUID(as_uuid=True))
     account_id:uuid = Column(UUID(as_uuid=True))
+    source_account_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    tx_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    source_split_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    dest_split_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     quantity:int = Column(Integer, nullable=False, default=0)
     purchase_price:int = Column(Numeric, nullable=True)
     purchase_price_native:int = Column(Numeric, nullable=True)

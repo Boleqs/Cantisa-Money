@@ -4,8 +4,11 @@ from marshmallow import Schema, fields, ValidationError
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+BUDGETS_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
 
 
 class AddBudgetSchema(Schema):
@@ -70,11 +73,12 @@ def _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags):
 
 
 class BudgetsRoutes:
-    def __init__(self, app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags):
+    def __init__(self, app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users):
         ROUTE_PATH = f"{ROOT_PATH}/budgets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, BUDGETS_PERM)
         def get_budgets():
             try:
                 data = GetBudgetSchema().load(request.args)
@@ -101,6 +105,7 @@ class BudgetsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, BUDGETS_PERM)
         def add_budget():
             try:
                 data = AddBudgetSchema().load(request.json)
@@ -134,6 +139,7 @@ class BudgetsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, BUDGETS_PERM)
         def update_budget():
             try:
                 data = UpdateBudgetSchema().load(request.json)
@@ -172,6 +178,7 @@ class BudgetsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, BUDGETS_PERM)
         def delete_budget():
             try:
                 data = DeleteBudgetSchema().load(request.args)

@@ -5,10 +5,12 @@ from sqlalchemy.dialects.postgresql import DATE as PG_DATE
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
 
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
+DASHBOARD_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
 
 
 def _month_start(y, m):
@@ -21,11 +23,12 @@ def _month_start(y, m):
 
 
 class DashboardRoutes:
-    def __init__(self, app, DB, Accounts, Transactions, Splits, Categories):
+    def __init__(self, app, DB, Accounts, Transactions, Splits, Categories, Users):
         ROUTE_PATH = f"{ROOT_PATH}/dashboard"
 
         @app.route(f"{ROUTE_PATH}/stats", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, DASHBOARD_PERM)
         def get_dashboard_stats():
             user_id = get_jwt_identity()
             today = date.today()

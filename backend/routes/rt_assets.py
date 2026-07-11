@@ -1,14 +1,17 @@
+import uuid
 from datetime import datetime
 
 from marshmallow import Schema, fields, ValidationError, validate
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
-from backend.utils.market_price import fetch_live_price, convert_amount
+from backend.utils.market_price import fetch_live_price, convert_amount, get_fx_rate
+from backend.utils.restricted_by_permission import restricted_by_permission
 
 VALID_ASSET_TYPES = ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')
+ASSETS_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
 
 
 class AddAssetSchema(Schema):
@@ -43,6 +46,7 @@ class RefreshAssetPriceSchema(Schema):
 class AddPossessionSchema(Schema):
     asset_id = fields.UUID(required=True)
     account_id = fields.UUID(required=True)
+    source_account_id = fields.UUID(load_default=None)
     quantity = fields.Integer(required=True)
     purchase_price = fields.Decimal(required=True, as_string=False)
     purchase_date = fields.Date(required=True)
@@ -79,6 +83,8 @@ def _possession_to_dict(p):
         'id': str(p.id),
         'asset_id': str(p.asset_id),
         'account_id': str(p.account_id),
+        'source_account_id': str(p.source_account_id) if p.source_account_id else None,
+        'tx_id': str(p.tx_id) if p.tx_id else None,
         'quantity': p.quantity,
         'purchase_price': float(p.purchase_price) if p.purchase_price is not None else None,
         'purchase_price_native': float(p.purchase_price_native) if p.purchase_price_native is not None else None,
@@ -87,7 +93,7 @@ def _possession_to_dict(p):
     }
 
 
-def _resolve_current_value(symbol, target_currency):
+def _resolve_current_value(symbol, target_currency, FxRates):
     """Récupère le prix de marché actuel du ticker et le convertit vers target_currency.
     Retourne (value_per_unit, error_response) — error_response est None si succès."""
     result = fetch_live_price(symbol)
@@ -96,21 +102,21 @@ def _resolve_current_value(symbol, target_currency):
     if result['price'] is None:
         return None, json_response(f"Prix indisponible pour '{symbol}'", HttpCode.BAD_REQUEST)
 
-    value_per_unit = convert_amount(result['price'], result['currency'], target_currency)
+    value_per_unit = convert_amount(result['price'], result['currency'], target_currency, FxRates)
     if value_per_unit is None:
         return None, json_response(
             f"Taux de change {result['currency']} → {target_currency} indisponible", HttpCode.BAD_REQUEST)
     return value_per_unit, None
 
 
-def _resolve_purchase_price(symbol, target_currency, purchase_price_native, purchase_date):
+def _resolve_purchase_price(symbol, target_currency, purchase_price_native, purchase_date, FxRates):
     """Convertit un prix d'achat natif (devise du ticker) au taux historique de purchase_date.
     Retourne (purchase_price, error_response) — error_response est None si succès."""
     result = fetch_live_price(symbol)
     if not result['valid']:
         return None, json_response(result['error'], HttpCode.BAD_REQUEST)
 
-    purchase_price = convert_amount(purchase_price_native, result['currency'], target_currency, on_date=purchase_date)
+    purchase_price = convert_amount(purchase_price_native, result['currency'], target_currency, FxRates, on_date=purchase_date)
     if purchase_price is None:
         return None, json_response(
             f"Taux de change historique {result['currency']} → {target_currency} indisponible pour la date d'achat",
@@ -118,7 +124,32 @@ def _resolve_purchase_price(symbol, target_currency, purchase_price_native, purc
     return purchase_price, None
 
 
-def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits,
+def _resolve_split_amounts(Accounts, Commodities, dest_account, source_account, total_cost, cost_currency, purchase_date, FxRates):
+    """Convertit total_cost (exprimé dans cost_currency) vers la devise propre de chaque compte
+    (chaque compte reçoit un montant dans sa propre devise, cf. rt_transactions.py). Retourne
+    (dest_amount, source_amount, dest_fx_rate, error_response). La transaction générée est dans la
+    devise du compte source (cf. add_possession) : dest_fx_rate permet de reconvertir dest_amount
+    vers cette devise (Splits.fx_rate, même convention que rt_transactions.py)."""
+    dest_commodity = Commodities.query.filter_by(id=dest_account.currency_id).first()
+    dest_code = dest_commodity.short_name if dest_commodity else cost_currency
+    dest_amount = convert_amount(total_cost, cost_currency, dest_code, FxRates, on_date=purchase_date)
+    if dest_amount is None:
+        return None, None, None, json_response(
+            f"Taux de change historique {cost_currency} → {dest_code} indisponible", HttpCode.BAD_REQUEST)
+
+    source_commodity = Commodities.query.filter_by(id=source_account.currency_id).first()
+    source_code = source_commodity.short_name if source_commodity else cost_currency
+    source_amount = convert_amount(total_cost, cost_currency, source_code, FxRates, on_date=purchase_date)
+    if source_amount is None:
+        return None, None, None, json_response(
+            f"Taux de change historique {cost_currency} → {source_code} indisponible", HttpCode.BAD_REQUEST)
+
+    dest_fx_rate = get_fx_rate(dest_code, source_code, FxRates, on_date=purchase_date) or 1.0
+
+    return dest_amount, source_amount, dest_fx_rate, None
+
+
+def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits,
                            WealthSnapshot, user_id, from_date):
     """Supprime les snapshots de patrimoine existants à partir de from_date pour cet utilisateur puis
     les reconstruit immédiatement — appelé après ajout/modification/suppression d'une position dont la
@@ -130,16 +161,17 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commoditie
         WealthSnapshot.snapshot_date >= from_date,
     ).delete()
     DB.session.commit()
-    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot)
-    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, WealthSnapshot)
+    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
+    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
 
 
 class AssetsRoutes:
-    def __init__(self, app, DB, Assets, AssetPossession, Commodities, Accounts, Transactions, Splits, WealthSnapshot):
+    def __init__(self, app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users):
         ROUTE_PATH = f"{ROOT_PATH}/assets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def get_assets():
             user_id = get_jwt_identity()
             assets = Assets.query.filter(Assets.user_id == user_id).order_by(Assets.name).all()
@@ -157,6 +189,7 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def add_asset():
             try:
                 data = AddAssetSchema().load(request.json or {})
@@ -167,7 +200,7 @@ class AssetsRoutes:
                 commodity = Commodities.query.filter_by(id=data['commodity_id']).first()
                 if not commodity:
                     return json_response('Commodity not found', HttpCode.NOT_FOUND)
-                value_per_unit, error = _resolve_current_value(data['symbol'], commodity.short_name)
+                value_per_unit, error = _resolve_current_value(data['symbol'], commodity.short_name, FxRates)
                 if error:
                     return error
                 last_price_updated_at = datetime.now()
@@ -196,6 +229,7 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def update_asset():
             try:
                 data = UpdateAssetSchema().load(request.json or {})
@@ -209,7 +243,7 @@ class AssetsRoutes:
                 commodity = Commodities.query.filter_by(id=data['commodity_id']).first()
                 if not commodity:
                     return json_response('Commodity not found', HttpCode.NOT_FOUND)
-                value_per_unit, error = _resolve_current_value(data['symbol'], commodity.short_name)
+                value_per_unit, error = _resolve_current_value(data['symbol'], commodity.short_name, FxRates)
                 if error:
                     return error
                 last_price_updated_at = datetime.now()
@@ -234,6 +268,7 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def delete_asset():
             try:
                 data = DeleteAssetSchema().load(request.args)
@@ -252,6 +287,7 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}/refresh-price", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def refresh_asset_price():
             try:
                 data = RefreshAssetPriceSchema().load(request.json or {})
@@ -265,7 +301,7 @@ class AssetsRoutes:
             commodity = Commodities.query.filter_by(id=a.commodity_id).first()
             if not commodity:
                 return json_response('Commodity not found', HttpCode.NOT_FOUND)
-            value_per_unit, error = _resolve_current_value(a.symbol, commodity.short_name)
+            value_per_unit, error = _resolve_current_value(a.symbol, commodity.short_name, FxRates)
             if error:
                 return error
             try:
@@ -281,31 +317,85 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}/possessions", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def add_possession():
             try:
                 data = AddPossessionSchema().load(request.json or {})
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
-            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == get_jwt_identity()).first()
+            user_id = get_jwt_identity()
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
             if not a:
                 return json_response('Asset not found', HttpCode.NOT_FOUND)
+
+            dest_account = Accounts.query.filter(Accounts.id == data['account_id'], Accounts.user_id == user_id).first()
+            if not dest_account:
+                return json_response('Account not found', HttpCode.NOT_FOUND)
+            if dest_account.account_type not in ('Assets', 'Equity'):
+                return json_response("Le compte doit être de type 'Assets' ou 'Equity'", HttpCode.BAD_REQUEST)
+
+            source_account_id = data.get('source_account_id')
+            source_account = None
+            if source_account_id:
+                source_account = Accounts.query.filter(
+                    Accounts.id == source_account_id, Accounts.user_id == user_id).first()
+                if not source_account:
+                    return json_response('Source account not found', HttpCode.NOT_FOUND)
+                if source_account.account_type not in ('Current', 'Assets', 'Equity'):
+                    return json_response(
+                        "Le compte débité doit être de type 'Current', 'Assets' ou 'Equity'", HttpCode.BAD_REQUEST)
+
+            commodity = Commodities.query.filter_by(id=a.commodity_id).first()
+            if not commodity:
+                return json_response('Commodity not found', HttpCode.NOT_FOUND)
 
             purchase_price_native = data['purchase_price']
             purchase_price = purchase_price_native
             if a.track_live_price:
-                commodity = Commodities.query.filter_by(id=a.commodity_id).first()
-                if not commodity:
-                    return json_response('Commodity not found', HttpCode.NOT_FOUND)
                 purchase_price, error = _resolve_purchase_price(
-                    a.symbol, commodity.short_name, purchase_price_native, data['purchase_date'])
+                    a.symbol, commodity.short_name, purchase_price_native, data['purchase_date'], FxRates)
+                if error:
+                    return error
+
+            dest_amount = source_amount = dest_fx_rate = None
+            if source_account:
+                total_cost = float(data['quantity']) * float(purchase_price)
+                dest_amount, source_amount, dest_fx_rate, error = _resolve_split_amounts(
+                    Accounts, Commodities, dest_account, source_account, total_cost,
+                    commodity.short_name, data['purchase_date'], FxRates)
                 if error:
                     return error
 
             try:
+                tx = None
+                source_split_id = dest_split_id = None
+                if source_account:
+                    tx = Transactions(
+                        user_id=user_id,
+                        currency_id=source_account.currency_id,
+                        post_date=data['purchase_date'],
+                        effective_date=data['purchase_date'],
+                        description=f"Achat {a.symbol} x{data['quantity']}",
+                        category_id=None,
+                        is_cleared=True,
+                    )
+                    DB.session.add(tx)
+                    DB.session.flush()
+                    # Ids générés explicitement (pas de lookup par account_id à la modification —
+                    # ambigu quand source_account == dest_account, cf. achat autofinancé par le CTO).
+                    source_split_id, dest_split_id = uuid.uuid4(), uuid.uuid4()
+                    DB.session.add(Splits(id=source_split_id, tx_id=tx.id, account_id=source_account.id, quantity=-source_amount, fx_rate=1.0))
+                    DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
+                    DB.session.flush()
+
                 p = AssetPossession(
-                    user_id=get_jwt_identity(),
+                    user_id=user_id,
                     asset_id=data['asset_id'],
                     account_id=data['account_id'],
+                    source_account_id=source_account_id,
+                    tx_id=tx.id if tx else None,
+                    source_split_id=source_split_id,
+                    dest_split_id=dest_split_id,
                     quantity=data['quantity'],
                     purchase_price=purchase_price,
                     purchase_price_native=purchase_price_native,
@@ -313,8 +403,8 @@ class AssetsRoutes:
                 )
                 DB.session.add(p)
                 DB.session.commit()
-                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits,
-                                       WealthSnapshot, get_jwt_identity(), data['purchase_date'])
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits,
+                                       WealthSnapshot, user_id, data['purchase_date'])
                 return json_response(_possession_to_dict(p), HttpCode.CREATED)
             except Exception as e:
                 DB.session.rollback()
@@ -322,14 +412,16 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}/possessions", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def update_possession():
             try:
                 data = UpdatePossessionSchema().load(request.json or {})
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
             p = AssetPossession.query.filter(
                 AssetPossession.id == data['possession_id'],
-                AssetPossession.user_id == get_jwt_identity()
+                AssetPossession.user_id == user_id
             ).first()
             if not p:
                 return json_response('Possession not found', HttpCode.NOT_FOUND)
@@ -337,12 +429,23 @@ class AssetsRoutes:
             purchase_price_native = data['purchase_price']
             purchase_price = purchase_price_native
             a = Assets.query.filter_by(id=p.asset_id).first()
+            commodity = Commodities.query.filter_by(id=a.commodity_id).first() if a else None
             if a and a.track_live_price:
-                commodity = Commodities.query.filter_by(id=a.commodity_id).first()
                 if not commodity:
                     return json_response('Commodity not found', HttpCode.NOT_FOUND)
                 purchase_price, error = _resolve_purchase_price(
-                    a.symbol, commodity.short_name, purchase_price_native, data['purchase_date'])
+                    a.symbol, commodity.short_name, purchase_price_native, data['purchase_date'], FxRates)
+                if error:
+                    return error
+
+            dest_amount = source_amount = dest_fx_rate = None
+            if p.tx_id and p.source_account_id and commodity:
+                dest_account = Accounts.query.filter_by(id=p.account_id).first()
+                source_account = Accounts.query.filter_by(id=p.source_account_id).first()
+                total_cost = float(data['quantity']) * float(purchase_price)
+                dest_amount, source_amount, dest_fx_rate, error = _resolve_split_amounts(
+                    Accounts, Commodities, dest_account, source_account, total_cost,
+                    commodity.short_name, data['purchase_date'], FxRates)
                 if error:
                     return error
 
@@ -352,11 +455,26 @@ class AssetsRoutes:
                 p.purchase_price = purchase_price
                 p.purchase_price_native = purchase_price_native
                 p.purchase_date = data['purchase_date']
+
+                if p.tx_id and dest_amount is not None:
+                    tx = Transactions.query.filter_by(id=p.tx_id).first()
+                    if tx:
+                        tx.post_date = data['purchase_date']
+                        tx.effective_date = data['purchase_date']
+                        tx.description = f"Achat {a.symbol} x{data['quantity']}"
+                    source_split = Splits.query.filter_by(id=p.source_split_id).first()
+                    dest_split = Splits.query.filter_by(id=p.dest_split_id).first()
+                    if source_split:
+                        source_split.quantity = -source_amount
+                    if dest_split:
+                        dest_split.quantity = dest_amount
+                        dest_split.fx_rate = dest_fx_rate
+
                 DB.session.commit()
                 if old_purchase_date != data['purchase_date']:
                     from_date = min(old_purchase_date, data['purchase_date']) if old_purchase_date else data['purchase_date']
-                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, Transactions,
-                                           Splits, WealthSnapshot, get_jwt_identity(), from_date)
+                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                                           Splits, WealthSnapshot, user_id, from_date)
                 return json_response(_possession_to_dict(p), HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()
@@ -364,24 +482,31 @@ class AssetsRoutes:
 
         @app.route(f"{ROUTE_PATH}/possessions", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
         def delete_possession():
             try:
                 data = DeletePossessionSchema().load(request.args)
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
             p = AssetPossession.query.filter(
                 AssetPossession.id == data['possession_id'],
-                AssetPossession.user_id == get_jwt_identity()
+                AssetPossession.user_id == user_id
             ).first()
             if not p:
                 return json_response('Possession not found', HttpCode.NOT_FOUND)
             purchase_date = p.purchase_date.date() if p.purchase_date else None
+            tx_id = p.tx_id
             try:
                 DB.session.delete(p)
+                if tx_id:
+                    tx = Transactions.query.filter_by(id=tx_id).first()
+                    if tx:
+                        DB.session.delete(tx)  # cascade supprime les Splits liés (splits.py: ondelete='CASCADE')
                 DB.session.commit()
                 if purchase_date:
-                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, Transactions,
-                                           Splits, WealthSnapshot, get_jwt_identity(), purchase_date)
+                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                                           Splits, WealthSnapshot, user_id, purchase_date)
                 return json_response('Possession deleted', HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()

@@ -53,6 +53,7 @@ class RolesRoutes:
 
         @app.route(ROLES_PATH, methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, ADMIN_PERM)
         def list_roles_with_perms():
             roles = Roles.query.order_by(Roles.name).all()
             all_rp = RolePermissions.query.all()
@@ -181,6 +182,7 @@ class RolesRoutes:
 
         @app.route(PERMS_PATH, methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, ADMIN_PERM)
         def list_permissions():
             perms = Permissions.query.order_by(Permissions.name).all()
             return json_response([

@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
+from datetime import timedelta, date as date_cls
 
 import yfinance as yf
 
@@ -30,33 +30,74 @@ def fetch_live_price(symbol: str) -> dict:
     return {'valid': True, 'price': price, 'currency': info.get('currency'), 'error': None}
 
 
-def get_fx_rate(from_currency: str, to_currency: str, on_date=None) -> float:
-    """Taux de conversion from_currency -> to_currency. Si on_date est fourni, utilise
-    le cours de clôture historique le plus proche (>=) de cette date, sinon le cours actuel.
-    Retourne None si le taux est introuvable."""
+def _to_date(on_date):
+    if on_date is None:
+        return date_cls.today()
+    return on_date.date() if hasattr(on_date, 'date') else on_date
+
+
+def _cache_lookup(FxRates, from_code, to_code, rate_date):
+    return FxRates.query.filter_by(from_code=from_code, to_code=to_code, rate_date=rate_date).first()
+
+
+def _cache_store(FxRates, from_code, to_code, rate_date, rate):
+    session = FxRates.query.session
+    existing = _cache_lookup(FxRates, from_code, to_code, rate_date)
+    if existing:
+        existing.rate = rate
+    else:
+        session.add(FxRates(from_code=from_code, to_code=to_code, rate_date=rate_date, rate=rate))
+    session.commit()
+
+
+def _cache_latest(FxRates, from_code, to_code):
+    """Taux le plus récent en cache pour cette paire, quelle que soit la date — repli de dernier
+    recours si yfinance est indisponible et qu'aucun taux exact n'est en cache."""
+    row = (FxRates.query.filter_by(from_code=from_code, to_code=to_code)
+           .order_by(FxRates.rate_date.desc()).first())
+    return _safe(row.rate, 6) if row else None
+
+
+def get_fx_rate(from_currency: str, to_currency: str, FxRates, on_date=None) -> float:
+    """Taux de conversion from_currency -> to_currency, mis en cache en base (table fx_rates).
+    Ordre de résolution : cache exact pour la date demandée -> yfinance (live ou historique)
+    -> dernier taux connu en cache pour la paire (repli, potentiellement obsolète) -> None."""
     if not from_currency or not to_currency or from_currency == to_currency:
         return 1.0
+
+    rate_date = _to_date(on_date)
+    cached = _cache_lookup(FxRates, from_currency, to_currency, rate_date)
+    if cached:
+        return _safe(cached.rate, 6)
+
     pair = f"{from_currency}{to_currency}=X"
+    rate = None
     try:
         ticker = yf.Ticker(pair)
         if on_date is None:
             info = ticker.info
             rate = info.get('regularMarketPrice') or info.get('currentPrice')
         else:
-            hist = ticker.history(start=on_date, end=on_date + timedelta(days=5))
-            if hist.empty:
-                return None
-            rate = float(hist['Close'].iloc[0])
-        return _safe(rate, 6)
+            hist = ticker.history(start=rate_date, end=rate_date + timedelta(days=5))
+            if not hist.empty:
+                rate = float(hist['Close'].iloc[0])
     except Exception:
-        return None
+        rate = None
+
+    rate = _safe(rate, 6)
+    if rate is not None:
+        _cache_store(FxRates, from_currency, to_currency, rate_date, rate)
+        return rate
+
+    return _cache_latest(FxRates, from_currency, to_currency)
 
 
-def convert_amount(amount, from_currency: str, to_currency: str, on_date=None):
-    """Convertit amount de from_currency vers to_currency. Retourne None si le taux est introuvable."""
+def convert_amount(amount, from_currency: str, to_currency: str, FxRates, on_date=None):
+    """Convertit amount de from_currency vers to_currency. Retourne None si le taux est introuvable
+    (ni cache exact, ni yfinance, ni repli en cache)."""
     if amount is None:
         return None
-    rate = get_fx_rate(from_currency, to_currency, on_date)
+    rate = get_fx_rate(from_currency, to_currency, FxRates, on_date)
     if rate is None:
         return None
     return _safe(float(amount) * rate)
@@ -75,19 +116,50 @@ def get_price_series(symbol: str, start_date, end_date=None) -> dict:
         return {}
 
 
-def get_fx_rate_series(from_currency: str, to_currency: str, start_date, end_date=None) -> dict:
-    """Retourne {date: taux from_currency->to_currency} pour toute la période, en une seule requête."""
+def get_fx_rate_series(from_currency: str, to_currency: str, FxRates, start_date, end_date=None) -> dict:
+    """Retourne {date: taux from_currency->to_currency} pour toute la période. Cache-first par jour,
+    complète les jours manquants avec un seul appel yfinance puis les met en cache. Si l'appel réseau
+    échoue entièrement et qu'aucun jour n'est en cache, retombe sur le dernier taux connu (série plate)."""
     if not from_currency or not to_currency or from_currency == to_currency:
         return {}
-    pair = f"{from_currency}{to_currency}=X"
     end_date = end_date or (start_date + timedelta(days=1))
-    try:
-        hist = yf.Ticker(pair).history(start=start_date, end=end_date + timedelta(days=1))
-        if hist.empty:
-            return {}
-        return {idx.date(): _safe(row['Close'], 6) for idx, row in hist.iterrows()}
-    except Exception:
-        return {}
+
+    cached_rows = FxRates.query.filter(
+        FxRates.from_code == from_currency, FxRates.to_code == to_currency,
+        FxRates.rate_date >= start_date, FxRates.rate_date <= end_date,
+    ).all()
+    result = {r.rate_date: _safe(r.rate, 6) for r in cached_rows}
+
+    all_days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+    missing = [d for d in all_days if d not in result]
+
+    if missing:
+        pair = f"{from_currency}{to_currency}=X"
+        try:
+            hist = yf.Ticker(pair).history(start=start_date, end=end_date + timedelta(days=1))
+            if not hist.empty:
+                session = FxRates.query.session
+                for idx, row in hist.iterrows():
+                    d = idx.date()
+                    rate = _safe(row['Close'], 6)
+                    if rate is None:
+                        continue
+                    result[d] = rate
+                    existing = _cache_lookup(FxRates, from_currency, to_currency, d)
+                    if existing:
+                        existing.rate = rate
+                    else:
+                        session.add(FxRates(from_code=from_currency, to_code=to_currency, rate_date=d, rate=rate))
+                session.commit()
+        except Exception:
+            pass
+
+    if not result:
+        fallback = _cache_latest(FxRates, from_currency, to_currency)
+        if fallback is not None:
+            result = {d: fallback for d in all_days}
+
+    return result
 
 
 def fetch_live_prices_bulk(symbols: list, max_workers: int = 10) -> dict:

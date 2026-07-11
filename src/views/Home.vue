@@ -24,12 +24,42 @@
       </div>
     </section>
 
+    <!-- KPI strip -->
+    <section v-if="hasPermission('Patrimoine') || hasPermission('Pilotage')" class="section">
+      <h2 class="section-title">Aperçu</h2>
+      <div class="kpi-strip">
+        <div v-if="hasPermission('Patrimoine') && wealth" class="kpi-card hero">
+          <span class="kpi-label">Patrimoine total</span>
+          <span class="kpi-value">{{ fmt(wealth.net_worth_total) }} {{ currency }}</span>
+          <span class="kpi-sub">Bancaire {{ fmt(wealth.bank_net_worth) }} · Portefeuille {{ fmt(wealth.portfolio_value) }}</span>
+        </div>
+        <template v-if="hasPermission('Pilotage') && kpis">
+          <div class="kpi-card">
+            <span class="kpi-label">Solde courant</span>
+            <span class="kpi-value">{{ fmt(kpis.current_balance) }} {{ currency }}</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Revenus du mois</span>
+            <span class="kpi-value positive">{{ fmt(kpis.monthly_income) }} {{ currency }}</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Dépenses du mois</span>
+            <span class="kpi-value negative">{{ fmt(kpis.monthly_expenses) }} {{ currency }}</span>
+          </div>
+          <div v-if="!hasPermission('Patrimoine')" class="kpi-card">
+            <span class="kpi-label">Épargne / Actifs</span>
+            <span class="kpi-value">{{ fmt(kpis.assets_balance) }} {{ currency }}</span>
+          </div>
+        </template>
+      </div>
+    </section>
+
     <!-- Quick nav -->
-    <section class="section">
-      <h2 class="section-title">Navigation rapide</h2>
+    <section v-for="group in navGroups" :key="group.label" class="section">
+      <h2 class="section-title">{{ group.label }}</h2>
       <div class="nav-grid">
         <router-link
-          v-for="card in navCards"
+          v-for="card in group.cards"
           :key="card.to"
           :to="card.to"
           class="nav-card"
@@ -40,38 +70,18 @@
         </router-link>
       </div>
     </section>
-
-    <!-- KPI strip (reused from dashboard) -->
-    <section v-if="kpis" class="section">
-      <h2 class="section-title">Aperçu du mois</h2>
-      <div class="kpi-strip">
-        <div class="kpi-card">
-          <span class="kpi-label">Solde courant</span>
-          <span class="kpi-value">{{ fmt(kpis.current_balance) }} €</span>
-        </div>
-        <div class="kpi-card">
-          <span class="kpi-label">Revenus du mois</span>
-          <span class="kpi-value positive">{{ fmt(kpis.monthly_income) }} €</span>
-        </div>
-        <div class="kpi-card">
-          <span class="kpi-label">Dépenses du mois</span>
-          <span class="kpi-value negative">{{ fmt(kpis.monthly_expenses) }} €</span>
-        </div>
-        <div class="kpi-card">
-          <span class="kpi-label">Épargne / Actifs</span>
-          <span class="kpi-value">{{ fmt(kpis.assets_balance) }} €</span>
-        </div>
-      </div>
-    </section>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { currency } from '@/utils/settings.js'
+import { hasPermission } from '@/utils/permissions.js'
 
 const user = ref(null)
 const kpis = ref(null)
+const wealth = ref(null)
 const budgets = ref([])
 const subscriptions = ref([])
 
@@ -81,19 +91,68 @@ const todayLabel = computed(() => {
   })
 })
 
-const navCards = [
-  { to: '/dashboard',   icon: '📊', label: 'Tableau de bord', desc: 'Solde, flux, dépenses' },
-  { to: '/accounts',    icon: '🏦', label: 'Comptes',          desc: 'Gérer vos comptes' },
-  { to: '/transactions',icon: '💳', label: 'Transactions',     desc: 'Historique complet' },
-  { to: '/budgets',     icon: '🎯', label: 'Budgets',          desc: 'Suivi des enveloppes' },
-  { to: '/subscriptions',icon: '🔄', label: 'Abonnements',     desc: 'Dépenses récurrentes' },
-  { to: '/portfolio',   icon: '📈', label: 'Portefeuille',     desc: 'Actifs et positions' },
-  { to: '/reports',     icon: '📋', label: 'Rapports',         desc: 'Analyses détaillées' },
-  { to: '/categories',  icon: '🏷️',  label: 'Catégories',      desc: 'Organiser les dépenses' },
+// Mêmes groupes/permissions que la sidebar (cf. src/components/sidebar/Sidebar.vue) — un groupe
+// n'apparaît que si l'utilisateur a la permission associée.
+const NAV_GROUPS_DEF = [
+  {
+    label: 'Gestion financière',
+    perm: 'Patrimoine',
+    cards: [
+      { to: '/patrimoine', icon: '💰', label: "Vue d'ensemble", desc: 'Valeur nette, allocation' },
+      { to: '/portfolio', icon: '📈', label: 'Portefeuille', desc: 'Actifs et positions' },
+      { to: '/markets/analyse', icon: '🔍', label: 'Marchés', desc: 'Analyse, watchlist, scanner' },
+    ],
+  },
+  {
+    label: 'Comptabilité',
+    perm: 'Comptabilité',
+    cards: [
+      { to: '/accounts', icon: '🏦', label: 'Comptes', desc: 'Gérer vos comptes' },
+      { to: '/transactions', icon: '💳', label: 'Transactions', desc: 'Historique complet' },
+      { to: '/import', icon: '⬆️', label: 'Importer', desc: 'Relevés bancaires' },
+      { to: '/reconcile', icon: '✅', label: 'Rapprochement', desc: 'Pointage bancaire' },
+      { to: '/categories', icon: '🏷️', label: 'Catégories', desc: 'Organiser les dépenses' },
+      { to: '/tags', icon: '🔖', label: 'Tags', desc: 'Étiquettes libres' },
+    ],
+  },
+  {
+    label: 'Planification',
+    perm: 'Planification',
+    cards: [
+      { to: '/budgets', icon: '🎯', label: 'Budgets', desc: 'Suivi des enveloppes' },
+      { to: '/subscriptions', icon: '🔄', label: 'Abonnements', desc: 'Dépenses récurrentes' },
+    ],
+  },
+  {
+    label: 'Pilotage',
+    perm: 'Pilotage',
+    cards: [
+      { to: '/Dashboard', icon: '📊', label: 'Tableau de bord', desc: 'Solde, flux, dépenses' },
+      { to: '/reports', icon: '📋', label: 'Rapports', desc: 'Analyses détaillées' },
+    ],
+  },
+  {
+    label: 'Réglages',
+    perm: 'Réglages personnels',
+    cards: [
+      { to: '/parametres', icon: '⚙️', label: 'Paramétrage', desc: 'Interface, marchés, devises' },
+    ],
+  },
+  {
+    label: 'Administration',
+    perm: 'Delete users',
+    cards: [
+      { to: '/admin/users', icon: '👤', label: 'Utilisateurs', desc: 'Gestion des comptes' },
+      { to: '/admin/roles', icon: '🔐', label: 'Rôles & Permissions', desc: "Contrôle d'accès" },
+    ],
+  },
 ]
+
+const navGroups = computed(() => NAV_GROUPS_DEF.filter(g => hasPermission(g.perm)))
 
 const alerts = computed(() => {
   const list = []
+  if (!hasPermission('Planification')) return list
 
   // Budget alerts
   for (const b of budgets.value) {
@@ -129,7 +188,7 @@ const alerts = computed(() => {
       list.push({
         level: daysLeft <= 2 ? 'danger' : 'warn',
         icon: '🔄',
-        text: `Abonnement « ${s.name} » prévu dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''} (${fmtAmt(s.amount)} €)`,
+        text: `Abonnement « ${s.name} » prévu dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''} (${fmt(s.amount)} ${currency.value})`,
         link: '/subscriptions',
       })
     }
@@ -141,21 +200,26 @@ const alerts = computed(() => {
 function fmt(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(v ?? 0)
 }
-function fmtAmt(v) {
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(v ?? 0)
-}
 
 async function load() {
-  const [meRes, statsRes, budgetRes, subRes] = await Promise.allSettled([
-    axios.get('/api/auth/me'),
-    axios.get('/api/dashboard/stats'),
-    axios.get('/api/budgets'),
-    axios.get('/api/subscriptions'),
-  ])
-  if (meRes.status === 'fulfilled') user.value = meRes.value.data?.response_data
-  if (statsRes.status === 'fulfilled') kpis.value = statsRes.value.data?.response_data?.kpis
-  if (budgetRes.status === 'fulfilled') budgets.value = Array.isArray(budgetRes.value.data?.response_data) ? budgetRes.value.data.response_data : []
-  if (subRes.status === 'fulfilled') subscriptions.value = Array.isArray(subRes.value.data?.response_data) ? subRes.value.data.response_data : []
+  const calls = [axios.get('/api/auth/me')]
+  const keys = ['me']
+
+  if (hasPermission('Pilotage')) { calls.push(axios.get('/api/dashboard/stats')); keys.push('stats') }
+  if (hasPermission('Patrimoine')) { calls.push(axios.get('/api/wealth/overview', { params: { currency: currency.value } })); keys.push('wealth') }
+  if (hasPermission('Planification')) {
+    calls.push(axios.get('/api/budgets')); keys.push('budgets')
+    calls.push(axios.get('/api/subscriptions')); keys.push('subscriptions')
+  }
+
+  const results = await Promise.allSettled(calls)
+  const byKey = Object.fromEntries(keys.map((k, i) => [k, results[i]]))
+
+  if (byKey.me?.status === 'fulfilled') user.value = byKey.me.value.data?.response_data
+  if (byKey.stats?.status === 'fulfilled') kpis.value = byKey.stats.value.data?.response_data?.kpis
+  if (byKey.wealth?.status === 'fulfilled') wealth.value = byKey.wealth.value.data?.response_data?.kpis
+  if (byKey.budgets?.status === 'fulfilled') budgets.value = Array.isArray(byKey.budgets.value.data?.response_data) ? byKey.budgets.value.data.response_data : []
+  if (byKey.subscriptions?.status === 'fulfilled') subscriptions.value = Array.isArray(byKey.subscriptions.value.data?.response_data) ? byKey.subscriptions.value.data.response_data : []
 }
 
 onMounted(load)
@@ -279,8 +343,15 @@ onMounted(load)
   background: rgba(2, 6, 23, 0.45);
   border-radius: 14px;
 }
+.kpi-card.hero {
+  grid-column: span 2;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.15), rgba(79, 70, 229, 0.1));
+  border-color: rgba(99, 102, 241, 0.35);
+}
 .kpi-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
 .kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi-card.hero .kpi-value { font-size: 30px; color: #f1f5f9; }
+.kpi-sub { font-size: 12px; color: #9ca3af; }
 .kpi-value.positive { color: #86efac; }
 .kpi-value.negative { color: #fca5a5; }
 </style>

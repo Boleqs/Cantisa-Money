@@ -199,6 +199,105 @@
           </div>
         </section>
 
+        <!-- ═══ DEVISES ═══ -->
+        <section v-if="activeSection === 'devises'">
+          <h2 class="section-title">Devises</h2>
+          <p class="section-desc">
+            Les devises et cryptomonnaies utilisées comme monnaie de vos comptes, transactions et actifs.
+          </p>
+
+          <div v-if="commoditiesError" class="alert"><strong>Erreur :</strong> {{ commoditiesError }}</div>
+
+          <div class="settings-card">
+            <div class="card-header-row">
+              <h3 class="card-title">Liste des devises</h3>
+              <button class="btn-normalize" @click="openCreateCommodity">+ Nouvelle devise</button>
+            </div>
+
+            <div v-if="commoditiesLoading && !commodities.length" class="empty">Chargement…</div>
+            <div v-else-if="!commoditiesLoading && !commodities.length" class="empty">Aucune devise.</div>
+
+            <table v-else class="table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Nom</th>
+                  <th>Type</th>
+                  <th>Décimales</th>
+                  <th>Description</th>
+                  <th>Suivi auto</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in commodities" :key="c.id">
+                  <td class="bold">{{ c.short_name }}</td>
+                  <td>{{ c.name }}</td>
+                  <td class="muted">{{ c.type === 'Crypto' ? 'Cryptomonnaie' : 'Devise' }}</td>
+                  <td class="muted">{{ c.fraction }}</td>
+                  <td class="muted">{{ c.description || '—' }}</td>
+                  <td class="muted">
+                    <span v-if="c.track_live_rate" class="track-badge" :title="c.last_rate_updated_at ? ('Dernière mise à jour : ' + fmtDateTime(c.last_rate_updated_at)) : 'Pas encore rafraîchi'">
+                      ● Suivi{{ c.short_name !== currency ? (' vs ' + currency) : '' }}
+                    </span>
+                    <span v-else>—</span>
+                  </td>
+                  <td class="actions">
+                    <button
+                      v-if="c.track_live_rate"
+                      class="btn-action"
+                      :disabled="refreshingRateIds.has(c.id)"
+                      title="Rafraîchir le taux maintenant"
+                      @click="refreshCommodityRate(c)"
+                    >⟳</button>
+                    <button class="btn-action" @click="openEditCommodity(c)" title="Modifier">✎</button>
+                    <button class="btn-action btn-danger" @click="deleteCommodity(c)" title="Supprimer">✕</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- Modal : Créer / modifier une devise -->
+    <div v-if="showCommodityModal" class="modal-backdrop" @click.self="showCommodityModal = false">
+      <div class="modal">
+        <h2>{{ commodityEditTarget ? 'Modifier la devise' : 'Nouvelle devise' }}</h2>
+        <label>Nom *
+          <input v-model="commodityForm.name" placeholder="ex: Livre Sterling" autocomplete="off" />
+        </label>
+        <label>Code *
+          <input v-model="commodityForm.short_name" placeholder="ex: GBP" maxlength="6" autocomplete="off" style="text-transform: uppercase" />
+        </label>
+        <label>Type
+          <select v-model="commodityForm.type" class="select">
+            <option value="Currency">Devise</option>
+            <option value="Crypto">Cryptomonnaie</option>
+          </select>
+        </label>
+        <label>Décimales
+          <input v-model.number="commodityForm.fraction" type="number" min="0" max="8" />
+        </label>
+        <label>Description
+          <input v-model="commodityForm.description" placeholder="Optionnel" autocomplete="off" />
+        </label>
+        <label class="toggle-row">
+          <span>
+            Suivre le cours automatiquement
+            <span class="muted">— rafraîchi périodiquement contre la devise par défaut ({{ currency }})</span>
+          </span>
+          <button type="button" :class="['toggle', { on: commodityForm.track_live_rate }]" @click="commodityForm.track_live_rate = !commodityForm.track_live_rate">
+            <span class="toggle-thumb" />
+          </button>
+        </label>
+        <div v-if="commodityModalError" class="modal-error">{{ commodityModalError }}</div>
+        <div class="modal-actions">
+          <button class="btn" @click="showCommodityModal = false">Annuler</button>
+          <button class="btn btn-primary" :disabled="!commodityForm.name.trim() || !commodityForm.short_name.trim()" @click="saveCommodity">Enregistrer</button>
+        </div>
       </div>
     </div>
   </div>
@@ -206,12 +305,15 @@
 
 <script setup>
 import { ref, computed, reactive, onMounted } from 'vue'
-import { DEFAULT_METRICS, loadWeights, saveWeights, loadThresholds, saveThresholds } from '@/utils/marketScore.js'
+import axios from 'axios'
+import { DEFAULT_METRICS, loadWeights, loadThresholds } from '@/utils/marketScore.js'
+import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
 
 // ── Sections ─────────────────────────────────────────────────────────────────
 const sections = [
   { id: 'interface', label: 'Interface' },
   { id: 'marches',   label: 'Marchés' },
+  { id: 'devises',   label: 'Devises' },
 ]
 const activeSection = ref('interface')
 
@@ -221,8 +323,6 @@ const saved  = ref(false)
 
 // Interface
 const KEY_COLLAPSE = 'cmm_sidebar_collapsed_on_start'
-const KEY_CURRENCY = 'cmm_currency'
-const KEY_DATE_FMT = 'cmm_date_format'
 const collapseOnStart = ref(false)
 const currency        = ref('EUR')
 const dateFormat      = ref('fr-FR')
@@ -230,6 +330,16 @@ const dateFormat      = ref('fr-FR')
 // Marchés
 const weights    = reactive({})
 const thresholds = reactive({})
+
+// Devises
+const commodities        = ref([])
+const commoditiesLoading = ref(false)
+const commoditiesError   = ref('')
+const showCommodityModal = ref(false)
+const commodityEditTarget = ref(null)
+const commodityModalError = ref('')
+const commodityForm = ref({ name: '', short_name: '', type: 'Currency', fraction: 2, description: '', track_live_rate: false })
+const refreshingRateIds = ref(new Set())
 
 const dateExample = computed(() => {
   const d = new Date()
@@ -249,15 +359,97 @@ const totalClass = computed(() => {
 // ── Chargement ────────────────────────────────────────────────────────────────
 onMounted(() => {
   collapseOnStart.value = localStorage.getItem(KEY_COLLAPSE) === 'true'
-  currency.value        = localStorage.getItem(KEY_CURRENCY) || 'EUR'
-  dateFormat.value      = localStorage.getItem(KEY_DATE_FMT) || 'fr-FR'
+  currency.value        = settingsCurrency.value
+  dateFormat.value      = settingsDateFormat.value
 
   const stored = loadWeights()
   DEFAULT_METRICS.forEach(m => { weights[m.key] = { ...stored[m.key] } })
 
   const storedT = loadThresholds()
   DEFAULT_METRICS.forEach(m => { thresholds[m.key] = { ...storedT[m.key] } })
+
+  reloadCommodities()
 })
+
+// ── Devises ───────────────────────────────────────────────────────────────────
+async function reloadCommodities() {
+  commoditiesLoading.value = true
+  commoditiesError.value = ''
+  try {
+    const res = await axios.get('/api/commodities')
+    commodities.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    commoditiesError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    commoditiesLoading.value = false
+  }
+}
+
+function openCreateCommodity() {
+  commodityEditTarget.value = null
+  commodityForm.value = { name: '', short_name: '', type: 'Currency', fraction: 2, description: '', track_live_rate: false }
+  commodityModalError.value = ''
+  showCommodityModal.value = true
+}
+
+function openEditCommodity(c) {
+  commodityEditTarget.value = c
+  commodityForm.value = { name: c.name, short_name: c.short_name, type: c.type, fraction: c.fraction, description: c.description || '', track_live_rate: !!c.track_live_rate }
+  commodityModalError.value = ''
+  showCommodityModal.value = true
+}
+
+function fmtDateTime(v) {
+  if (!v) return '—'
+  return new Date(v).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+async function saveCommodity() {
+  commodityModalError.value = ''
+  const payload = {
+    name: commodityForm.value.name.trim(),
+    short_name: commodityForm.value.short_name.trim(),
+    type: commodityForm.value.type,
+    fraction: commodityForm.value.fraction,
+    description: commodityForm.value.description?.trim() || null,
+    track_live_rate: commodityForm.value.track_live_rate,
+  }
+  try {
+    if (commodityEditTarget.value) {
+      await axios.patch('/api/commodities', { commodity_id: commodityEditTarget.value.id, ...payload })
+    } else {
+      await axios.post('/api/commodities', payload)
+    }
+    showCommodityModal.value = false
+    await reloadCommodities()
+  } catch (e) {
+    commodityModalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+async function refreshCommodityRate(c) {
+  refreshingRateIds.value.add(c.id)
+  commoditiesError.value = ''
+  try {
+    await axios.post('/api/commodities/refresh-rate', { commodity_id: c.id })
+    await reloadCommodities()
+  } catch (e) {
+    commoditiesError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    refreshingRateIds.value.delete(c.id)
+  }
+}
+
+async function deleteCommodity(c) {
+  if (!confirm(`Supprimer la devise « ${c.short_name} » ?`)) return
+  commoditiesError.value = ''
+  try {
+    await axios.delete('/api/commodities', { params: { commodity_id: c.id } })
+    await reloadCommodities()
+  } catch (e) {
+    commoditiesError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 function toggleMetric(key) {
@@ -300,14 +492,16 @@ function isPct(key) {
   return ['roe', 'roa', 'net_margin', 'gross_margin', 'operating_margin', 'dividend_yield'].includes(key)
 }
 
-function saveAll() {
+async function saveAll() {
   try {
     localStorage.setItem(KEY_COLLAPSE, String(collapseOnStart.value))
-    localStorage.setItem(KEY_CURRENCY,  currency.value)
-    localStorage.setItem(KEY_DATE_FMT,  dateFormat.value)
   } catch {}
-  saveWeights(weights)
-  saveThresholds(thresholds)
+  await saveSettings({
+    currency: currency.value,
+    dateFormat: dateFormat.value,
+    weights: { ...weights },
+    thresholds: { ...thresholds },
+  })
   dirty.value = false
   saved.value = true
   setTimeout(() => { saved.value = false }, 2500)
@@ -613,5 +807,121 @@ function saveAll() {
   padding-top: 12px;
   border-top: 1px solid rgba(148,163,184,0.08);
   margin-top: 4px;
+}
+
+/* Devises */
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.alert {
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  color: #fecaca;
+}
+.empty {
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 14px;
+  color: #cbd5e1;
+}
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th {
+  text-align: left; padding: 10px 12px;
+  border-bottom: 1px solid rgba(148,163,184,0.15);
+  color: #9ca3af; font-weight: 500;
+}
+.table td { padding: 10px 12px; border-bottom: 1px solid rgba(148,163,184,0.08); vertical-align: middle; }
+.table tr:last-child td { border-bottom: none; }
+.bold { font-weight: 600; }
+.muted { color: #9ca3af; }
+.actions { text-align: right; white-space: nowrap; }
+
+.btn {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; color: #fff; }
+
+.btn-action {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.btn-action:hover { background: rgba(148, 163, 184, 0.1); }
+.btn-danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+.btn-danger:hover { background: rgba(239,68,68,0.1); }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: #1e293b;
+  border: 1px solid rgba(148,163,184,0.2);
+  border-radius: 16px;
+  padding: 24px;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal h2 { margin: 0; font-size: 18px; }
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: #9ca3af;
+}
+.modal input {
+  background: rgba(15,23,42,0.7);
+  border: 1px solid rgba(148,163,184,0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #e5e7eb;
+  font-size: 14px;
+}
+.modal-error {
+  font-size: 13px;
+  color: #fca5a5;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+.toggle-row {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.track-badge {
+  color: #4ade80;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 </style>

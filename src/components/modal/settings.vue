@@ -84,13 +84,12 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { collapsed, toggleSidebar } from '@/components/sidebar/state.js'
+import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
 
 defineEmits(['close'])
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
 const KEY_COLLAPSE  = 'cmm_sidebar_collapsed_on_start'
-const KEY_CURRENCY  = 'cmm_currency'
-const KEY_DATE_FMT  = 'cmm_date_format'
 
 // ── Local state ───────────────────────────────────────────────────────────────
 const collapseOnStart = ref(false)
@@ -109,17 +108,16 @@ const dateExample = computed(() => {
 function load() {
   try {
     collapseOnStart.value = localStorage.getItem(KEY_COLLAPSE) === 'true'
-    currency.value        = localStorage.getItem(KEY_CURRENCY)  || 'EUR'
-    dateFormat.value      = localStorage.getItem(KEY_DATE_FMT)  || 'fr-FR'
   } catch {}
+  currency.value   = settingsCurrency.value
+  dateFormat.value = settingsDateFormat.value
 }
 
-function save() {
+async function save() {
   try {
     localStorage.setItem(KEY_COLLAPSE, String(collapseOnStart.value))
-    localStorage.setItem(KEY_CURRENCY,  currency.value)
-    localStorage.setItem(KEY_DATE_FMT,  dateFormat.value)
   } catch {}
+  await saveSettings({ currency: currency.value, dateFormat: dateFormat.value })
   saved.value = true
   setTimeout(() => { saved.value = false }, 2500)
 }

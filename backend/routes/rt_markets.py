@@ -6,8 +6,11 @@ import yfinance as yf
 from flask import request, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+MARKETS_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
 
 
 # ── Métriques par défaut (mirror de DEFAULT_METRICS dans marketScore.js) ────
@@ -91,11 +94,12 @@ def _fmt_market_cap(value):
 
 
 class MarketsRoutes:
-    def __init__(self, app, DB=None, Watchlist=None, MarketIndex=None):
+    def __init__(self, app, Users, DB=None, Watchlist=None, MarketIndex=None):
         ROUTE_PATH = f"{ROOT_PATH}/markets"
 
         @app.route(f"{ROUTE_PATH}/analyse", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def get_market_analyse():
             ticker_symbol = request.args.get('ticker', '').strip().upper()
             if not ticker_symbol:
@@ -182,6 +186,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/export-pdf", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def export_market_pdf():
             import traceback
             from fpdf import FPDF
@@ -305,6 +310,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/watchlist", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def get_watchlist():
             user_id = get_jwt_identity()
             items = Watchlist.query.filter_by(user_id=user_id).order_by(Watchlist.added_at).all()
@@ -354,6 +360,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/watchlist", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def add_to_watchlist():
             user_id = get_jwt_identity()
             ticker_symbol = (request.get_json() or {}).get('ticker', '').strip().upper()
@@ -368,6 +375,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/scan/indices", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def get_scan_indices():
             """Retourne les noms d'indices disponibles avec leur nombre de tickers."""
             from sqlalchemy import func
@@ -379,6 +387,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/scan/index-tickers", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def get_index_tickers():
             """Retourne la liste complète des tickers d'un indice donné."""
             name = request.args.get('index', '').strip()
@@ -389,6 +398,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/scan", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def scan_markets():
             body       = request.get_json() or {}
             tickers    = [t.strip().upper() for t in body.get('tickers', []) if t.strip()]
@@ -461,6 +471,7 @@ class MarketsRoutes:
 
         @app.route(f"{ROUTE_PATH}/watchlist/<string:ticker>", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, MARKETS_PERM)
         def remove_from_watchlist(ticker):
             user_id = get_jwt_identity()
             item = Watchlist.query.filter_by(user_id=user_id, ticker=ticker.upper()).first()

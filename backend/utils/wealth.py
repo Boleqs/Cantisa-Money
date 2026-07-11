@@ -3,11 +3,22 @@ from datetime import date, timedelta
 from backend.utils.market_price import convert_amount, get_price_series, get_fx_rate_series, fetch_live_price
 
 
-def compute_bank_net_worth(Accounts, Commodities, user_id, target_currency='EUR'):
-    """Somme des comptes Current/Assets/Equity (comme WEALTH_TYPES dans rt_dashboard.py), convertie."""
+def _portfolio_account_ids(AssetPossession, user_id):
+    """Comptes référencés comme destination d'au moins une AssetPossession de l'utilisateur — leur
+    valeur réelle est déjà comptée via le portefeuille (valeur de marché), il ne faut donc pas aussi
+    sommer leur solde comptable (coût d'acquisition) dans le patrimoine bancaire, sous peine de double
+    comptage."""
+    return {row[0] for row in AssetPossession.query.filter_by(user_id=user_id)
+            .with_entities(AssetPossession.account_id).distinct()}
+
+
+def compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, target_currency='EUR'):
+    """Somme des comptes Current/Assets/Equity (comme WEALTH_TYPES dans rt_dashboard.py), convertie,
+    à l'exclusion des comptes servant de conteneur à des positions de portefeuille (cf. _portfolio_account_ids)."""
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
-        Accounts.account_type.in_(('Current', 'Assets', 'Equity'))
+        Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
+        ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
     ).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
 
@@ -16,11 +27,11 @@ def compute_bank_net_worth(Accounts, Commodities, user_id, target_currency='EUR'
         balance = float(a.total_earned or 0) - float(a.total_spent or 0)
         commodity = commodities_by_id.get(a.currency_id)
         code = commodity.short_name if commodity else target_currency
-        total += convert_amount(balance, code, target_currency) or 0
+        total += convert_amount(balance, code, target_currency, FxRates) or 0
     return round(total, 2)
 
 
-def get_portfolio_breakdown(Assets, AssetPossession, Commodities, user_id, target_currency='EUR'):
+def get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_id, target_currency='EUR'):
     """Retourne la liste enrichie des actifs (valeur + plus-value converties dans target_currency).
     La plus-value est agrégée sur les lots (AssetPossession) qui ont un prix d'achat renseigné —
     les lots sans prix d'achat comptent dans la valeur actuelle mais pas dans la plus-value."""
@@ -34,15 +45,15 @@ def get_portfolio_breakdown(Assets, AssetPossession, Commodities, user_id, targe
         commodity = commodities_by_id.get(a.commodity_id)
         code = commodity.short_name if commodity else target_currency
 
-        value = convert_amount(qty * float(a.value_per_unit or 0), code, target_currency) or 0
+        value = convert_amount(qty * float(a.value_per_unit or 0), code, target_currency, FxRates) or 0
 
         priced_qty = sum(p.quantity for p in possessions if p.purchase_price is not None)
         purchase_value = None
         if priced_qty:
             raw_purchase_total = sum(p.quantity * float(p.purchase_price) for p in possessions if p.purchase_price is not None)
-            purchase_value = convert_amount(raw_purchase_total, code, target_currency)
+            purchase_value = convert_amount(raw_purchase_total, code, target_currency, FxRates)
 
-        priced_value = convert_amount(priced_qty * float(a.value_per_unit or 0), code, target_currency) if priced_qty else None
+        priced_value = convert_amount(priced_qty * float(a.value_per_unit or 0), code, target_currency, FxRates) if priced_qty else None
 
         gain_abs = round(priced_value - purchase_value, 2) if purchase_value is not None else None
         gain_pct = round((priced_value - purchase_value) / purchase_value * 100, 2) if purchase_value else None
@@ -62,8 +73,8 @@ def get_portfolio_breakdown(Assets, AssetPossession, Commodities, user_id, targe
     return result
 
 
-def compute_portfolio_value(Assets, AssetPossession, Commodities, user_id, target_currency='EUR'):
-    breakdown = get_portfolio_breakdown(Assets, AssetPossession, Commodities, user_id, target_currency)
+def compute_portfolio_value(Assets, AssetPossession, Commodities, FxRates, user_id, target_currency='EUR'):
+    breakdown = get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_id, target_currency)
     return round(sum(a['value'] for a in breakdown), 2)
 
 
@@ -71,14 +82,16 @@ def _day_range(start_date, end_date):
     return [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
 
-def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, DB, user_id, start_date, end_date, target_currency='EUR'):
-    """Reconstruit le solde bancaire net (Current/Assets/Equity, converti) jour par jour sur la période.
+def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, end_date, target_currency='EUR'):
+    """Reconstruit le solde bancaire net (Current/Assets/Equity, converti) jour par jour sur la période,
+    à l'exclusion des comptes-conteneurs de portefeuille (cf. _portfolio_account_ids).
     Une seule requête réseau par devise distincte (pas par jour) pour la conversion historique."""
     from sqlalchemy import func
 
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
-        Accounts.account_type.in_(('Current', 'Assets', 'Equity'))
+        Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
+        ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
     ).all()
     if not accounts:
         return {}
@@ -114,7 +127,7 @@ def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, DB,
         day = day if isinstance(day, date) else date.fromisoformat(str(day))
         flow_map[(aid, day)] = float(flow)
 
-    fx_series_cache = {code: get_fx_rate_series(code, target_currency, start_date, end_date)
+    fx_series_cache = {code: get_fx_rate_series(code, target_currency, FxRates, start_date, end_date)
                         for code in set(account_currency.values()) if code != target_currency}
     last_fx = {code: None for code in fx_series_cache}
 
@@ -136,7 +149,7 @@ def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, DB,
     return result
 
 
-def portfolio_value_series(Assets, AssetPossession, Commodities, user_id, start_date, end_date, target_currency='EUR'):
+def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, user_id, start_date, end_date, target_currency='EUR'):
     """Reconstruit la valeur du portefeuille jour par jour. Actifs suivis en temps réel : cours
     historique réel (yfinance, une requête par actif — partagée par tous ses lots). Actifs manuels :
     valeur actuelle considérée constante. Chaque lot (AssetPossession) démarre sa contribution à sa
@@ -170,7 +183,7 @@ def portfolio_value_series(Assets, AssetPossession, Commodities, user_id, start_
             flat_price = float(a.value_per_unit or 0)
 
         if native_currency != target_currency and native_currency not in fx_series_cache:
-            fx_series_cache[native_currency] = get_fx_rate_series(native_currency, target_currency, start_date, end_date)
+            fx_series_cache[native_currency] = get_fx_rate_series(native_currency, target_currency, FxRates, start_date, end_date)
 
         # Prix unitaire converti, précalculé une fois par jour pour cet actif (partagé par tous ses lots).
         price_by_day = {}
@@ -204,7 +217,7 @@ def portfolio_value_series(Assets, AssetPossession, Commodities, user_id, start_
     return {d: round(v, 2) for d, v in result.items()}
 
 
-def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, Transactions, Splits, WealthSnapshot):
+def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot):
     """Reconstruit l'historique quotidien du patrimoine (bancaire + portefeuille, en EUR) depuis la
     date d'achat la plus ancienne renseignée jusqu'à aujourd'hui, pour chaque utilisateur. Idempotent :
     ne recalcule jamais un jour déjà présent en base."""
@@ -227,8 +240,8 @@ def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, 
         if not missing_days:
             continue
 
-        bank_series = daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, DB, user_id, start_date, today, 'EUR')
-        portfolio_series = portfolio_value_series(Assets, AssetPossession, Commodities, user_id, start_date, today, 'EUR')
+        bank_series = daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, today, 'EUR')
+        portfolio_series = portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, user_id, start_date, today, 'EUR')
 
         for d in missing_days:
             bank_val = bank_series.get(d, 0.0)

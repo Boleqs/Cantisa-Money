@@ -17,3 +17,4 @@ from .rt_reconcile import ReconcileRoutes
 from .rt_test import TestRoutes
 from .rt_markets import MarketsRoutes
 from .rt_wealth import WealthRoutes
+from .rt_settings import SettingsRoutes

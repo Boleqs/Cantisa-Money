@@ -2,7 +2,7 @@ import uuid
 from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
-    UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint
+    UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from dataclasses import dataclass
 
@@ -27,6 +27,8 @@ class Commodities(Base):
     type:str = Column(String(8), nullable=False, default='Currency')
     fraction:int = Column(SmallInteger, default=2, nullable=False)
     description:str = Column(String(1024))
+    track_live_rate:bool = Column(Boolean, default=False, nullable=False)
+    last_rate_updated_at:datetime = Column(DateTime, nullable=True)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())
 
 

@@ -2,8 +2,11 @@ from marshmallow import Schema, fields, ValidationError, validate
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
+from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+TAGS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 VALID_COLORS = ('green', 'red', 'blue', 'white', 'black', 'yellow', 'purple')
 
@@ -48,11 +51,12 @@ def _tag_to_dict(t):
 
 
 class TagsRoutes:
-    def __init__(self, app, DB, Tags, TagsOnSplits, Splits, Transactions):
+    def __init__(self, app, DB, Tags, TagsOnSplits, Splits, Transactions, Users):
         ROUTE_PATH = f"{ROOT_PATH}/tags"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
         @jwt_required()
+        @restricted_by_permission(Users, TAGS_PERM)
         def get_tags():
             try:
                 data = GetTagSchema().load(request.args)
@@ -76,6 +80,7 @@ class TagsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, TAGS_PERM)
         def add_tag():
             try:
                 data = AddTagSchema().load(request.json)
@@ -101,6 +106,7 @@ class TagsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['PATCH'])
         @jwt_required()
+        @restricted_by_permission(Users, TAGS_PERM)
         def update_tag():
             try:
                 data = UpdateTagSchema().load(request.json)
@@ -124,6 +130,7 @@ class TagsRoutes:
 
         @app.route(f"{ROUTE_PATH}", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, TAGS_PERM)
         def delete_tag():
             try:
                 data = DeleteTagSchema().load(request.args)
@@ -148,6 +155,7 @@ class TagsRoutes:
 
         @app.route(f"{ROUTE_PATH}/on-split", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, TAGS_PERM)
         def add_tag_on_split():
             try:
                 data = AddTagOnSplitSchema().load(request.json)
@@ -183,6 +191,7 @@ class TagsRoutes:
 
         @app.route(f"{ROUTE_PATH}/on-split", methods=['DELETE'])
         @jwt_required()
+        @restricted_by_permission(Users, TAGS_PERM)
         def remove_tag_on_split():
             try:
                 data = DeleteTagOnSplitSchema().load(request.args)

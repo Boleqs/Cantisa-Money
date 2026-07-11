@@ -5,8 +5,12 @@ from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from backend.config import (HttpCode,
-                            VAR_API_ROOT_PATH as ROOT_PATH)
+                            VAR_API_ROOT_PATH as ROOT_PATH,
+                            VAR_PERMISSIONS_LIST)
 from backend.utils.api_responses import json_response
+from backend.utils.restricted_by_permission import restricted_by_permission
+
+AI_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 _BATCH_SIZE = 30
 
@@ -59,11 +63,12 @@ Règles pour le compte de contrepartie:
 
 
 class AIRoutes:
-    def __init__(self, app, DB, Categories, Accounts):
+    def __init__(self, app, DB, Categories, Accounts, Users):
         ROUTE_PATH = f"{ROOT_PATH}/ai"
 
         @app.route(f"{ROUTE_PATH}/categorize", methods=['POST'])
         @jwt_required()
+        @restricted_by_permission(Users, AI_PERM)
         def categorize_transactions():
             if not os.environ.get('ANTHROPIC_API_KEY'):
                 return json_response('ANTHROPIC_API_KEY non configurée', HttpCode.SERVER_ERROR)

@@ -372,7 +372,6 @@ async function handleSave(form) {
     if (modalMode.value === 'create') {
       await axios.post('/api/transactions', {
         description: form.description || null,
-        currency_id: form.currency_id,
         post_date: form.post_date,
         effective_date: form.effective_date || null,
         category_id: form.category_id || null,
@@ -383,7 +382,6 @@ async function handleSave(form) {
       await axios.patch('/api/transactions', {
         transaction_id: form.id,
         description: form.description || null,
-        currency_id: form.currency_id,
         post_date: form.post_date,
         effective_date: form.effective_date || null,
         category_id: form.category_id || null,
