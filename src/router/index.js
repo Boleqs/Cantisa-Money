@@ -9,6 +9,11 @@ axios.defaults.baseURL = 'http://localhost:5000'
 // automatiquement ce cookie non-httponly et l'envoie dans ce header sur chaque requête.
 axios.defaults.xsrfCookieName = 'csrf_access_token'
 axios.defaults.xsrfHeaderName = 'X-CSRF-TOKEN'
+// Depuis axios 1.6, le cookie XSRF n'est plus relayé en header sur les requêtes cross-origin
+// (frontend:5173 vs backend:5000 = origines différentes) sans ce flag explicite — sans lui,
+// tous les POST/PUT/PATCH/DELETE échouent en 401 "Missing CSRF token" (les GET passent car
+// non concernés par la protection CSRF de flask-jwt-extended).
+axios.defaults.withXSRFToken = true
 
 const routes = [
     {
