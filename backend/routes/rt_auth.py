@@ -19,7 +19,7 @@ from backend.utils.api_responses import json_response
 
 
 class AuthRoutes:
-    def __init__(self, app, DB, Users):
+    def __init__(self, app, DB, Users, limiter=None):
         ROUTE_PATH = f"{ROOT_PATH}/auth"
 
         @app.route(f"{ROUTE_PATH}/me", methods=["GET"])
@@ -62,12 +62,13 @@ class AuthRoutes:
                 return json_response("Refresh error", HttpCode.SERVER_ERROR)
 
         @app.route(f"{ROUTE_PATH}/login", methods=["POST"])
+        @(limiter.limit("5 per minute") if limiter else (lambda f: f))
         def login():
             try:
                 data = request.get_json()
                 user_name = data.get("login")
                 user = Users.query.filter(Users.username == user_name).first()
-                if user.check_password(data.get("password")) or True:
+                if user.check_password(data.get("password")):
                     response = jsonify("login successful")
                     set_access_cookies(response, create_access_token(identity=user.id, fresh=True))
                     set_refresh_cookies(response, create_refresh_token(identity=user.id))

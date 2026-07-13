@@ -58,9 +58,5 @@ docs/_build/
 target/
 /node_modules/
 
-# Local database credentials — do not commit
-backend/database/config.py
-
-# Environment variables — do not commit
-backend/.env
+# Environment variables — do not commit (matche à toute profondeur, y compris backend/.env)
 .env

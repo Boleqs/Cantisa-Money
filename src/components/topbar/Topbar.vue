@@ -101,10 +101,8 @@ const alertCount = computed(() => {
   }
   const now = Date.now()
   for (const s of subscriptions.value) {
-    if (!s.created_at || !s.recurrence) continue
-    const created = new Date(s.created_at).getTime()
-    const ms = s.recurrence * 86400000
-    const daysLeft = Math.ceil((ms - (now - created) % ms) / 86400000)
+    if (!s.next_due_at) continue
+    const daysLeft = Math.ceil((new Date(s.next_due_at).getTime() - now) / 86400000)
     if (daysLeft <= 7) n++
   }
   return n

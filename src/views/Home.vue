@@ -178,12 +178,8 @@ const alerts = computed(() => {
   // Subscription alerts — due within 7 days
   const now = Date.now()
   for (const s of subscriptions.value) {
-    if (!s.created_at || !s.recurrence) continue
-    const created = new Date(s.created_at).getTime()
-    const recurrenceMs = s.recurrence * 24 * 60 * 60 * 1000
-    const elapsed = now - created
-    const cyclePos = elapsed % recurrenceMs
-    const daysLeft = Math.ceil((recurrenceMs - cyclePos) / (24 * 60 * 60 * 1000))
+    if (!s.next_due_at) continue
+    const daysLeft = Math.ceil((new Date(s.next_due_at).getTime() - now) / (24 * 60 * 60 * 1000))
     if (daysLeft <= 7) {
       list.push({
         level: daysLeft <= 2 ? 'danger' : 'warn',

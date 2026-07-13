@@ -5,6 +5,10 @@ import { ensurePermissionsLoaded } from '@/utils/permissions.js'
 
 axios.defaults.withCredentials = true
 axios.defaults.baseURL = 'http://localhost:5000'
+// Protection CSRF côté backend (flask-jwt-extended, double-submit cookie) : axios lit
+// automatiquement ce cookie non-httponly et l'envoie dans ce header sur chaque requête.
+axios.defaults.xsrfCookieName = 'csrf_access_token'
+axios.defaults.xsrfHeaderName = 'X-CSRF-TOKEN'
 
 const routes = [
     {

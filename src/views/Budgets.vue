@@ -55,11 +55,23 @@
           {{ fmtAmount(Math.abs(b.amount_allocated - b.amount_spent)) }}
         </div>
 
-        <!-- Comptes associés -->
+        <!-- Comptes / catégories / tags associés -->
         <div v-if="b.account_ids && b.account_ids.length" class="accounts-section">
           <span class="accounts-label">Comptes :</span>
           <span v-for="id in b.account_ids" :key="id" class="account-chip">
             {{ accountName(id) }}
+          </span>
+        </div>
+        <div v-if="b.category_ids && b.category_ids.length" class="accounts-section">
+          <span class="accounts-label">Catégories :</span>
+          <span v-for="id in b.category_ids" :key="id" class="account-chip chip-category">
+            {{ categoryName(id) }}
+          </span>
+        </div>
+        <div v-if="b.tag_ids && b.tag_ids.length" class="accounts-section">
+          <span class="accounts-label">Tags :</span>
+          <span v-for="id in b.tag_ids" :key="id" class="account-chip chip-tag">
+            {{ tagName(id) }}
           </span>
         </div>
 
@@ -86,6 +98,8 @@ import BudgetModal from '@/components/modal/BudgetModal.vue'
 
 const budgets = ref([])
 const accounts = ref([])
+const categories = ref([])
+const tags = ref([])
 
 const showModal = ref(false)
 const modalMode = ref('create')
@@ -138,18 +152,32 @@ function accountName(id) {
   return a ? a.name : id
 }
 
+function categoryName(id) {
+  const c = categories.value.find(c => String(c.id) === String(id))
+  return c ? c.name : id
+}
+
+function tagName(id) {
+  const t = tags.value.find(t => String(t.id) === String(id))
+  return t ? t.name : id
+}
+
 // ── data fetching ─────────────────────────────────────────────────────────────
 
 async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const [budgetRes, accountRes] = await Promise.all([
+    const [budgetRes, accountRes, catRes, tagRes] = await Promise.all([
       axios.get('/api/budgets'),
       axios.get('/api/accounts'),
+      axios.get('/api/categories'),
+      axios.get('/api/tags'),
     ])
     budgets.value = Array.isArray(budgetRes.data?.response_data) ? budgetRes.data.response_data : []
     accounts.value = Array.isArray(accountRes.data?.response_data) ? accountRes.data.response_data : []
+    categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
+    tags.value = Array.isArray(tagRes.data?.response_data) ? tagRes.data.response_data : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
@@ -337,6 +365,16 @@ onMounted(() => reload())
   border: 1px solid rgba(96,165,250,0.25);
   background: rgba(96,165,250,0.1);
   color: #93c5fd;
+}
+.chip-category {
+  border-color: rgba(168,85,247,0.3);
+  background: rgba(168,85,247,0.1);
+  color: #d8b4fe;
+}
+.chip-tag {
+  border-color: rgba(34,197,94,0.3);
+  background: rgba(34,197,94,0.1);
+  color: #86efac;
 }
 
 /* Actions */

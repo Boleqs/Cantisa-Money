@@ -71,22 +71,24 @@ export default {
   margin-top: 0em;
 }
 
-/* Ligne de titre / séparateur */
+/* Ligne de titre — même apparence que les liens simples (SidebarLink) */
 .sidebar-group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
-  padding: 0.4em 0.4em;
-  letter-spacing: 0.05em;
-  opacity: 0.85;
-  border-top: 1px solid rgba(255,255,255,0.2);
+  user-select: none;
+  margin: 0.7em 0;
+  padding: 0.4em;
+  border-radius: 0.25em;
   font-weight: 400;
   color: white;
+  transition: 0.4s ease;
 }
 
 .sidebar-group-header:hover {
   background-color: var(--sidebar-item-hover);
+  padding: 1em;
 }
 
 .left {

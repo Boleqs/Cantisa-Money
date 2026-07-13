@@ -121,7 +121,10 @@
         <!-- Splits -->
         <div class="splits">
           <div v-for="split in tx.splits" :key="split.id" class="split-row">
-            <span class="split-account">{{ accountName(split.account_id) }}</span>
+            <span class="split-account">
+              {{ accountName(split.account_id) }}
+              <span v-if="split.description" class="split-memo">— {{ split.description }}</span>
+            </span>
             <span :class="['split-amount', split.quantity >= 0 ? 'pos' : 'neg']">
               {{ fmtAmount(split.quantity) }}
             </span>
@@ -161,8 +164,12 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const transactions = ref([])
 const commodities = ref([])
@@ -409,7 +416,24 @@ function closeExportMenu(e) {
   if (!e.target.closest('.export-menu')) exportMenuOpen.value = false
 }
 
+// Ouverture directe d'une transaction depuis un lien externe (ex: liste des justificatifs de
+// la page Factures) via /transactions?tx_id=...
+async function openFromQuery() {
+  const txId = route.query.tx_id
+  if (!txId) return
+  try {
+    const { data } = await axios.get('/api/transactions', { params: { transaction_id: txId } })
+    if (data?.response_data) openEdit(data.response_data)
+  } catch (e) {
+    error.value = 'Transaction introuvable'
+  } finally {
+    router.replace({ query: {} })
+  }
+}
+
 onMounted(() => document.addEventListener('click', closeExportMenu))
+onMounted(reload)
+onMounted(openFromQuery)
 onUnmounted(() => document.removeEventListener('click', closeExportMenu))
 </script>
 
@@ -610,6 +634,12 @@ onUnmounted(() => document.removeEventListener('click', closeExportMenu))
 
 .split-account {
   color: #cbd5e1;
+}
+
+.split-memo {
+  color: #6b7280;
+  font-size: 12px;
+  font-style: italic;
 }
 
 .split-amount {

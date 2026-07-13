@@ -47,12 +47,13 @@ export default {
 
             <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')">
               <SidebarSectionTitle label="Gestion bancaire"/>
-              <SidebarGroup v-if="hasPermission('Comptabilité') || hasPermission('Pilotage')" label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import', '/reconcile']">
+              <SidebarGroup v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')" label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import', '/reconcile', '/subscriptions']">
                 <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard">Dashboard</SidebarLink>
                 <SidebarLink v-if="hasPermission('Comptabilité')" to="/accounts">Liste des comptes</SidebarLink>
                 <SidebarLink v-if="hasPermission('Comptabilité')" to="/transactions">Transactions</SidebarLink>
                 <SidebarLink v-if="hasPermission('Comptabilité')" to="/import">Importer</SidebarLink>
                 <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile">Rapprochement</SidebarLink>
+                <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions">Abonnements</SidebarLink>
               </SidebarGroup>
               <SidebarLink to="/invoices">Factures</SidebarLink>
               <SidebarLink v-if="hasPermission('Planification')" to="/budgets">Budgets</SidebarLink>
@@ -81,10 +82,9 @@ export default {
               <SidebarLink to="/parametres">Paramétrage</SidebarLink>
             </template>
 
-            <SidebarGroup v-if="hasPermission('Comptabilité') || hasPermission('Planification')" label="Référentiels" :paths="['/categories', '/tags', '/subscriptions']">
-              <SidebarLink v-if="hasPermission('Comptabilité')" to="/categories">Catégories</SidebarLink>
-              <SidebarLink v-if="hasPermission('Comptabilité')" to="/tags">Tags</SidebarLink>
-              <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions">Abonnements</SidebarLink>
+            <SidebarGroup v-if="hasPermission('Comptabilité')" label="Référentiels" :paths="['/categories', '/tags']">
+              <SidebarLink to="/categories">Catégories</SidebarLink>
+              <SidebarLink to="/tags">Tags</SidebarLink>
             </SidebarGroup>
             <SidebarGroup v-if="isAdmin" label="Administration" :paths="['/admin/users', '/admin/roles']">
               <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
@@ -93,7 +93,7 @@ export default {
         </div>
 
         <!-- Barre d'icônes du bas, toujours visible -->
-        <div class="sidebar-footer">
+        <div class="sidebar-footer" :class="{ collapsed }">
             <span class="collapse-icon" @click="toggleSidebar">
                 <img class="collapse-icon-img" :class="{ 'collapse-icon-img collapsed': collapsed}" src="../icons/double_fleche.png"></img>
             </span>
@@ -158,10 +158,20 @@ export default {
     flex-shrink: 0;
     display: flex;
     align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 0.5em;
     padding: 0.5em 0.25em;
     border-top: 1px solid rgba(255,255,255,0.15);
     margin-top: 0.5em;
+}
+
+/* Repliée : les 3 icônes ne tiennent plus sur une ligne (70px de large) — on les empile
+   verticalement plutôt que de les laisser déborder du cadre. */
+.sidebar-footer.collapsed {
+    flex-direction: column;
+    gap: 0.3em;
+    padding: 0.4em 0;
 }
 
 .sidebar-title {

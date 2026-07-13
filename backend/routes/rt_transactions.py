@@ -22,6 +22,7 @@ BALANCE_TOLERANCE = 0.01
 class SplitInputSchema(Schema):
     account_id = fields.UUID(required=True)
     quantity = fields.Decimal(required=True)
+    description = fields.String(load_default=None)
 
 
 class AddTransactionSchema(Schema):
@@ -108,7 +109,7 @@ def _resolve_split_fx_rates(Accounts, Commodities, FxRates, tx_currency_id, on_d
             if fx_rate is None:
                 fx_rate = 1.0
                 all_ok = False
-        resolved.append((s['account_id'], s['quantity'], fx_rate))
+        resolved.append((s['account_id'], s['quantity'], fx_rate, s.get('description')))
     return resolved, all_ok
 
 
@@ -131,6 +132,7 @@ def _tx_to_dict(tx, Splits, TagsOnSplits):
                 'id': str(s.id),
                 'account_id': str(s.account_id),
                 'quantity': float(s.quantity),
+                'description': s.description,
                 'fx_rate': float(s.fx_rate) if s.fx_rate is not None else 1.0,
                 'tag_ids': [
                     str(tos.tag_id)
@@ -299,7 +301,7 @@ class TransactionsRoutes:
             fx_rates_resolved, all_ok = _resolve_split_fx_rates(
                 Accounts, Commodities, FxRates, currency_id, post_date.date(), data['splits'])
             if all_ok:
-                total = sum(float(qty) * fx_rate for _, qty, fx_rate in fx_rates_resolved)
+                total = sum(float(qty) * fx_rate for _, qty, fx_rate, _ in fx_rates_resolved)
                 if abs(total) > BALANCE_TOLERANCE:
                     return json_response(
                         f"Les splits ne s'équilibrent pas une fois convertis dans la devise de la transaction (écart : {round(total, 2)})",
@@ -316,12 +318,13 @@ class TransactionsRoutes:
                 )
                 DB.session.add(tx)
                 DB.session.flush()
-                for account_id, quantity, fx_rate in fx_rates_resolved:
+                for account_id, quantity, fx_rate, description in fx_rates_resolved:
                     DB.session.add(Splits(
                         tx_id=tx.id,
                         account_id=account_id,
                         quantity=quantity,
                         fx_rate=fx_rate,
+                        description=description,
                     ))
                 DB.session.commit()
                 return json_response(_tx_to_dict(tx, Splits, TagsOnSplits), HttpCode.CREATED)
@@ -352,7 +355,7 @@ class TransactionsRoutes:
             fx_rates_resolved, all_ok = _resolve_split_fx_rates(
                 Accounts, Commodities, FxRates, currency_id, post_date.date(), data['splits'])
             if all_ok:
-                total = sum(float(qty) * fx_rate for _, qty, fx_rate in fx_rates_resolved)
+                total = sum(float(qty) * fx_rate for _, qty, fx_rate, _ in fx_rates_resolved)
                 if abs(total) > BALANCE_TOLERANCE:
                     return json_response(
                         f"Les splits ne s'équilibrent pas une fois convertis dans la devise de la transaction (écart : {round(total, 2)})",
@@ -380,12 +383,13 @@ class TransactionsRoutes:
                         reconciled_accounts.add(str(s.account_id))
 
                 Splits.query.filter(Splits.tx_id == tx.id).delete()
-                for account_id, quantity, fx_rate in fx_rates_resolved:
+                for account_id, quantity, fx_rate, description in fx_rates_resolved:
                     new_split = Splits(
                         tx_id=tx.id,
                         account_id=account_id,
                         quantity=quantity,
                         fx_rate=fx_rate,
+                        description=description,
                         is_reconciled=str(account_id) in reconciled_accounts,
                     )
                     DB.session.add(new_split)

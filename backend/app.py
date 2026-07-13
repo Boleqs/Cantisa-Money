@@ -1,38 +1,41 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import os
 from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.exceptions import HTTPException
 
-from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST
+from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST, HttpCode
+from utils.api_responses import json_response
+from utils.logs import log
 import uuid
 
 
 # Import tables models
 from database.models.import_models import *
 
-# import functions
-from database.functions.import_functions import *
-# TODO imports using * or name by name ?
-# import triggers
-from database.triggers.import_triggers import *
-
 # Import routes
 from routes.import_routes import *
 
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True, resources={r"/*": {"origins": "http://localhost:5173"}})  # Ajout de cette ligne pour permettre les requêtes CORS
+# Une ou plusieurs origines séparées par des virgules (ex: "https://app.example.com,https://autre.com")
+CORS_ORIGINS = [o.strip() for o in os.environ.get('CORS_ORIGINS', 'http://localhost:5173').split(',') if o.strip()]
+CORS(app, supports_credentials=True, resources={r"/*": {"origins": CORS_ORIGINS}})
 app.config.from_object(flask_config)
 DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
 JWTManager(app)
+limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 # Routes declaration
 UsersRoutes(app, DB, Users, UserRoles, Roles, Permissions, RolePermissions)
 CommoditiesRoutes(app, DB, Users, Commodities, FxRates, UserSettings, Accounts, Transactions, Assets)
-AuthRoutes(app, DB, Users)
+AuthRoutes(app, DB, Users, limiter)
 AccountsRoutes(app, DB, Users, Accounts)
 TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts, Categories, Commodities, FxRates)
 BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users)
@@ -44,6 +47,7 @@ AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, T
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users)
+DocumentsRoutes(app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users)
 AIRoutes(app, DB, Categories, Accounts, Users)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
@@ -52,32 +56,55 @@ WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, W
 SettingsRoutes(app, DB, UserSettings, Users)
 
 
+@app.errorhandler(HTTPException)
+def handle_http_exception(e):
+    # Laisse passer les erreurs HTTP volontaires (404, 403, etc.) mais en JSON plutôt que la page
+    # HTML par défaut de Flask, pour rester cohérent avec le reste de l'API.
+    return json_response(e.description, e.code)
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_exception(e):
+    # Filet de sécurité : une exception non gérée ne doit ni faire fuiter une trace Python au
+    # client, ni renvoyer une page HTML — toujours du JSON, avec le détail dans les logs serveur.
+    log(f"Erreur non gérée : {e}", filename='app')
+    return json_response('Erreur interne du serveur', HttpCode.SERVER_ERROR)
+
+
+def _alembic_config():
+    from alembic.config import Config
+    cfg = Config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'alembic.ini'))
+    cfg.set_main_option('sqlalchemy.url', app.config['SQLALCHEMY_DATABASE_URI'])
+    return cfg
+
+
+def create_tables():
+    """Applique les migrations Alembic jusqu'à la dernière — idempotent, ne touche à rien si le
+    schéma est déjà à jour (remplace l'ancien DB.create_all() + triggers enregistrés à la main)."""
+    from alembic import command
+    command.upgrade(_alembic_config(), 'head')
+
+
 def reset_db():
-    # drop all for testing purpose
-    DB.drop_all()
-    DB.event.listen(Base.metadata, 'before_create', check_category_id)
-    DB.event.listen(Base.metadata, 'before_create', update_account_totals)
-    DB.event.listen(Base.metadata, 'before_create', update_budget_spent)
-    DB.event.listen(Base.metadata, 'before_create', update_timestamp)
-    # Triggers
-    DB.event.listen(Transactions.metadata, 'after_create', trg_check_category_id)
-    DB.event.listen(Splits.metadata, 'after_create', trg_update_account_totals)
-    DB.event.listen(Splits.metadata, 'after_create', trg_update_budget_spent)
-    DB.event.listen(Accounts.metadata, 'after_create', trg_update_timestamp_accounts)
-    DB.event.listen(Budgets.metadata, 'after_create', trg_update_timestamp_budgets)
-    DB.event.listen(Users.metadata, 'after_create', trg_update_timestamp_users)
-    DB.create_all()
+    """Supprime tout (y compris le suivi des migrations Alembic) et réapplique les migrations
+    depuis zéro — perte de données. N'est appelé que si RESET_DB_ON_START=true."""
+    from alembic import command
+    from sqlalchemy import text
+    DB.session.execute(text('DROP SCHEMA public CASCADE'))
+    DB.session.execute(text('CREATE SCHEMA public'))
+    DB.session.commit()
+    command.upgrade(_alembic_config(), 'head')
 
 def init_db():
     from datetime import date, datetime as dt
 
     # ── Utilisateurs ─────────────────────────────────────────────────────────
-    loris = Users(username='Loris', email='loris@test.com',
-                  password_hash=b'0x7ED3D060E511764096EF4A056021178758A8D32ECD1D2BA72B7E015AC9FFD13F',
-                  salt=b'ee318ef8-cb0e-15c4-65c5-d1d7d26ae0d1')
-    alice = Users(username='Alice', email='alice@test.com',
-                  password_hash=b'0x7ED3D060E511764096EF4A056021178758A8D32ECD1D2BA72B7E015AC9FFD13F',
-                  salt=b'ee318ef8-cb0e-15c4-65c5-d1d7d26ae0d1')
+    # Mot de passe de démo identique pour les deux comptes de seed — voir README.
+    DEMO_PASSWORD = 'CantisaDemo2026!'
+    loris = Users(username='Loris', email='loris@test.com', password_hash=b'', salt=b'')
+    loris.set_password(DEMO_PASSWORD)
+    alice = Users(username='Alice', email='alice@test.com', password_hash=b'', salt=b'')
+    alice.set_password(DEMO_PASSWORD)
     DB.session.add_all([loris, alice])
     DB.session.flush()
 
@@ -198,13 +225,13 @@ def init_db():
 
     # ── Abonnements ───────────────────────────────────────────────────────────
     DB.session.add_all([
-        Subscriptions(user_id=loris.id, name='Netflix',  recurrence=30, amount=15,
+        Subscriptions(user_id=loris.id, name='Netflix',  schedule_type='monthly', day_of_month=8, amount=15,
                       from_account_id=acc_courant.id, to_account_id=acc_depenses.id, category_id=cat_loisirs.id),
-        Subscriptions(user_id=loris.id, name='Spotify',  recurrence=30, amount=10,
+        Subscriptions(user_id=loris.id, name='Spotify',  schedule_type='monthly', day_of_month=28, amount=10,
                       from_account_id=acc_courant.id, to_account_id=acc_depenses.id, category_id=cat_loisirs.id),
-        Subscriptions(user_id=loris.id, name='Loyer',    recurrence=30, amount=950,
+        Subscriptions(user_id=loris.id, name='Loyer',    schedule_type='monthly', day_of_month=6, amount=950,
                       from_account_id=acc_courant.id, to_account_id=acc_depenses.id, category_id=cat_logement.id),
-        Subscriptions(user_id=loris.id, name='Mutuelle', recurrence=30, amount=55,
+        Subscriptions(user_id=loris.id, name='Mutuelle', schedule_type='monthly', day_of_month=1, amount=55,
                       from_account_id=acc_courant.id, to_account_id=acc_depenses.id, category_id=cat_sante.id),
     ])
     DB.session.commit()
@@ -233,6 +260,24 @@ def init_db():
         AssetPossession(user_id=loris.id, asset_id=asset_immo.id,  account_id=acc_invest.id, quantity=1,
                         purchase_date=dt(2026, 2, 1), purchase_price=200000, purchase_price_native=200000),
     ])
+    DB.session.commit()
+
+
+def create_first_admin():
+    """Crée un unique compte admin réel (pas de données de démo), à partir des variables
+    d'environnement ADMIN_USERNAME/ADMIN_EMAIL/ADMIN_PASSWORD. Utilisé quand DEMO_DATA=false sur
+    une base vide : il n'existe aucune inscription publique, donc sans ça il n'y aurait aucun
+    moyen de se connecter du tout après le premier démarrage."""
+    username = os.environ.get('ADMIN_USERNAME')
+    email = os.environ.get('ADMIN_EMAIL')
+    password = os.environ.get('ADMIN_PASSWORD')
+    if not (username and email and password):
+        return
+    admin = Users(username=username, email=email, password_hash=b'', salt=b'')
+    admin.set_password(password)
+    DB.session.add(admin)
+    DB.session.flush()
+    DB.session.add(UserRoles(user_id=admin.id, role_id=uuid.UUID('00000000-cafe-4bca-82bb-a0cec8e5a6ba')))
     DB.session.commit()
 
 
@@ -284,27 +329,55 @@ def seed_market_indices():
 from scheduler import snapshot_wealth, start_scheduler
 from utils.wealth import backfill_wealth_history
 
-with app.app_context():
-    reset_db()
-    insert_permissions()
-    insert_roles()
-    assign_permissions_to_roles()
-    init_db()
-    seed_market_indices()
-    # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
-    # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
-    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
-    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
+# RESET_DB_ON_START=true : repart d'une base vide + jeu de données de démo à chaque démarrage
+# (comportement historique). Par défaut (false), les données existantes sont conservées entre
+# deux redémarrages — seules les tables manquantes sont créées, et le seed initial (permissions,
+# rôles, comptes de démo) n'est joué qu'une seule fois, tant que la base est vide.
+RESET_DB_ON_START = os.environ.get('RESET_DB_ON_START', 'false').lower() == 'true'
+# DEMO_DATA=true (par défaut) : peuple une base vide avec le jeu de données de test utilisé en dev
+# (comptes Loris/Alice, transactions, budgets...). DEMO_DATA=false : base vide, seul un compte
+# admin réel est créé si ADMIN_USERNAME/ADMIN_EMAIL/ADMIN_PASSWORD sont fournis.
+DEMO_DATA = os.environ.get('DEMO_DATA', 'true').lower() == 'true'
 
-import os
-# Le reloader Werkzeug (debug=True) démarre le processus deux fois.
-# On ne lance le scheduler que dans le processus fils (pas le watcher).
-if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+# Le reloader Werkzeug (debug=True) exécute tout ce module deux fois : une fois dans le processus
+# "moniteur", qui relance ensuite un vrai processus enfant (WERKZEUG_RUN_MAIN=true). L'init DB (et
+# le scheduler) ne doivent tourner qu'une fois — sinon les triggers Postgres sont créés en double
+# (erreur) et les appels réseau (yfinance) sont dupliqués à chaque démarrage.
+# USE_RELOADER=false dans Docker (voir Dockerfile) : le code n'y est de toute façon pas modifié à
+# chaud, et le rechargeur y détecte parfois un faux changement au démarrage (système de fichiers
+# du conteneur), ce qui redéclencherait exactement ce double-run.
+USE_RELOADER = os.environ.get('FLASK_USE_RELOADER', 'true').lower() == 'true'
+IS_MAIN_PROCESS = not (app.debug and USE_RELOADER) or os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+
+if IS_MAIN_PROCESS:
+    with app.app_context():
+        if RESET_DB_ON_START:
+            reset_db()
+        else:
+            create_tables()
+
+        if Users.query.count() == 0:
+            insert_permissions()
+            insert_roles()
+            assign_permissions_to_roles()
+            if DEMO_DATA:
+                init_db()
+            else:
+                create_first_admin()
+
+        seed_market_indices()
+        # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
+        # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
+        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
+        snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
+
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings)
+                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments)
 
 uuid.uuid4()
 if __name__ == '__main__':
-    app.run(debug=True)
+    # host=0.0.0.0 : nécessaire pour être joignable depuis l'extérieur du conteneur Docker
+    # (127.0.0.1, le défaut Flask, ne serait accessible que depuis l'intérieur du conteneur).
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=USE_RELOADER)
 
 

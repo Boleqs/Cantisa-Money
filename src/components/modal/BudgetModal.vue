@@ -4,7 +4,7 @@
       <header class="modal-header">
         <div>
           <h2>{{ isEdit ? 'Modifier le budget' : 'Nouveau budget' }}</h2>
-          <p class="subtitle">Définissez la période, le montant et les comptes associés.</p>
+          <p class="subtitle">Définissez la période, le montant et les comptes, catégories ou tags associés.</p>
         </div>
         <button class="icon-btn" type="button" @click="close">✕</button>
       </header>
@@ -47,6 +47,34 @@
           </div>
         </div>
 
+        <!-- Catégories associées -->
+        <div class="section">
+          <div class="section-title">Catégories suivies</div>
+          <p class="section-hint">Les transactions classées dans ces catégories seront comptabilisées dans ce budget.</p>
+          <div v-if="loadingRef" class="hint">Chargement…</div>
+          <div v-else class="checkbox-list">
+            <label v-for="cat in categories" :key="cat.id" class="checkbox-item">
+              <input type="checkbox" :value="cat.id" v-model="form.category_ids" />
+              <span>{{ cat.name }}</span>
+            </label>
+            <div v-if="!categories.length" class="hint">Aucune catégorie disponible.</div>
+          </div>
+        </div>
+
+        <!-- Tags associés -->
+        <div class="section">
+          <div class="section-title">Tags suivis</div>
+          <p class="section-hint">Les splits portant ces tags seront comptabilisés dans ce budget.</p>
+          <div v-if="loadingRef" class="hint">Chargement…</div>
+          <div v-else class="checkbox-list">
+            <label v-for="tag in tags" :key="tag.id" class="checkbox-item">
+              <input type="checkbox" :value="tag.id" v-model="form.tag_ids" />
+              <span>{{ tag.name }}</span>
+            </label>
+            <div v-if="!tags.length" class="hint">Aucun tag disponible.</div>
+          </div>
+        </div>
+
         <footer class="modal-footer">
           <button type="button" class="btn" @click="close">Annuler</button>
           <button type="submit" class="btn btn-primary">
@@ -73,22 +101,30 @@ const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
 const isEdit = computed(() => props.mode === 'edit')
 
 const accounts = ref([])
+const categories = ref([])
+const tags = ref([])
 const loadingRef = ref(false)
 
-async function loadAccounts() {
+async function loadReferentials() {
   loadingRef.value = true
   try {
-    const res = await axios.get('/api/accounts')
-    accounts.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+    const [accRes, catRes, tagRes] = await Promise.all([
+      axios.get('/api/accounts'),
+      axios.get('/api/categories'),
+      axios.get('/api/tags'),
+    ])
+    accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
+    categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
+    tags.value = Array.isArray(tagRes.data?.response_data) ? tagRes.data.response_data : []
   } catch (e) {
-    console.error('Erreur chargement comptes', e)
+    console.error('Erreur chargement des référentiels', e)
   } finally {
     loadingRef.value = false
   }
 }
 
 watch(() => props.modelValue, (open) => {
-  if (open) loadAccounts()
+  if (open) loadReferentials()
 }, { immediate: true })
 
 const emptyForm = () => ({

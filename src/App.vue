@@ -43,6 +43,7 @@ async function FullPage (payload) {
 html, body, #app {
   height: 100%;
   margin: 0;
+  color-scheme: dark;
 }
 
 /* important pour que le padding n'entraîne pas de débordement */
@@ -53,6 +54,7 @@ html, body, #app {
 .app-root {
   height: 100vh;
   overflow: hidden; /* pas de scroll horizontal global */
+  background: #0b1220;
 }
 
 /* conteneur du contenu (hors sidebar) */
@@ -61,6 +63,7 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   padding-top: 56px; /* hauteur de la topbar fixe */
+  background: #0b1220;
   transition: padding-left 0.5s;
 }
 
@@ -69,5 +72,6 @@ html, body, #app {
   flex: 1;
   overflow: auto;
   padding: 16px;
+  background: #0b1220;
 }
 </style>

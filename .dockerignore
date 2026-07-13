@@ -1,0 +1,7 @@
+node_modules
+.git
+.idea
+.claude
+**/__pycache__
+dist
+.env

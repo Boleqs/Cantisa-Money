@@ -184,9 +184,12 @@ function categoryName(id) {
   return c?.name || '—'
 }
 
-// Retourne le split de cette transaction lié au compte courant
+// Somme des splits de cette transaction liés au compte courant (une transaction peut avoir
+// plusieurs splits sur le même compte, ex: les lignes d'un ticket de caisse importé)
 function accountSplit(tx) {
-  return tx.splits?.find(s => String(s.account_id) === String(accountId)) || { quantity: 0 }
+  const matching = tx.splits?.filter(s => String(s.account_id) === String(accountId)) || []
+  const quantity = matching.reduce((sum, s) => sum + Number(s.quantity), 0)
+  return { quantity }
 }
 
 function fmtAmount(v) {

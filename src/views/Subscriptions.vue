@@ -24,7 +24,7 @@
         <tr>
           <th>Nom</th>
           <th>Montant</th>
-          <th>Récurrence</th>
+          <th>Planification</th>
           <th>Prochaine échéance</th>
           <th>Dernière exéc.</th>
           <th>Compte débit</th>
@@ -40,7 +40,7 @@
             <span v-if="s.is_overdue" class="badge-overdue">En retard</span>
           </td>
           <td>{{ fmtAmount(s.amount) }}</td>
-          <td class="muted">tous les {{ s.recurrence }} j.</td>
+          <td class="muted">{{ scheduleLabel(s) }}</td>
           <td :class="s.is_overdue ? 'overdue' : 'muted'">{{ fmtDate(s.next_due_at) }}</td>
           <td class="muted">{{ s.last_executed_at ? fmtDate(s.last_executed_at) : '—' }}</td>
           <td class="muted">{{ accountName(s.from_account_id) }}</td>
@@ -68,8 +68,40 @@
         <label>Montant *
           <input v-model.number="form.amount" type="number" step="0.01" placeholder="9.99" />
         </label>
-        <label>Récurrence (jours)
-          <input v-model.number="form.recurrence" type="number" min="1" placeholder="30" />
+        <label>Planification *
+          <select v-model="form.schedule_type">
+            <option value="monthly">Mensuelle (un jour du mois)</option>
+            <option value="yearly">Annuelle (un jour précis)</option>
+            <option value="weekly">Hebdomadaire (jour(s) de la semaine)</option>
+          </select>
+        </label>
+
+        <label v-if="form.schedule_type === 'monthly'">Jour du mois *
+          <input v-model.number="form.day_of_month" type="number" min="1" max="31" placeholder="6" />
+        </label>
+
+        <template v-if="form.schedule_type === 'yearly'">
+          <label>Jour *
+            <input v-model.number="form.day_of_month" type="number" min="1" max="31" placeholder="5" />
+          </label>
+          <label>Mois *
+            <select v-model.number="form.month_of_year">
+              <option v-for="(m, i) in MONTH_NAMES" :key="i" :value="i + 1">{{ m }}</option>
+            </select>
+          </label>
+        </template>
+
+        <label v-if="form.schedule_type === 'weekly'">Jour(s) de la semaine *
+          <div class="weekday-picker">
+            <button
+              v-for="(d, i) in WEEKDAY_NAMES"
+              :key="i"
+              type="button"
+              class="weekday-chip"
+              :class="{ on: form.weekdays.includes(i + 1) }"
+              @click="toggleWeekday(i + 1)"
+            >{{ d.slice(0, 3) }}</button>
+          </div>
         </label>
         <label>Compte débit *
           <select v-model="form.from_account_id">
@@ -93,7 +125,7 @@
           <button class="btn" @click="showModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!form.name.trim() || !form.amount || !form.from_account_id || !form.to_account_id"
+            :disabled="!form.name.trim() || !form.amount || !form.from_account_id || !form.to_account_id || !scheduleValid"
             @click="save"
           >Enregistrer</button>
         </div>
@@ -103,8 +135,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+
+const MONTH_NAMES = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+]
+const WEEKDAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
 
 const subscriptions = ref([])
 const accounts = ref([])
@@ -113,7 +151,31 @@ const loading = ref(false)
 const error = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
-const form = ref({ name: '', amount: '', recurrence: 30, from_account_id: '', to_account_id: '', category_id: '' })
+const form = ref({
+  name: '', amount: '',
+  schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
+  from_account_id: '', to_account_id: '', category_id: '',
+})
+
+const scheduleValid = computed(() => {
+  if (form.value.schedule_type === 'monthly') return form.value.day_of_month >= 1 && form.value.day_of_month <= 31
+  if (form.value.schedule_type === 'yearly') return form.value.day_of_month >= 1 && form.value.day_of_month <= 31 && form.value.month_of_year >= 1
+  if (form.value.schedule_type === 'weekly') return form.value.weekdays.length > 0
+  return false
+})
+
+function toggleWeekday(day) {
+  const i = form.value.weekdays.indexOf(day)
+  if (i === -1) form.value.weekdays.push(day)
+  else form.value.weekdays.splice(i, 1)
+}
+
+function scheduleLabel(s) {
+  if (s.schedule_type === 'monthly') return `Le ${s.day_of_month} de chaque mois`
+  if (s.schedule_type === 'yearly') return `Le ${s.day_of_month} ${MONTH_NAMES[s.month_of_year - 1]}`
+  if (s.schedule_type === 'weekly') return (s.weekdays || []).map(d => WEEKDAY_NAMES[d - 1]).join(', ') || '—'
+  return '—'
+}
 
 function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0))
@@ -154,7 +216,11 @@ async function reload() {
 }
 
 function emptyForm() {
-  return { name: '', amount: '', recurrence: 30, from_account_id: '', to_account_id: '', category_id: '' }
+  return {
+    name: '', amount: '',
+    schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
+    from_account_id: '', to_account_id: '', category_id: '',
+  }
 }
 
 function openCreate() {
@@ -168,7 +234,10 @@ function openEdit(s) {
   form.value = {
     name: s.name,
     amount: s.amount,
-    recurrence: s.recurrence,
+    schedule_type: s.schedule_type,
+    day_of_month: s.day_of_month || 1,
+    month_of_year: s.month_of_year || 1,
+    weekdays: [...(s.weekdays || [])],
     from_account_id: s.from_account_id || '',
     to_account_id: s.to_account_id || '',
     category_id: s.category_id || '',
@@ -180,7 +249,10 @@ async function save() {
   const payload = {
     name: form.value.name,
     amount: form.value.amount,
-    recurrence: form.value.recurrence || 30,
+    schedule_type: form.value.schedule_type,
+    day_of_month: form.value.day_of_month,
+    month_of_year: form.value.month_of_year,
+    weekdays: form.value.weekdays,
     from_account_id: form.value.from_account_id,
     to_account_id: form.value.to_account_id,
     category_id: form.value.category_id || null,
@@ -358,4 +430,22 @@ onMounted(() => reload())
   font-size: 14px;
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+.weekday-picker { display: flex; gap: 6px; flex-wrap: wrap; }
+.weekday-chip {
+  border: 1px solid rgba(148,163,184,0.25);
+  background: rgba(15,23,42,0.7);
+  color: #9ca3af;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.weekday-chip:hover { color: #cbd5e1; }
+.weekday-chip.on {
+  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  border-color: transparent;
+  color: #fff;
+}
 </style>

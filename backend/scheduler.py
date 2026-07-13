@@ -26,15 +26,17 @@ def _execute_subscription(sub, exec_date, DB, Transactions, Splits, Accounts):
 
 def execute_due_subscriptions(app, DB, Subscriptions, Transactions, Splits, Accounts):
     """Crée les transactions pour tous les abonnements échus. Appelé par le scheduler."""
+    from utils.recurrence import next_occurrence
     with app.app_context():
         today = date.today()
         subs = Subscriptions.query.all()
         for sub in subs:
             ref = sub.last_executed_at.date() if sub.last_executed_at else sub.created_at.date()
-            next_due = ref + timedelta(days=sub.recurrence)
+            next_due = next_occurrence(sub.schedule_type, sub.day_of_month, sub.month_of_year, sub.weekdays, ref)
             while next_due <= today:
                 _execute_subscription(sub, next_due, DB, Transactions, Splits, Accounts)
-                next_due += timedelta(days=sub.recurrence)
+                next_due = next_occurrence(
+                    sub.schedule_type, sub.day_of_month, sub.month_of_year, sub.weekdays, next_due)
         DB.session.commit()
 
 
@@ -113,6 +115,18 @@ def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxR
         DB.session.commit()
 
 
+def cleanup_pending_documents(app, DB, TransactionDocuments):
+    """Supprime les tickets/factures uploadés jamais confirmés après 24h (flux OCR abandonné en
+    cours de route). Appelé par le scheduler."""
+    with app.app_context():
+        cutoff = datetime.now() - timedelta(hours=24)
+        TransactionDocuments.query.filter(
+            TransactionDocuments.status == 'pending',
+            TransactionDocuments.uploaded_at < cutoff,
+        ).delete()
+        DB.session.commit()
+
+
 def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot):
     """Rattrape l'historique pour toute date d'achat pas encore couverte (ex: nouvel actif ajouté
     avec une date d'achat passée pendant que le backend tournait déjà). Appelé par le scheduler."""
@@ -122,8 +136,16 @@ def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Comm
 
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings):
+                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments):
     scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(
+        func=cleanup_pending_documents,
+        args=[app, DB, TransactionDocuments],
+        trigger='interval',
+        hours=24,
+        id='pending_documents_cleanup_job',
+        replace_existing=True,
+    )
     scheduler.add_job(
         func=execute_due_subscriptions,
         args=[app, DB, Subscriptions, Transactions, Splits, Accounts],

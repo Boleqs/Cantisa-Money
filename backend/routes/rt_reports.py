@@ -7,6 +7,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.utils.recurrence import next_occurrence, parse_weekdays
 
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
 REPORTS_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
@@ -319,15 +320,21 @@ class ReportsRoutes:
             total_monthly = 0.0
             for s in subs:
                 amount = float(s.amount or 0)
-                recurrence = s.recurrence or 30
-                monthly_equiv = round(amount * 30 / recurrence, 2)
+
+                if s.schedule_type == 'yearly':
+                    monthly_equiv = round(amount / 12, 2)
+                elif s.schedule_type == 'weekly':
+                    nb_days = len(parse_weekdays(s.weekdays)) or 1
+                    monthly_equiv = round(amount * nb_days * (30.44 / 7), 2)
+                else:  # monthly
+                    monthly_equiv = round(amount, 2)
                 total_monthly += monthly_equiv
 
                 ref = s.last_executed_at or s.created_at
                 ref_date = ref.date() if hasattr(ref, 'date') else ref
-                next_due = ref_date + timedelta(days=recurrence)
+                next_due = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, ref_date)
                 while next_due <= today:
-                    next_due += timedelta(days=recurrence)
+                    next_due = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, next_due)
 
                 cat_name = cat_map.get(s.category_id, 'Sans catégorie')
                 by_category[cat_name] = by_category.get(cat_name, 0) + monthly_equiv
@@ -336,7 +343,10 @@ class ReportsRoutes:
                     'id': str(s.id),
                     'name': s.name,
                     'amount': round(amount, 2),
-                    'recurrence': recurrence,
+                    'schedule_type': s.schedule_type,
+                    'day_of_month': s.day_of_month,
+                    'month_of_year': s.month_of_year,
+                    'weekdays': sorted(parse_weekdays(s.weekdays)),
                     'monthly_equivalent': monthly_equiv,
                     'category': cat_name,
                     'next_due_date': next_due.isoformat(),

@@ -1,6 +1,6 @@
 import uuid
 from .base import Base
-from sqlalchemy import Column, Boolean, ForeignKeyConstraint, PrimaryKeyConstraint, Numeric
+from sqlalchemy import Column, Boolean, String, ForeignKeyConstraint, PrimaryKeyConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from dataclasses import dataclass
 
@@ -19,6 +19,9 @@ class Splits(Base):
     quantity:int = Column(Numeric, nullable=False)
     account_id:uuid = Column(UUID(as_uuid=True))
     is_reconciled:bool = Column(Boolean, nullable=False, default=False)
+    # Mémo libre par split (ex: le libellé d'une ligne de ticket importée) — distinct de la
+    # description de la transaction, qui elle est commune à tous les splits.
+    description:str = Column(String(256), nullable=True)
     # Taux appliqué pour convertir `quantity` (devise du compte du split) vers la devise de la
     # transaction : valeur_en_devise_tx = quantity * fx_rate. 1 si même devise que la transaction.
-    fx_rate = Column(Numeric, nullable=False, default=1)
+    fx_rate:int = Column(Numeric, nullable=False, default=1)

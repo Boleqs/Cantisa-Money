@@ -17,13 +17,20 @@ class Subscriptions(Base):
         ForeignKeyConstraint(['to_account_id'], ['accounts.id'], ondelete='RESTRICT', onupdate='CASCADE'),
         ForeignKeyConstraint(['category_id'], ['categories.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
-        UniqueConstraint('user_id', 'name')
+        UniqueConstraint('user_id', 'name'),
+        CheckConstraint("schedule_type IN ('monthly', 'yearly', 'weekly')"),
     )
 
     user_id:uuid = Column(UUID(as_uuid=True))
     id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
     name:str = Column(String(64), nullable=False)
-    recurrence:int = Column(SmallInteger, nullable=False, default=30)
+    # 'monthly' -> day_of_month (ex: le 6 de chaque mois)
+    # 'yearly'  -> day_of_month + month_of_year (ex: tous les 5 janvier)
+    # 'weekly'  -> weekdays, ISO 1=lundi..7=dimanche, ex: "3,4" (mercredi et jeudi)
+    schedule_type:str = Column(String(10), nullable=False, default='monthly')
+    day_of_month:int = Column(SmallInteger, nullable=True)
+    month_of_year:int = Column(SmallInteger, nullable=True)
+    weekdays:str = Column(String(20), nullable=True)
     amount:int = Column(Numeric, nullable=False, default=0)
     from_account_id:uuid = Column(UUID(as_uuid=True))
     to_account_id: uuid = Column(UUID(as_uuid=True))

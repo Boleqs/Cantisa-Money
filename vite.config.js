@@ -15,4 +15,9 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  server: {
+    // Nécessaire pour être joignable depuis l'extérieur du conteneur Docker (le défaut Vite,
+    // localhost, ne serait accessible que depuis l'intérieur du conteneur).
+    host: '0.0.0.0',
+  },
 })

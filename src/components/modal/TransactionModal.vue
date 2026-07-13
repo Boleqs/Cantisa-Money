@@ -78,6 +78,27 @@
           </div>
         </div>
 
+        <!-- Documents joints -->
+        <div v-if="form.id" class="documents-section">
+          <div class="splits-header">
+            <span class="splits-title">Justificatifs</span>
+            <label class="btn btn-sm doc-upload-btn">
+              <span v-if="uploadingDoc">Envoi…</span>
+              <span v-else>+ Joindre un fichier</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden :disabled="uploadingDoc" @change="onDocFileChange" />
+            </label>
+          </div>
+          <p v-if="docError" class="doc-error">{{ docError }}</p>
+          <ul v-if="attachedDocs.length" class="doc-list">
+            <li v-for="doc in attachedDocs" :key="doc.id" class="doc-item">
+              <button type="button" class="doc-link" @click="viewDocument(doc)">📎 {{ doc.original_filename }}</button>
+              <button type="button" class="remove-btn" @click="removeDocument(doc)">✕</button>
+            </li>
+          </ul>
+          <span v-else class="hint">Aucun justificatif joint.</span>
+        </div>
+        <p v-else class="hint">Enregistrez la transaction pour pouvoir y joindre un justificatif.</p>
+
         <!-- MODE SIMPLE -->
         <div v-if="!advancedMode" class="simple-section">
           <div class="simple-grid">
@@ -144,6 +165,12 @@
               step="0.01"
               placeholder="Montant (+/-)"
               required
+            />
+            <input
+              v-model="split.description"
+              type="text"
+              placeholder="Mémo (optionnel)"
+              class="split-memo"
             />
             <span class="fx-badge">{{ splitFxLabel(split) }}</span>
             <button
@@ -224,8 +251,8 @@ function toggleMode() {
       const rate = splitRate(simple.to_account_id)
       const destAmount = Math.round((Math.abs(simple.amount) / rate) * 100) / 100
       form.splits = [
-        { account_id: simple.from_account_id, quantity: -Math.abs(simple.amount) },
-        { account_id: simple.to_account_id, quantity: destAmount },
+        { account_id: simple.from_account_id, quantity: -Math.abs(simple.amount), description: '' },
+        { account_id: simple.to_account_id, quantity: destAmount, description: '' },
       ]
     }
   } else {
@@ -251,8 +278,8 @@ const emptyForm = () => ({
   category_id: '',
   is_cleared: false,
   splits: [
-    { account_id: '', quantity: 0 },
-    { account_id: '', quantity: 0 },
+    { account_id: '', quantity: 0, description: '' },
+    { account_id: '', quantity: 0, description: '' },
   ],
 })
 
@@ -282,6 +309,60 @@ const primaryAccountId = computed(() =>
   advancedMode.value ? form.splits[0]?.account_id : simple.from_account_id
 )
 const txCurrencyCode = computed(() => splitAccountCode(primaryAccountId.value))
+
+// ── Documents joints ─────────────────────────────────────────────────────
+const attachedDocs = ref([])
+const uploadingDoc = ref(false)
+const docError = ref('')
+
+async function loadDocuments(txId) {
+  attachedDocs.value = []
+  if (!txId) return
+  try {
+    const { data } = await axios.get('/api/documents', { params: { tx_id: txId } })
+    attachedDocs.value = Array.isArray(data?.response_data) ? data.response_data : []
+  } catch (e) {
+    console.error('Erreur chargement des documents joints', e)
+  }
+}
+
+async function onDocFileChange(e) {
+  const file = e.target.files[0]
+  if (!file || !form.id) return
+  uploadingDoc.value = true
+  docError.value = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('tx_id', form.id)
+    const { data } = await axios.post('/api/documents/attach', fd)
+    if (data?.response_data) attachedDocs.value.unshift(data.response_data)
+  } catch (err) {
+    docError.value = err?.response?.data?.response_data || err?.message || "Erreur lors de l'envoi"
+  } finally {
+    uploadingDoc.value = false
+    e.target.value = ''
+  }
+}
+
+async function viewDocument(doc) {
+  try {
+    const { data } = await axios.get(`/api/documents/${doc.id}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(new Blob([data], { type: doc.mime_type }))
+    window.open(url, '_blank')
+  } catch (e) {
+    docError.value = "Erreur lors de l'ouverture du document"
+  }
+}
+
+async function removeDocument(doc) {
+  try {
+    await axios.delete(`/api/documents/${doc.id}`)
+    attachedDocs.value = attachedDocs.value.filter(d => d.id !== doc.id)
+  } catch (e) {
+    docError.value = 'Erreur lors de la suppression'
+  }
+}
 
 // ── Tags ─────────────────────────────────────────────────────────────────
 // Un split n'existe (et n'a un id réel) qu'une fois la transaction enregistrée : les tags ne
@@ -426,11 +507,12 @@ watch(
       base.category_id = tx.category_id || ''
       base.is_cleared = tx.is_cleared || false
       base.splits = (tx.splits && tx.splits.length)
-        ? tx.splits.map(s => ({ id: s.id, account_id: s.account_id, quantity: s.quantity }))
-        : [{ account_id: '', quantity: 0 }, { account_id: '', quantity: 0 }]
+        ? tx.splits.map(s => ({ id: s.id, account_id: s.account_id, quantity: s.quantity, description: s.description || '' }))
+        : [{ account_id: '', quantity: 0, description: '' }, { account_id: '', quantity: 0, description: '' }]
     }
     Object.assign(form, base)
     primarySplitTagIds.value = new Set(tx?.splits?.[0]?.tag_ids || [])
+    loadDocuments(tx?.id)
 
     // Détermine le mode initial
     if (forcedAdvanced.value) {
@@ -490,7 +572,7 @@ const fmtBalance = computed(() => {
 })
 
 function addSplit() {
-  form.splits.push({ account_id: '', quantity: 0 })
+  form.splits.push({ account_id: '', quantity: 0, description: '' })
 }
 
 function removeSplit(i) {
@@ -507,7 +589,7 @@ const onSubmit = () => {
 
   let splits
   if (advancedMode.value) {
-    splits = form.splits.map(s => ({ account_id: s.account_id, quantity: Number(s.quantity) }))
+    splits = form.splits.map(s => ({ account_id: s.account_id, quantity: Number(s.quantity), description: s.description || null }))
   } else {
     // Le montant saisi est débité du compte source dans SA devise ; le compte destination reçoit
     // l'équivalent converti (montant / taux compte_dest→devise_source) si sa devise diffère.
@@ -740,9 +822,13 @@ const onSubmit = () => {
 
 .split-row {
   display: grid;
-  grid-template-columns: 1fr 130px 90px 30px;
+  grid-template-columns: 1fr 110px 1fr 90px 30px;
   gap: 8px;
   align-items: center;
+}
+
+.split-memo {
+  min-width: 0;
 }
 
 .fx-hint {
@@ -796,6 +882,58 @@ const onSubmit = () => {
   align-self: flex-start;
   font-size: 12px;
   padding: 4px 10px;
+}
+
+/* Documents joints */
+.documents-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.doc-upload-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.doc-error {
+  margin: 0;
+  font-size: 12px;
+  color: #fca5a5;
+}
+
+.doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.doc-link {
+  background: transparent;
+  border: none;
+  color: #93c5fd;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.doc-link:hover {
+  color: #bfdbfe;
 }
 
 /* Footer */

@@ -14,6 +14,7 @@ from .subscriptions import Subscriptions
 from .tags import Tags
 from .tags_on_split import TagsOnSplits
 from .transactions import Transactions
+from .transaction_documents import TransactionDocuments
 from .users import Users
 from .user_settings import UserSettings
 from .roles import Roles

@@ -537,7 +537,7 @@
                   <th>Nom</th>
                   <th>Catégorie</th>
                   <th class="num">Montant</th>
-                  <th class="num">Récurrence</th>
+                  <th>Planification</th>
                   <th class="num">Éq. mensuel</th>
                   <th>Prochaine échéance</th>
                 </tr>
@@ -547,7 +547,7 @@
                   <td>{{ s.name }}</td>
                   <td class="muted">{{ s.category }}</td>
                   <td class="num">{{ fmtAmount(s.amount) }}</td>
-                  <td class="num muted">{{ s.recurrence }} j</td>
+                  <td class="muted">{{ scheduleLabel(s) }}</td>
                   <td class="num">{{ fmtAmount(s.monthly_equivalent) }}</td>
                   <td class="muted">{{ fmtDate(s.next_due_date) }}</td>
                 </tr>
@@ -864,6 +864,19 @@ function makeDonutSegments(items, total, valueKey = 'total') {
 function fmtDate(v) {
   if (!v) return '—'
   return new Date(v).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+const MONTH_NAMES = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+]
+const WEEKDAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
+
+function scheduleLabel(s) {
+  if (s.schedule_type === 'monthly') return `Le ${s.day_of_month} de chaque mois`
+  if (s.schedule_type === 'yearly') return `Le ${s.day_of_month} ${MONTH_NAMES[s.month_of_year - 1]}`
+  if (s.schedule_type === 'weekly') return (s.weekdays || []).map(d => WEEKDAY_NAMES[d - 1]).join(', ') || '—'
+  return '—'
 }
 
 // ── Par tag ────────────────────────────────────────────────────────────────────

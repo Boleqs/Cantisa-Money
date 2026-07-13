@@ -2,9 +2,11 @@ Flask
 Flask-SQLAlchemy
 Flask-CORS
 flask-jwt-extended
+Flask-Limiter
 python-dotenv
-psycopg2
+psycopg2-binary
 sqlalchemy
+alembic
 pyjwt
 marshmallow
 anthropic
@@ -12,3 +14,7 @@ APScheduler
 fpdf2
 yfinance
 pytickersymbols
+pytesseract
+Pillow
+PyMuPDF
+gunicorn
