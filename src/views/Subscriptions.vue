@@ -37,7 +37,8 @@
         <tr v-for="s in subscriptions" :key="s.id" :class="{ 'row-overdue': s.is_overdue }">
           <td>
             {{ s.name }}
-            <span v-if="s.is_overdue" class="badge-overdue">En retard</span>
+            <span v-if="s.is_forecast_only" class="badge-forecast" title="Ne crée pas de transaction automatiquement">Prévisionnel</span>
+            <span v-else-if="s.is_overdue" class="badge-overdue">En retard</span>
           </td>
           <td>{{ fmtAmount(s.amount) }}</td>
           <td class="muted">{{ scheduleLabel(s) }}</td>
@@ -121,6 +122,10 @@
             <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
+        <label class="checkbox-label">
+          <input type="checkbox" v-model="form.is_forecast_only" />
+          Prévisionnel uniquement (ne crée pas de transaction automatiquement — utile si vous importez vos relevés bancaires, pour éviter les doublons)
+        </label>
         <div class="modal-actions">
           <button class="btn" @click="showModal = false">Annuler</button>
           <button
@@ -154,7 +159,7 @@ const editTarget = ref(null)
 const form = ref({
   name: '', amount: '',
   schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
-  from_account_id: '', to_account_id: '', category_id: '',
+  from_account_id: '', to_account_id: '', category_id: '', is_forecast_only: false,
 })
 
 const scheduleValid = computed(() => {
@@ -219,7 +224,7 @@ function emptyForm() {
   return {
     name: '', amount: '',
     schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
-    from_account_id: '', to_account_id: '', category_id: '',
+    from_account_id: '', to_account_id: '', category_id: '', is_forecast_only: false,
   }
 }
 
@@ -241,6 +246,7 @@ function openEdit(s) {
     from_account_id: s.from_account_id || '',
     to_account_id: s.to_account_id || '',
     category_id: s.category_id || '',
+    is_forecast_only: !!s.is_forecast_only,
   }
   showModal.value = true
 }
@@ -256,6 +262,7 @@ async function save() {
     from_account_id: form.value.from_account_id,
     to_account_id: form.value.to_account_id,
     category_id: form.value.category_id || null,
+    is_forecast_only: form.value.is_forecast_only,
   }
   try {
     if (editTarget.value) {
@@ -391,6 +398,17 @@ onMounted(() => reload())
   margin-left: 6px;
   vertical-align: middle;
 }
+.badge-forecast {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(96,165,250,0.4);
+  background: rgba(96,165,250,0.1);
+  color: #93c5fd;
+  margin-left: 6px;
+  vertical-align: middle;
+}
 
 .modal-backdrop {
   position: fixed;
@@ -430,6 +448,13 @@ onMounted(() => reload())
   font-size: 14px;
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+.checkbox-label {
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 8px !important;
+}
+.checkbox-label input { margin-top: 2px; accent-color: #2563eb; }
 
 .weekday-picker { display: flex; gap: 6px; flex-wrap: wrap; }
 .weekday-chip {

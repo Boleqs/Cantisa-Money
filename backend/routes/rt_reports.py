@@ -35,7 +35,12 @@ class ReportsRoutes:
                     y -= 1
                 months.append((y, m))
 
-            all_accounts = Accounts.query.filter(Accounts.user_id == user_id).all()
+            # Comptes virtuels/cachés exclus : ils ne représentent pas de l'argent réel.
+            all_accounts = Accounts.query.filter(
+                Accounts.user_id == user_id,
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
+            ).all()
             # Seuls les comptes de valeur réelle (Current + Assets + Equity)
             wealth_ids = [a.id for a in all_accounts if a.account_type in WEALTH_TYPES]
 
@@ -117,7 +122,9 @@ class ReportsRoutes:
                 Transactions.post_date >= start,
                 Transactions.post_date <= end,
                 Splits.quantity < 0,
-                Accounts.account_type.in_(WEALTH_TYPES)
+                Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
             ).group_by(Categories.name).order_by(func.sum(Splits.quantity)).all()
 
             uncategorized = float(DB.session.query(
@@ -130,7 +137,9 @@ class ReportsRoutes:
                 Transactions.post_date <= end,
                 Transactions.category_id == None,
                 Splits.quantity < 0,
-                Accounts.account_type.in_(WEALTH_TYPES)
+                Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
             ).scalar() or 0)
 
             result = [
@@ -174,6 +183,8 @@ class ReportsRoutes:
             ).filter(
                 Accounts.user_id == user_id,
                 Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
                 Transactions.post_date >= start,
                 Transactions.post_date <= end,
             ).group_by(Accounts.id, Accounts.name, Accounts.account_type
@@ -188,6 +199,8 @@ class ReportsRoutes:
             ).filter(
                 Transactions.user_id == user_id,
                 Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
                 Transactions.post_date >= start,
                 Transactions.post_date <= end,
                 Splits.quantity > 0,
@@ -249,7 +262,9 @@ class ReportsRoutes:
                 Transactions.post_date >= start,
                 Transactions.post_date <= end,
                 Splits.quantity < 0,
-                Accounts.account_type.in_(WEALTH_TYPES)
+                Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
             ).group_by(Tags.name).order_by(func.sum(Splits.quantity)).all()
 
             result = [{'name': r.name, 'total': round(abs(float(r.total)), 2)} for r in tag_rows]

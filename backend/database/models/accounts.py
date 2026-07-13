@@ -34,6 +34,10 @@ class Accounts(Base):
     description:str = Column(String(1024), nullable=True)
     total_spent:int = Column(Numeric, default=0, nullable=False)
     total_earned:int = Column(Numeric, default=0, nullable=False)
+    # Solde consolidé = total propre + somme récursive des enfants (maintenu par
+    # trigger, voir propagate_consolidated_totals() dans les migrations Alembic).
+    consolidated_spent:int = Column(Numeric, default=0, nullable=False)
+    consolidated_earned:int = Column(Numeric, default=0, nullable=False)
     is_virtual:bool = Column(Boolean, default=False, nullable=False)
     is_hidden:bool = Column(Boolean, default=False, nullable=False)
     code:str = Column(String(64), nullable=True)

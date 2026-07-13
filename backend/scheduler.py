@@ -29,7 +29,9 @@ def execute_due_subscriptions(app, DB, Subscriptions, Transactions, Splits, Acco
     from utils.recurrence import next_occurrence
     with app.app_context():
         today = date.today()
-        subs = Subscriptions.query.all()
+        # Prévisionnel uniquement : jamais exécuté automatiquement (pas de transaction créée),
+        # sert juste d'échéance affichée — voir _next_due() dans rt_subscriptions.py.
+        subs = Subscriptions.query.filter(Subscriptions.is_forecast_only == False).all()
         for sub in subs:
             ref = sub.last_executed_at.date() if sub.last_executed_at else sub.created_at.date()
             next_due = next_occurrence(sub.schedule_type, sub.day_of_month, sub.month_of_year, sub.weekdays, ref)

@@ -107,15 +107,31 @@ class AccountsRoutes:
                 Accounts.id == data.get('account_id')).first()
             if not account:
                 return json_response('Account does not exist', HttpCode.NOT_FOUND)
+
+            new_parent_id = data.get('parent_id')
+            if new_parent_id:
+                ancestor_id = new_parent_id
+                while ancestor_id is not None:
+                    if ancestor_id == account.id:
+                        return json_response(
+                            "Ce compte ne peut pas être son propre ancêtre",
+                            HttpCode.BAD_REQUEST)
+                    ancestor = Accounts.query.filter(Accounts.id == ancestor_id).first()
+                    ancestor_id = ancestor.parent_id if ancestor else None
+
+            # Champs requis par le schéma : toujours présents. Les autres sont optionnels
+            # (le client peut les omettre) -> on garde alors la valeur actuelle du compte
+            # plutôt que de l'écraser par None (ce qui plantait sur les colonnes NOT NULL
+            # account_type/is_virtual/is_hidden).
             account.name = data.get('name')
             account.description = data.get('description')
             account.currency_id = data.get('currency_id')
-            account.parent_id = data.get('parent_id')
-            account.account_type = data.get('account_type')
-            account.account_subtype = data.get('account_subtype')
-            account.is_virtual = data.get('is_virtual')
-            account.is_hidden = data.get('is_hidden')
-            account.code = data.get('code')
+            account.parent_id = data.get('parent_id', account.parent_id)
+            account.account_type = data.get('account_type', account.account_type)
+            account.account_subtype = data.get('account_subtype', account.account_subtype)
+            account.is_virtual = data.get('is_virtual', account.is_virtual)
+            account.is_hidden = data.get('is_hidden', account.is_hidden)
+            account.code = data.get('code', account.code)
             DB.session.commit()
             return json_response(account, HttpCode.OK)
 

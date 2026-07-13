@@ -18,6 +18,8 @@ def compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
         Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
+        Accounts.is_virtual == False,
+        Accounts.is_hidden == False,
         ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
     ).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
@@ -91,6 +93,8 @@ def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, Ass
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
         Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
+        Accounts.is_virtual == False,
+        Accounts.is_hidden == False,
         ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
     ).all()
     if not accounts:

@@ -29,6 +29,8 @@ def _bank_allocation(Accounts, Commodities, AssetPossession, FxRates, user_id, t
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
         Accounts.account_type.in_(BANK_TYPE_LABELS.keys()),
+        Accounts.is_virtual == False,
+        Accounts.is_hidden == False,
         ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
     ).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
@@ -55,6 +57,8 @@ def _currency_allocation(Accounts, Commodities, AssetPossession, FxRates, user_i
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
         Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
+        Accounts.is_virtual == False,
+        Accounts.is_hidden == False,
         ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
     ).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}

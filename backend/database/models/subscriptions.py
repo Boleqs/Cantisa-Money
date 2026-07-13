@@ -2,7 +2,7 @@ import uuid
 from .base import Base
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKey, CheckConstraint, SmallInteger, \
-    UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Numeric
+    UniqueConstraint, PrimaryKeyConstraint, ForeignKeyConstraint, Numeric, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from dataclasses import dataclass
 
@@ -36,5 +36,9 @@ class Subscriptions(Base):
     to_account_id: uuid = Column(UUID(as_uuid=True))
     category_id:uuid = Column(UUID(as_uuid=True))
     last_executed_at: datetime = Column(DateTime, nullable=True)
+    # Si vrai, l'abonnement n'est jamais exécuté automatiquement par le scheduler (pas de
+    # transaction créée) — sert uniquement de prévision (échéance affichée), à confirmer
+    # manuellement ("Exécuter maintenant") ou en laissant l'import bancaire s'en charger.
+    is_forecast_only: bool = Column(Boolean, default=False, nullable=False)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())
     updated_at: datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

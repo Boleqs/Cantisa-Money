@@ -36,7 +36,12 @@ class DashboardRoutes:
             history_start = today - timedelta(days=29)
 
             # ── Comptes de l'utilisateur ──────────────────────────────────────
-            all_accounts = Accounts.query.filter(Accounts.user_id == user_id).all()
+            # Comptes virtuels/cachés exclus : ils ne représentent pas de l'argent réel.
+            all_accounts = Accounts.query.filter(
+                Accounts.user_id == user_id,
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
+            ).all()
             # current_ids : uniquement pour l'historique de solde (liquidités)
             current_ids = [a.id for a in all_accounts if a.account_type == 'Current']
             # wealth_ids : comptes représentatifs de la valeur réelle (Current + Assets + Equity)
@@ -131,7 +136,9 @@ class DashboardRoutes:
                 Transactions.user_id == user_id,
                 Transactions.post_date >= month_start,
                 Splits.quantity < 0,
-                Accounts.account_type.in_(WEALTH_TYPES)
+                Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
             ).group_by(Categories.name).order_by(func.sum(Splits.quantity)).all()
 
             uncategorized = float(DB.session.query(
@@ -143,7 +150,9 @@ class DashboardRoutes:
                 Transactions.post_date >= month_start,
                 Transactions.category_id == None,
                 Splits.quantity < 0,
-                Accounts.account_type.in_(WEALTH_TYPES)
+                Accounts.account_type.in_(WEALTH_TYPES),
+                Accounts.is_virtual == False,
+                Accounts.is_hidden == False,
             ).scalar() or 0)
 
             expenses_by_category = [

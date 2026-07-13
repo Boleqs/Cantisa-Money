@@ -22,6 +22,7 @@ class AddSubscriptionSchema(Schema):
     from_account_id = fields.UUID(required=True)
     to_account_id = fields.UUID(required=True)
     category_id = fields.UUID(load_default=None)
+    is_forecast_only = fields.Boolean(load_default=False)
 
 
 class UpdateSubscriptionSchema(Schema):
@@ -35,6 +36,7 @@ class UpdateSubscriptionSchema(Schema):
     from_account_id = fields.UUID(required=True)
     to_account_id = fields.UUID(required=True)
     category_id = fields.UUID(load_default=None)
+    is_forecast_only = fields.Boolean(load_default=False)
 
 
 class GetSubscriptionSchema(Schema):
@@ -70,7 +72,16 @@ def _schedule_kwargs(data):
 
 def _next_due(s):
     ref = s.last_executed_at.date() if s.last_executed_at else s.created_at.date()
-    return next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, ref)
+    candidate = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, ref)
+    if s.is_forecast_only:
+        # Jamais exécuté par le scheduler -> last_executed_at ne se met jamais à jour tout
+        # seul. Sans ça l'échéance resterait bloquée dans le passé indéfiniment : on avance
+        # ici jusqu'à la prochaine échéance future, sans toucher last_executed_at (pur calcul
+        # d'affichage, pas d'état persisté).
+        today = date.today()
+        while candidate <= today:
+            candidate = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, candidate)
+    return candidate
 
 
 def _sub_to_dict(s):
@@ -87,6 +98,7 @@ def _sub_to_dict(s):
         'from_account_id': str(s.from_account_id) if s.from_account_id else None,
         'to_account_id': str(s.to_account_id) if s.to_account_id else None,
         'category_id': str(s.category_id) if s.category_id else None,
+        'is_forecast_only': s.is_forecast_only,
         'last_executed_at': s.last_executed_at.isoformat() if s.last_executed_at else None,
         'next_due_at': next_due.isoformat(),
         'is_overdue': next_due <= date.today(),
@@ -148,6 +160,7 @@ class SubscriptionsRoutes:
                     from_account_id=data['from_account_id'],
                     to_account_id=data['to_account_id'],
                     category_id=data.get('category_id'),
+                    is_forecast_only=data.get('is_forecast_only', False),
                     **schedule_kwargs,
                 )
                 DB.session.add(s)
@@ -182,6 +195,7 @@ class SubscriptionsRoutes:
                 s.from_account_id = data['from_account_id']
                 s.to_account_id = data['to_account_id']
                 s.category_id = data.get('category_id')
+                s.is_forecast_only = data.get('is_forecast_only', False)
                 for key, value in schedule_kwargs.items():
                     setattr(s, key, value)
                 DB.session.commit()

@@ -52,6 +52,12 @@
         <div class="kpi-label">Transactions</div>
         <div class="kpi-value">{{ txTotal }}</div>
       </div>
+      <div v-if="hasChildren" class="kpi-card">
+        <div class="kpi-label">Solde consolidé (avec sous-comptes)</div>
+        <div class="kpi-value" :class="soldeConsolide >= 0 ? 'positive' : 'negative'">
+          {{ fmtAmount(soldeConsolide) }} {{ currencyShort }}
+        </div>
+      </div>
     </div>
 
     <!-- Filtres -->
@@ -127,6 +133,7 @@ const route = useRoute()
 const accountId = route.params.id
 
 const account = ref(null)
+const allAccounts = ref([])
 const transactions = ref([])
 const categories = ref([])
 const commodities = ref([])
@@ -146,13 +153,15 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const [accRes, txRes, catRes, comRes] = await Promise.all([
+    const [accRes, allAccRes, txRes, catRes, comRes] = await Promise.all([
       axios.get('/api/accounts', { params: { account_id: accountId } }),
+      axios.get('/api/accounts'),
       axios.get('/api/transactions', { params: { account_id: accountId } }),
       axios.get('/api/categories'),
       axios.get('/api/commodities'),
     ])
     account.value = accRes.data?.response_data ?? null
+    allAccounts.value = Array.isArray(allAccRes.data?.response_data) ? allAccRes.data.response_data : []
     const rd = txRes.data?.response_data
     transactions.value = Array.isArray(rd?.transactions) ? rd.transactions : []
     txTotal.value = rd?.total ?? transactions.value.length
@@ -176,6 +185,15 @@ const currencyShort = computed(() => {
 const solde = computed(() => {
   if (!account.value) return 0
   return (Number(account.value.total_earned) || 0) - (Number(account.value.total_spent) || 0)
+})
+
+const hasChildren = computed(() =>
+  allAccounts.value.some(a => String(a.parent_id) === String(accountId))
+)
+
+const soldeConsolide = computed(() => {
+  if (!account.value) return 0
+  return (Number(account.value.consolidated_earned) || 0) - (Number(account.value.consolidated_spent) || 0)
 })
 
 function categoryName(id) {

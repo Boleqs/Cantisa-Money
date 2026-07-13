@@ -122,6 +122,22 @@
                 </div>
               </div>
 
+              <template v-if="hasChildren(acc.id)">
+                <div class="kv">
+                  <div class="k">Solde consolidé — earned</div>
+                  <div class="v mono">
+                    {{ fmtAmount(acc.consolidated_earned) }} {{ currencyShort(acc.currency_id) }}
+                  </div>
+                </div>
+
+                <div class="kv">
+                  <div class="k">Solde consolidé — spent</div>
+                  <div class="v mono">
+                    {{ fmtAmount(acc.consolidated_spent) }} {{ currencyShort(acc.currency_id) }}
+                  </div>
+                </div>
+              </template>
+
               <div class="kv" v-if="acc.parent_id">
                 <div class="k">Parent</div>
                 <div class="v">{{ parentName(acc.parent_id) }}</div>
@@ -215,6 +231,14 @@ function fmtAmount(v) {
 
 function commodityById(id) {
   return commodities.value.find((c) => String(c.id) === String(id));
+}
+
+const parentIds = computed(
+  () => new Set(accounts.value.filter((a) => a.parent_id).map((a) => String(a.parent_id)))
+);
+
+function hasChildren(accountId) {
+  return parentIds.value.has(String(accountId));
 }
 
 function currencyShort(currencyId) {

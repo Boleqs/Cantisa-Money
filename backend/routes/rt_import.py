@@ -19,7 +19,8 @@ DATE_FORMATS = ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y', '%d/%m/%y', '%Y/
 
 class ConfirmImportSchema(Schema):
     account_id = fields.UUID(required=True)
-    opposing_account_id = fields.UUID(required=True)
+    expense_opposing_account_id = fields.UUID(required=True)
+    income_opposing_account_id = fields.UUID(required=True)
     currency_id = fields.UUID(required=True)
     transactions = fields.List(fields.Dict(), required=True)
 
@@ -70,7 +71,7 @@ def _detect_format(content):
     return 'csv'
 
 
-def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transactions, Splits):
+def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transactions, Splits, Categories, DB):
     """Parse QIF content, return (transactions, errors, accounts_found).
 
     accounts_found: list of {name, qif_type, cantisa_type, description}
@@ -80,6 +81,26 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
     errors = []
     accounts_found = []
     seen_account_names = set()
+
+    # Catégorie (champ L) : matchée par nom (insensible à la casse) sur les catégories
+    # existantes de l'utilisateur, sinon créée à la volée. "[Nom]" désigne un virement
+    # vers un autre compte QIF, pas une vraie catégorie — ignoré.
+    category_cache = {c.name.strip().lower(): c.id for c in Categories.query.filter_by(user_id=user_id).all()}
+
+    def resolve_category(name):
+        if not name:
+            return None
+        name = name.strip()
+        if not name or (name.startswith('[') and name.endswith(']')):
+            return None
+        key = name.lower()
+        if key in category_cache:
+            return category_cache[key]
+        new_cat = Categories(user_id=user_id, name=name)
+        DB.session.add(new_cat)
+        DB.session.flush()
+        category_cache[key] = new_cat.id
+        return new_cat.id
 
     current_tx = {}
     current_acc_def = {}
@@ -154,6 +175,7 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
                         'date': tx_date.strftime('%Y-%m-%d'),
                         'description': desc,
                         'amount': amount,
+                        'category_id': resolve_category(current_tx.get('category')),
                         'qif_account': current_qif_account,
                         'is_duplicate': is_duplicate,
                         'selected': not is_duplicate,
@@ -185,6 +207,7 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
                 'date': tx_date.strftime('%Y-%m-%d'),
                 'description': desc,
                 'amount': amount,
+                'category_id': resolve_category(current_tx.get('category')),
                 'qif_account': current_qif_account,
                 'is_duplicate': False,
                 'selected': True,
@@ -196,7 +219,7 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
 
 
 class ImportRoutes:
-    def __init__(self, app, DB, Transactions, Splits, Users):
+    def __init__(self, app, DB, Transactions, Splits, Users, Categories):
         ROUTE_PATH = f"{ROOT_PATH}/import"
 
         @app.route(f"{ROUTE_PATH}/parse", methods=['POST'])
@@ -226,8 +249,10 @@ class ImportRoutes:
             if fmt == 'qif':
                 parsed, errors, accounts_found = _parse_qif(
                     content, date_format, decimal_sep,
-                    account_id, user_id, Transactions, Splits
+                    account_id, user_id, Transactions, Splits, Categories, DB
                 )
+                # Persiste les catégories créées à la volée pendant le parsing.
+                DB.session.commit()
                 return json_response({
                     'format': 'qif',
                     'headers': [],
@@ -333,7 +358,8 @@ class ImportRoutes:
 
             user_id = get_jwt_identity()
             account_id = data['account_id']
-            opposing_account_id = data['opposing_account_id']
+            expense_opposing_account_id = data['expense_opposing_account_id']
+            income_opposing_account_id = data['income_opposing_account_id']
             currency_id = data['currency_id']
 
             created = 0
@@ -347,8 +373,10 @@ class ImportRoutes:
 
                     tx_date = datetime.strptime(tx_data['date'], '%Y-%m-%d')
                     amount = float(tx_data['amount'])
-                    # Per-transaction opposing account overrides the global default
-                    tx_opposing = tx_data.get('opposing_account_id') or opposing_account_id
+                    # Contrepartie par défaut selon le signe (dépense/recette), sauf
+                    # override par transaction (choix manuel ou suggestion IA).
+                    default_opposing = expense_opposing_account_id if amount < 0 else income_opposing_account_id
+                    tx_opposing = tx_data.get('opposing_account_id') or default_opposing
 
                     tx = Transactions(
                         user_id=user_id,

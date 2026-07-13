@@ -162,8 +162,17 @@
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Compte de contrepartie</label>
-          <select v-model="config.opposing_account_id" class="form-select">
+          <label class="form-label">Compte de contrepartie — Dépenses</label>
+          <select v-model="config.expense_opposing_account_id" class="form-select">
+            <option value="">— Sélectionner —</option>
+            <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
+              {{ acc.name }} ({{ acc.account_type }})
+            </option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Compte de contrepartie — Recettes</label>
+          <select v-model="config.income_opposing_account_id" class="form-select">
             <option value="">— Sélectionner —</option>
             <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
               {{ acc.name }} ({{ acc.account_type }})
@@ -185,7 +194,7 @@
         <button class="btn" @click="step = 0">← Retour</button>
         <button
           class="btn btn-primary"
-          :disabled="parsing || !config.account_id || !config.opposing_account_id || !config.currency_id"
+          :disabled="parsing || !config.account_id || !config.expense_opposing_account_id || !config.income_opposing_account_id || !config.currency_id"
           @click="parse"
         >
           <span v-if="parsing">Analyse…</span>
@@ -425,7 +434,8 @@ const config = ref({
   debit_col: 2,
   credit_col: 3,
   account_id: '',
-  opposing_account_id: '',
+  expense_opposing_account_id: '',
+  income_opposing_account_id: '',
   currency_id: '',
 })
 
@@ -527,8 +537,10 @@ async function parse() {
     const res = data.response_data
     transactions.value = res.transactions.map(t => ({
       ...t,
-      category_id: null,
-      opposing_account_id: config.value.opposing_account_id || null,
+      category_id: t.category_id ?? null,
+      opposing_account_id: (Number(t.amount) < 0
+        ? config.value.expense_opposing_account_id
+        : config.value.income_opposing_account_id) || null,
       newAccountSuggestion: null,
       aiSuggested: false,
       creatingAccount: false,
@@ -560,7 +572,8 @@ async function confirm() {
   try {
     const { data } = await axios.post('/api/import/confirm', {
       account_id: config.value.account_id,
-      opposing_account_id: config.value.opposing_account_id,
+      expense_opposing_account_id: config.value.expense_opposing_account_id,
+      income_opposing_account_id: config.value.income_opposing_account_id,
       currency_id: config.value.currency_id,
       transactions: transactions.value,
     })
