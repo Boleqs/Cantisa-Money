@@ -153,16 +153,105 @@ def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, Ass
     return result
 
 
-def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, user_id, start_date, end_date, target_currency='EUR'):
+def _asset_price_by_day(a, commodities_by_id, FxRates, all_days, start_date, end_date, target_currency, valuations=None):
+    """Prix unitaire converti de l'actif `a`, jour par jour sur all_days. Trois cas :
+    1. Suivi live (Stock/ETF track_live_price=true) : cours historique réel via yfinance.
+    2. Manuel avec des points de valorisation saisis (AssetValuations) : fonction en escalier —
+       chaque jour prend la dernière valuation connue à cette date ; rien avant la première.
+    3. Manuel sans valorisation saisie : value_per_unit courant considéré constant (comportement
+       historique, préservé pour ne rien casser tant que l'utilisateur ne saisit rien)."""
+    price_series = {}
+    flat_price = None
+    valuation_by_day = {}
+    if a.track_live_price:
+        # Le cours historique yfinance est dans la devise NATIVE du ticker (ex: USD pour MSFT),
+        # pas dans commodity_id choisi par l'utilisateur pour l'actif — il ne faut pas les confondre.
+        live = fetch_live_price(a.symbol)
+        native_currency = live.get('currency') or target_currency
+        price_series = get_price_series(a.symbol, start_date, end_date)
+    else:
+        # Actif manuel : value_per_unit (comme les valuations manuelles) est déjà stocké tel quel
+        # dans commodity_id (pas de conversion à la saisie).
+        commodity = commodities_by_id.get(a.commodity_id)
+        native_currency = commodity.short_name if commodity else target_currency
+        flat_price = float(a.value_per_unit or 0)
+        if valuations:
+            for v in valuations:
+                valuation_by_day[v.valuation_date] = float(v.value_per_unit)
+
+    if native_currency != target_currency:
+        fx_series = get_fx_rate_series(native_currency, target_currency, FxRates, start_date, end_date)
+    else:
+        fx_series = {}
+
+    price_by_day = {}
+    last_price = flat_price if not valuation_by_day else None
+    last_fx = None
+    for d in all_days:
+        if a.track_live_price:
+            p = price_series.get(d)
+            if p is not None:
+                last_price = p
+        elif valuation_by_day:
+            v = valuation_by_day.get(d)
+            if v is not None:
+                last_price = v
+        if native_currency == target_currency:
+            rate = 1.0
+        else:
+            r = fx_series.get(d)
+            if r is not None:
+                last_fx = r
+            rate = last_fx
+        if last_price is not None and rate is not None:
+            price_by_day[d] = last_price * rate
+
+    return price_by_day
+
+
+def asset_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, asset, start_date, end_date, target_currency='EUR'):
+    """Comme portfolio_value_series mais pour un seul actif, avec le détail quantité/prix unitaire
+    par jour (pas juste la valeur totale) — utilisé par GET /api/assets/<id>/history."""
+    possessions = [p for p in AssetPossession.query.filter_by(asset_id=asset.id).all() if p.quantity]
+    all_days = _day_range(start_date, end_date)
+    if not possessions:
+        return []
+
+    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=asset.user_id).all()}
+    valuations = None
+    if not asset.track_live_price:
+        valuations = AssetValuations.query.filter_by(asset_id=asset.id).order_by(AssetValuations.valuation_date).all()
+
+    price_by_day = _asset_price_by_day(asset, commodities_by_id, FxRates, all_days, start_date, end_date, target_currency, valuations)
+
+    result = []
+    for d in all_days:
+        unit_value = price_by_day.get(d)
+        if unit_value is None:
+            continue
+        qty = sum(p.quantity for p in possessions
+                   if d >= (p.purchase_date.date() if p.purchase_date else p.created_at.date()))
+        if not qty:
+            continue
+        result.append({
+            'date': d.isoformat(),
+            'quantity': qty,
+            'unit_value': round(unit_value, 4),
+            'total_value': round(qty * unit_value, 2),
+        })
+    return result
+
+
+def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, user_id, start_date, end_date, target_currency='EUR'):
     """Reconstruit la valeur du portefeuille jour par jour. Actifs suivis en temps réel : cours
     historique réel (yfinance, une requête par actif — partagée par tous ses lots). Actifs manuels :
-    valeur actuelle considérée constante. Chaque lot (AssetPossession) démarre sa contribution à sa
-    propre date d'achat (ou sa date de création si non renseignée), pas à celle de l'actif."""
+    fonction en escalier sur AssetValuations si des points ont été saisis, sinon valeur actuelle
+    constante. Chaque lot (AssetPossession) démarre sa contribution à sa propre date d'achat (ou sa
+    date de création si non renseignée), pas à celle de l'actif."""
     assets = Assets.query.filter_by(user_id=user_id).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
     all_days = _day_range(start_date, end_date)
     result = {d: 0.0 for d in all_days}
-    fx_series_cache = {}
 
     for a in assets:
         possessions = AssetPossession.query.filter_by(asset_id=a.id).all()
@@ -170,43 +259,10 @@ def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, user_i
         if not possessions:
             continue
 
-        price_series = {}
-        flat_price = None
-        if a.track_live_price:
-            # Le cours historique yfinance est dans la devise NATIVE du ticker (ex: USD pour MSFT),
-            # pas dans commodity_id choisi par l'utilisateur pour l'actif — il ne faut pas les confondre.
-            live = fetch_live_price(a.symbol)
-            native_currency = live.get('currency') or target_currency
-            earliest = min(p.purchase_date.date() if p.purchase_date else p.created_at.date() for p in possessions)
-            fetch_from = max(earliest, start_date)
-            price_series = get_price_series(a.symbol, fetch_from, end_date)
-        else:
-            # Actif manuel : value_per_unit est déjà stocké tel quel dans commodity_id (pas de conversion).
-            commodity = commodities_by_id.get(a.commodity_id)
-            native_currency = commodity.short_name if commodity else target_currency
-            flat_price = float(a.value_per_unit or 0)
-
-        if native_currency != target_currency and native_currency not in fx_series_cache:
-            fx_series_cache[native_currency] = get_fx_rate_series(native_currency, target_currency, FxRates, start_date, end_date)
-
-        # Prix unitaire converti, précalculé une fois par jour pour cet actif (partagé par tous ses lots).
-        price_by_day = {}
-        last_price = flat_price
-        last_fx = None
-        for d in all_days:
-            if a.track_live_price:
-                p = price_series.get(d)
-                if p is not None:
-                    last_price = p
-            if native_currency == target_currency:
-                rate = 1.0
-            else:
-                r = fx_series_cache[native_currency].get(d)
-                if r is not None:
-                    last_fx = r
-                rate = last_fx
-            if last_price is not None and rate is not None:
-                price_by_day[d] = last_price * rate
+        valuations = None
+        if not a.track_live_price:
+            valuations = AssetValuations.query.filter_by(asset_id=a.id).order_by(AssetValuations.valuation_date).all()
+        price_by_day = _asset_price_by_day(a, commodities_by_id, FxRates, all_days, start_date, end_date, target_currency, valuations)
 
         for p in possessions:
             inception = p.purchase_date.date() if p.purchase_date else p.created_at.date()
@@ -221,7 +277,7 @@ def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, user_i
     return {d: round(v, 2) for d, v in result.items()}
 
 
-def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot):
+def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
     """Reconstruit l'historique quotidien du patrimoine (bancaire + portefeuille, en EUR) depuis la
     date d'achat la plus ancienne renseignée jusqu'à aujourd'hui, pour chaque utilisateur. Idempotent :
     ne recalcule jamais un jour déjà présent en base."""
@@ -245,7 +301,7 @@ def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, 
             continue
 
         bank_series = daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, today, 'EUR')
-        portfolio_series = portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, user_id, start_date, today, 'EUR')
+        portfolio_series = portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, user_id, start_date, today, 'EUR')
 
         for d in missing_days:
             bank_val = bank_series.get(d, 0.0)

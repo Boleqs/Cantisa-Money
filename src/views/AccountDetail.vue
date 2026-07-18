@@ -120,6 +120,7 @@
     :mode="modalMode"
     :transaction="selectedTx"
     @save="handleSave"
+    @ocr-applied="reload"
   />
 </template>
 

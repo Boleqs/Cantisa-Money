@@ -28,12 +28,13 @@
 
           <div class="field">
             <label>Devise *</label>
-            <select v-model="form.currency_id" required>
+            <select v-model="form.currency_id" required :disabled="!!selectedParentCurrency">
               <option value="" disabled>Sélectionner…</option>
               <option v-for="c in commodities" :key="c.id" :value="c.id">
                 {{ c.name }} ({{ c.short_name?.toUpperCase() }})
               </option>
             </select>
+            <span v-if="selectedParentCurrency" class="hint">Devise héritée du compte parent.</span>
           </div>
 
           <div class="field">
@@ -138,6 +139,21 @@ watch(
   }
 )
 
+// Un compte enfant doit avoir la même devise que son parent (sinon les totaux consolidés,
+// additionnés sans conversion, deviennent faux — cf. rt_accounts.py) : on la verrouille dès
+// qu'un parent est choisi, plutôt que de laisser l'utilisateur se heurter à l'erreur 400.
+const selectedParentCurrency = computed(() => {
+  const p = props.parentAccounts.find(a => String(a.id) === String(form.parent_id))
+  return p ? p.currency_id : null
+})
+watch(
+  () => form.parent_id,
+  (parentId) => {
+    const p = props.parentAccounts.find(a => String(a.id) === String(parentId))
+    if (p) form.currency_id = p.currency_id
+  }
+)
+
 const close = () => {
   emit('update:modelValue', false)
   emit('cancel')
@@ -213,6 +229,11 @@ const onSubmit = () => {
   color: #9ca3af;
 }
 
+.hint {
+  font-size: 11px;
+  color: #6b7280;
+}
+
 .field input,
 .field select {
   background: #020617;
@@ -227,6 +248,11 @@ const onSubmit = () => {
 .field select:focus {
   outline: none;
   border-color: #2563eb;
+}
+
+.field select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .toggles {

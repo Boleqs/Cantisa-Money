@@ -47,10 +47,9 @@
             <span class="setting-desc">Symbole affiché dans les montants.</span>
           </div>
           <select v-model="currency" class="select">
-            <option value="EUR">€ Euro</option>
-            <option value="USD">$ Dollar</option>
-            <option value="GBP">£ Livre</option>
-            <option value="CHF">CHF Franc suisse</option>
+            <option v-for="c in currencyOptions" :key="c.id" :value="c.short_name">
+              {{ c.short_name }} — {{ c.name }}
+            </option>
           </select>
         </div>
 
@@ -83,6 +82,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import axios from 'axios'
 import { collapsed, toggleSidebar } from '@/components/sidebar/state.js'
 import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
 
@@ -96,6 +96,24 @@ const collapseOnStart = ref(false)
 const currency        = ref('EUR')
 const dateFormat      = ref('fr-FR')
 const saved           = ref(false)
+const commodities     = ref([])
+
+// Options de devise dérivées des devises que l'utilisateur a lui-même créées (page Paramétrage >
+// Devises), pas une liste figée — cf. Parametres.vue pour le détail de ce choix.
+const currencyOptions = computed(() => {
+  const currencies = commodities.value.filter(c => c.type === 'Currency')
+  if (currencies.length) return currencies
+  return [{ id: currency.value, short_name: currency.value, name: currency.value }]
+})
+
+async function loadCommodities() {
+  try {
+    const res = await axios.get('/api/commodities')
+    commodities.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    console.error('Erreur chargement des devises', e)
+  }
+}
 
 // ── Computed preview ──────────────────────────────────────────────────────────
 const dateExample = computed(() => {
@@ -129,7 +147,10 @@ function resetAll() {
   save()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadCommodities()
+})
 </script>
 
 <style scoped>

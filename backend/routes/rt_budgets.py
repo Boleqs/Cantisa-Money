@@ -1,14 +1,78 @@
 from datetime import datetime
 from marshmallow import Schema, fields, ValidationError
+from sqlalchemy import text
 
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.market_price import convert_amount
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 BUDGETS_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
+
+# Même prédicat "quels splits comptent" que le trigger Postgres trg_update_budget_spent (voir
+# migrations/versions/7f3b1a9d6c2e_budget_spent_currency_conversion.py) — celui-ci ne se déclenche
+# que sur les splits, jamais quand le budget lui-même (dates, comptes/catégories/tags liés) est créé
+# ou modifié. Appelé explicitement après création/mise à jour pour refléter tout de suite les
+# transactions déjà existantes.
+#
+# Implémenté en Python (pas en SQL comme le trigger) pour pouvoir convertir chaque split dans la
+# devise affichée de l'utilisateur (user_settings.currency) via convert_amount, qui va chercher un
+# taux live si besoin (contrairement au trigger, qui ne peut lire que le cache fx_rates) — ce qui
+# préremplit ce cache et réduit d'autant les cas amount_spent_incomplete détectés ensuite par le
+# trigger lors de transactions futures sur la même paire de devises.
+def _recompute_budget_spent(DB, budget_id, Budgets, FxRates, Commodities, UserSettings):
+    budget = Budgets.query.filter_by(id=budget_id).first()
+    settings = UserSettings.query.filter_by(user_id=budget.user_id).first()
+    target_currency = settings.currency if settings else 'EUR'
+    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=budget.user_id).all()}
+
+    rows = DB.session.execute(text("""
+        SELECT s.quantity, a.currency_id
+        FROM splits s
+        JOIN transactions t ON t.id = s.tx_id
+        JOIN accounts a ON a.id = s.account_id
+        WHERE
+            t.post_date BETWEEN :start_date AND :end_date
+            AND (
+                EXISTS (
+                    SELECT 1 FROM budget_accounts ba
+                    WHERE ba.budget_id = :budget_id AND ba.account_id = s.account_id
+                )
+                OR (
+                    a.account_type NOT IN ('Expense', 'Income')
+                    AND t.category_id IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1 FROM budget_categories bc
+                        WHERE bc.budget_id = :budget_id AND bc.category_id = t.category_id
+                    )
+                )
+                OR (
+                    a.account_type NOT IN ('Expense', 'Income')
+                    AND EXISTS (
+                        SELECT 1 FROM tags_on_split tos
+                        JOIN budget_tags bt ON bt.tag_id = tos.tag_id
+                        WHERE tos.split_id = s.id AND bt.budget_id = :budget_id
+                    )
+                )
+            )
+    """), {'budget_id': str(budget_id), 'start_date': budget.start_date, 'end_date': budget.end_date}).fetchall()
+
+    total = 0.0
+    incomplete = False
+    for quantity, currency_id in rows:
+        commodity = commodities_by_id.get(currency_id)
+        code = commodity.short_name if commodity else target_currency
+        converted = convert_amount(-float(quantity), code, target_currency, FxRates)
+        if converted is None:
+            incomplete = True
+            continue
+        total += converted
+
+    budget.amount_spent = round(total, 2)
+    budget.amount_spent_incomplete = incomplete
 
 
 class AddBudgetSchema(Schema):
@@ -62,6 +126,7 @@ def _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags):
         'name': budget.name,
         'amount_allocated': float(budget.amount_allocated),
         'amount_spent': float(budget.amount_spent),
+        'amount_spent_incomplete': bool(budget.amount_spent_incomplete),
         'start_date': budget.start_date.isoformat() if budget.start_date else None,
         'end_date': budget.end_date.isoformat() if budget.end_date else None,
         'created_at': budget.created_at.isoformat() if budget.created_at else None,
@@ -73,7 +138,8 @@ def _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags):
 
 
 class BudgetsRoutes:
-    def __init__(self, app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users):
+    def __init__(self, app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users,
+                 FxRates, Commodities, UserSettings):
         ROUTE_PATH = f"{ROOT_PATH}/budgets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -128,6 +194,8 @@ class BudgetsRoutes:
                     DB.session.add(BudgetCategories(budget_id=budget.id, category_id=category_id))
                 for tag_id in data.get('tag_ids', []):
                     DB.session.add(BudgetTags(budget_id=budget.id, tag_id=tag_id))
+                DB.session.flush()
+                _recompute_budget_spent(DB, budget.id, Budgets, FxRates, Commodities, UserSettings)
                 DB.session.commit()
                 return json_response(
                     _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags),
@@ -167,6 +235,8 @@ class BudgetsRoutes:
                     DB.session.add(BudgetCategories(budget_id=budget.id, category_id=category_id))
                 for tag_id in data.get('tag_ids', []):
                     DB.session.add(BudgetTags(budget_id=budget.id, tag_id=tag_id))
+                DB.session.flush()
+                _recompute_budget_spent(DB, budget.id, Budgets, FxRates, Commodities, UserSettings)
                 DB.session.commit()
                 return json_response(
                     _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags),

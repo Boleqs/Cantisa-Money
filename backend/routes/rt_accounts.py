@@ -74,6 +74,19 @@ class AccountsRoutes:
                         Accounts.user_id == get_jwt_identity(),
                         Accounts.name == data.get("name")).first()):
                     return json_response("Account already exists", HttpCode.NOT_FOUND)
+
+                parent_id = data.get('parent_id')
+                if parent_id:
+                    parent = Accounts.query.filter(
+                        Accounts.user_id == get_jwt_identity(),
+                        Accounts.id == parent_id).first()
+                    if not parent:
+                        return json_response("Compte parent introuvable", HttpCode.BAD_REQUEST)
+                    if str(parent.currency_id) != str(data.get('currency_id')):
+                        return json_response(
+                            "Le compte enfant doit avoir la même devise que son compte parent",
+                            HttpCode.BAD_REQUEST)
+
                 account = Accounts(
                     user_id=get_jwt_identity(),
                     name=data.get("name"),
@@ -118,6 +131,27 @@ class AccountsRoutes:
                             HttpCode.BAD_REQUEST)
                     ancestor = Accounts.query.filter(Accounts.id == ancestor_id).first()
                     ancestor_id = ancestor.parent_id if ancestor else None
+
+            # Devise verrouillée sur toute la chaîne parent/enfant (sinon les totaux consolidés,
+            # qui additionnent brut sans conversion, deviennent faux) : on vérifie le parent effectif
+            # (celui du payload, ou l'actuel si non fourni — la devise peut changer sans reparentage)
+            # et les enfants directs existants.
+            effective_parent_id = data.get('parent_id', account.parent_id)
+            new_currency_id = data.get('currency_id')
+            if effective_parent_id:
+                parent = Accounts.query.filter(Accounts.id == effective_parent_id).first()
+                if parent and str(parent.currency_id) != str(new_currency_id):
+                    return json_response(
+                        "Le compte enfant doit avoir la même devise que son compte parent",
+                        HttpCode.BAD_REQUEST)
+            mismatched_child = Accounts.query.filter(
+                Accounts.parent_id == account.id,
+                Accounts.currency_id != new_currency_id
+            ).first()
+            if mismatched_child:
+                return json_response(
+                    "Impossible de changer la devise : au moins un compte enfant a une devise différente",
+                    HttpCode.BAD_REQUEST)
 
             # Champs requis par le schéma : toujours présents. Les autres sont optionnels
             # (le client peut les omettre) -> on garde alors la valeur actuelle du compte

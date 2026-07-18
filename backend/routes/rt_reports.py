@@ -6,6 +6,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
+from backend.utils.market_price import get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
 from backend.utils.recurrence import next_occurrence, parse_weekdays
 
@@ -16,8 +17,26 @@ PLANIFICATION_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
 
 class ReportsRoutes:
     def __init__(self, app, DB, Accounts, Transactions, Splits, Categories, Users,
-                 Budgets, Subscriptions, Tags, TagsOnSplits):
+                 Budgets, Subscriptions, Tags, TagsOnSplits, Commodities, FxRates, UserSettings):
         ROUTE_PATH = f"{ROOT_PATH}/reports"
+
+        # ── Devise affichée + helper de conversion, partagés par tous les rapports ────────
+        # Taux du jour appliqué uniformément (pas de conversion historique par transaction) —
+        # simplification assumée pour ces vues d'agrégation, cf. wealth.py pour les courbes qui
+        # ont elles besoin de taux historiques jour par jour.
+        def _target_currency(user_id):
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            return settings.currency if settings else 'EUR'
+
+        _rate_cache = {}
+
+        def _rate_to(code, target_currency):
+            if code == target_currency:
+                return 1.0
+            key = (code, target_currency)
+            if key not in _rate_cache:
+                _rate_cache[key] = get_fx_rate(code, target_currency, FxRates) or 0.0
+            return _rate_cache[key]
 
         @app.route(f"{ROUTE_PATH}/monthly", methods=['GET'])
         @jwt_required()
@@ -25,6 +44,7 @@ class ReportsRoutes:
         def get_monthly_report():
             user_id = get_jwt_identity()
             today = date.today()
+            target_currency = _target_currency(user_id)
 
             months = []
             for i in range(11, -1, -1):
@@ -60,27 +80,33 @@ class ReportsRoutes:
                         ~Splits.account_id.in_(wealth_ids)
                     ).distinct()
 
-                    income = float(DB.session.query(
-                        func.coalesce(func.sum(Splits.quantity), 0)
-                    ).join(Transactions, Splits.tx_id == Transactions.id).filter(
+                    income_rows = DB.session.query(
+                        Commodities.short_name, func.coalesce(func.sum(Splits.quantity), 0)
+                    ).join(Transactions, Splits.tx_id == Transactions.id
+                    ).join(Accounts, Splits.account_id == Accounts.id
+                    ).join(Commodities, Accounts.currency_id == Commodities.id).filter(
                         Transactions.user_id == user_id,
                         Splits.account_id.in_(wealth_ids),
                         Transactions.post_date >= month_start,
                         Transactions.post_date <= month_end,
                         Splits.quantity > 0,
                         Transactions.id.in_(non_transfer_tx)
-                    ).scalar() or 0)
+                    ).group_by(Commodities.short_name).all()
+                    income = sum(float(total) * _rate_to(code, target_currency) for code, total in income_rows)
 
-                    expenses = abs(float(DB.session.query(
-                        func.coalesce(func.sum(Splits.quantity), 0)
-                    ).join(Transactions, Splits.tx_id == Transactions.id).filter(
+                    expenses_rows = DB.session.query(
+                        Commodities.short_name, func.coalesce(func.sum(Splits.quantity), 0)
+                    ).join(Transactions, Splits.tx_id == Transactions.id
+                    ).join(Accounts, Splits.account_id == Accounts.id
+                    ).join(Commodities, Accounts.currency_id == Commodities.id).filter(
                         Transactions.user_id == user_id,
                         Splits.account_id.in_(wealth_ids),
                         Transactions.post_date >= month_start,
                         Transactions.post_date <= month_end,
                         Splits.quantity < 0,
                         Transactions.id.in_(non_transfer_tx)
-                    ).scalar() or 0))
+                    ).group_by(Commodities.short_name).all()
+                    expenses = abs(sum(float(total) * _rate_to(code, target_currency) for code, total in expenses_rows))
 
                 net = round(income - expenses, 2)
                 result.append({
@@ -101,6 +127,7 @@ class ReportsRoutes:
             user_id = get_jwt_identity()
             today = date.today()
             month_start = today.replace(day=1)
+            target_currency = _target_currency(user_id)
 
             start_str = request.args.get('start_date')
             end_str = request.args.get('end_date')
@@ -113,10 +140,12 @@ class ReportsRoutes:
             # Uniquement les splits sur comptes de valeur → évite les contreparties Income/Expense
             cat_rows = DB.session.query(
                 Categories.name,
+                Commodities.short_name,
                 func.sum(Splits.quantity).label('total')
             ).join(Transactions, Splits.tx_id == Transactions.id
             ).join(Categories, Transactions.category_id == Categories.id
             ).join(Accounts, Splits.account_id == Accounts.id
+            ).join(Commodities, Accounts.currency_id == Commodities.id
             ).filter(
                 Transactions.user_id == user_id,
                 Transactions.post_date >= start,
@@ -125,12 +154,17 @@ class ReportsRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
-            ).group_by(Categories.name).order_by(func.sum(Splits.quantity)).all()
+            ).group_by(Categories.name, Commodities.short_name).all()
 
-            uncategorized = float(DB.session.query(
-                func.coalesce(func.sum(Splits.quantity), 0)
+            cat_totals = {}
+            for name, code, total in cat_rows:
+                cat_totals[name] = cat_totals.get(name, 0.0) + float(total) * _rate_to(code, target_currency)
+
+            uncategorized_rows = DB.session.query(
+                Commodities.short_name, func.coalesce(func.sum(Splits.quantity), 0)
             ).join(Transactions, Splits.tx_id == Transactions.id
             ).join(Accounts, Splits.account_id == Accounts.id
+            ).join(Commodities, Accounts.currency_id == Commodities.id
             ).filter(
                 Transactions.user_id == user_id,
                 Transactions.post_date >= start,
@@ -140,12 +174,14 @@ class ReportsRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
-            ).scalar() or 0)
+            ).group_by(Commodities.short_name).all()
+            uncategorized = sum(float(total) * _rate_to(code, target_currency) for code, total in uncategorized_rows)
 
             result = [
-                {'name': r.name, 'total': round(abs(float(r.total)), 2)}
-                for r in cat_rows
+                {'name': name, 'total': round(abs(total), 2)}
+                for name, total in cat_totals.items()
             ]
+            result.sort(key=lambda r: -r['total'])
             if uncategorized:
                 result.append({'name': 'Sans catégorie', 'total': round(abs(uncategorized), 2)})
 
@@ -237,6 +273,7 @@ class ReportsRoutes:
             user_id = get_jwt_identity()
             today = date.today()
             month_start = today.replace(day=1)
+            target_currency = _target_currency(user_id)
 
             start_str = request.args.get('start_date')
             end_str = request.args.get('end_date')
@@ -251,11 +288,13 @@ class ReportsRoutes:
             # chaque transaction n'a qu'une seule catégorie.
             tag_rows = DB.session.query(
                 Tags.name,
+                Commodities.short_name,
                 func.sum(Splits.quantity).label('total')
             ).join(TagsOnSplits, TagsOnSplits.tag_id == Tags.id
             ).join(Splits, Splits.id == TagsOnSplits.split_id
             ).join(Transactions, Splits.tx_id == Transactions.id
             ).join(Accounts, Splits.account_id == Accounts.id
+            ).join(Commodities, Accounts.currency_id == Commodities.id
             ).filter(
                 Tags.user_id == user_id,
                 Transactions.user_id == user_id,
@@ -265,9 +304,14 @@ class ReportsRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
-            ).group_by(Tags.name).order_by(func.sum(Splits.quantity)).all()
+            ).group_by(Tags.name, Commodities.short_name).all()
 
-            result = [{'name': r.name, 'total': round(abs(float(r.total)), 2)} for r in tag_rows]
+            tag_totals = {}
+            for name, code, total in tag_rows:
+                tag_totals[name] = tag_totals.get(name, 0.0) + float(total) * _rate_to(code, target_currency)
+
+            result = [{'name': name, 'total': round(abs(total), 2)} for name, total in tag_totals.items()]
+            result.sort(key=lambda r: -r['total'])
 
             return json_response({
                 'start_date': str(start),
@@ -305,6 +349,7 @@ class ReportsRoutes:
                     'name': b.name,
                     'amount_allocated': round(allocated, 2),
                     'amount_spent': round(spent, 2),
+                    'amount_spent_incomplete': bool(b.amount_spent_incomplete),
                     'pct': pct,
                     'start_date': start.isoformat(),
                     'end_date': end.isoformat(),
@@ -326,9 +371,20 @@ class ReportsRoutes:
         @restricted_by_permission(Users, PLANIFICATION_PERM)
         def get_subscriptions_report():
             user_id = get_jwt_identity()
+            target_currency = _target_currency(user_id)
             subs = Subscriptions.query.filter(Subscriptions.user_id == user_id).order_by(Subscriptions.name).all()
             cat_map = {c.id: c.name for c in Categories.query.filter_by(user_id=user_id).all()}
+            # Un abonnement n'a pas de devise propre : le montant est implicitement dans celle du
+            # compte débité (from_account_id) — nécessaire pour convertir les agrégats.
+            accounts_by_id = {a.id: a for a in Accounts.query.filter_by(user_id=user_id).all()}
             today = date.today()
+
+            def sub_currency(s):
+                a = accounts_by_id.get(s.from_account_id)
+                if not a:
+                    return target_currency
+                c = Commodities.query.filter_by(id=a.currency_id).first()
+                return c.short_name if c else target_currency
 
             result = []
             by_category = {}
@@ -343,7 +399,8 @@ class ReportsRoutes:
                     monthly_equiv = round(amount * nb_days * (30.44 / 7), 2)
                 else:  # monthly
                     monthly_equiv = round(amount, 2)
-                total_monthly += monthly_equiv
+                monthly_equiv_converted = monthly_equiv * _rate_to(sub_currency(s), target_currency)
+                total_monthly += monthly_equiv_converted
 
                 ref = s.last_executed_at or s.created_at
                 ref_date = ref.date() if hasattr(ref, 'date') else ref
@@ -352,7 +409,7 @@ class ReportsRoutes:
                     next_due = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, next_due)
 
                 cat_name = cat_map.get(s.category_id, 'Sans catégorie')
-                by_category[cat_name] = by_category.get(cat_name, 0) + monthly_equiv
+                by_category[cat_name] = by_category.get(cat_name, 0) + monthly_equiv_converted
 
                 result.append({
                     'id': str(s.id),

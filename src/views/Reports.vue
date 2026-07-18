@@ -465,7 +465,13 @@
               <tr v-for="b in budgetsData.budgets" :key="b.id">
                 <td>{{ b.name }}</td>
                 <td class="muted">{{ fmtDate(b.start_date) }} → {{ fmtDate(b.end_date) }}</td>
-                <td><span :class="['status-chip', b.status]">{{ STATUS_LABELS[b.status] }}</span></td>
+                <td>
+                  <span :class="['status-chip', b.status]">{{ STATUS_LABELS[b.status] }}</span>
+                  <span
+                    v-if="b.amount_spent_incomplete"
+                    title="Conversion de devise incomplète — total possiblement sous-estimé"
+                  >⚠️</span>
+                </td>
                 <td class="num">{{ fmtAmount(b.amount_allocated) }}</td>
                 <td class="num">{{ fmtAmount(b.amount_spent) }}</td>
                 <td>

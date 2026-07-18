@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 
 from marshmallow import Schema, fields, ValidationError, validate
 from flask import request
@@ -63,6 +63,33 @@ class DeletePossessionSchema(Schema):
     possession_id = fields.UUID(required=True)
 
 
+class GetAssetHistorySchema(Schema):
+    asset_id = fields.UUID(required=True)
+    start_date = fields.Date(load_default=None)
+    end_date = fields.Date(load_default=None)
+    currency = fields.String(load_default='EUR')
+
+
+class GetValuationsSchema(Schema):
+    asset_id = fields.UUID(required=True)
+
+
+class AddValuationSchema(Schema):
+    asset_id = fields.UUID(required=True)
+    valuation_date = fields.Date(required=True)
+    value_per_unit = fields.Decimal(required=True, as_string=False)
+
+
+class UpdateValuationSchema(Schema):
+    valuation_id = fields.UUID(required=True)
+    valuation_date = fields.Date(required=True)
+    value_per_unit = fields.Decimal(required=True, as_string=False)
+
+
+class DeleteValuationSchema(Schema):
+    valuation_id = fields.UUID(required=True)
+
+
 def _asset_to_dict(a):
     return {
         'id': str(a.id),
@@ -91,6 +118,26 @@ def _possession_to_dict(p):
         'purchase_date': p.purchase_date.isoformat() if p.purchase_date else None,
         'created_at': p.created_at.isoformat() if p.created_at else None,
     }
+
+
+def _valuation_to_dict(v):
+    return {
+        'id': str(v.id),
+        'asset_id': str(v.asset_id),
+        'valuation_date': v.valuation_date.isoformat(),
+        'value_per_unit': float(v.value_per_unit),
+        'created_at': v.created_at.isoformat() if v.created_at else None,
+    }
+
+
+def _sync_asset_value_per_unit(AssetValuations, asset):
+    """Après ajout/édition/suppression d'une valorisation manuelle : Assets.value_per_unit doit
+    refléter la valorisation la plus récente, puisque c'est ce champ qui sert de "valeur actuelle"
+    partout ailleurs dans l'app (dashboard, breakdown du portefeuille, snapshot du jour). Si plus
+    aucune valorisation n'existe, on laisse value_per_unit tel quel (comportement historique)."""
+    latest = AssetValuations.query.filter_by(asset_id=asset.id).order_by(AssetValuations.valuation_date.desc()).first()
+    if latest:
+        asset.value_per_unit = latest.value_per_unit
 
 
 def _resolve_current_value(symbol, target_currency, FxRates):
@@ -150,10 +197,11 @@ def _resolve_split_amounts(Accounts, Commodities, dest_account, source_account, 
 
 
 def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits,
-                           WealthSnapshot, user_id, from_date):
+                           WealthSnapshot, AssetValuations, user_id, from_date):
     """Supprime les snapshots de patrimoine existants à partir de from_date pour cet utilisateur puis
-    les reconstruit immédiatement — appelé après ajout/modification/suppression d'une position dont la
-    date d'achat affecte l'historique, pour ne pas attendre le prochain cycle planifié (24h)."""
+    les reconstruit immédiatement — appelé après ajout/modification/suppression d'une position (ou
+    d'une valorisation manuelle) dont la date affecte l'historique, pour ne pas attendre le prochain
+    cycle planifié (24h)."""
     from backend.utils.wealth import backfill_wealth_history
     from backend.scheduler import snapshot_wealth
     WealthSnapshot.query.filter(
@@ -161,12 +209,12 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commoditie
         WealthSnapshot.snapshot_date >= from_date,
     ).delete()
     DB.session.commit()
-    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
+    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
     snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
 
 
 class AssetsRoutes:
-    def __init__(self, app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users):
+    def __init__(self, app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations):
         ROUTE_PATH = f"{ROOT_PATH}/assets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -313,6 +361,147 @@ class AssetsRoutes:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)
 
+        # ── Historique & valorisations manuelles ────────────────────────────
+
+        @app.route(f"{ROUTE_PATH}/history", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def get_asset_history():
+            try:
+                data = GetAssetHistorySchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+
+            end_date = data['end_date'] or date.today()
+            start_date = data['start_date']
+            if not start_date:
+                possessions = AssetPossession.query.filter_by(asset_id=a.id).all()
+                candidates = [p.purchase_date.date() if p.purchase_date else p.created_at.date() for p in possessions]
+                candidates += [v.valuation_date for v in AssetValuations.query.filter_by(asset_id=a.id).all()]
+                start_date = min(candidates) if candidates else end_date
+
+            from backend.utils.wealth import asset_value_series
+            history = asset_value_series(
+                Assets, AssetPossession, Commodities, FxRates, AssetValuations,
+                a, start_date, end_date, data['currency'].upper())
+            return json_response(history, HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/valuations", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def get_valuations():
+            try:
+                data = GetValuationsSchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+            valuations = AssetValuations.query.filter_by(asset_id=a.id).order_by(AssetValuations.valuation_date).all()
+            return json_response([_valuation_to_dict(v) for v in valuations], HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/valuations", methods=['POST'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def add_valuation():
+            try:
+                data = AddValuationSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+            if a.track_live_price:
+                return json_response("Cet actif suit un cours live, pas de saisie manuelle possible", HttpCode.BAD_REQUEST)
+            if AssetValuations.query.filter_by(asset_id=a.id, valuation_date=data['valuation_date']).first():
+                return json_response('Une valorisation existe déjà à cette date', HttpCode.CONFLICT)
+            try:
+                v = AssetValuations(
+                    user_id=user_id,
+                    asset_id=a.id,
+                    valuation_date=data['valuation_date'],
+                    value_per_unit=data['value_per_unit'],
+                )
+                DB.session.add(v)
+                DB.session.flush()
+                _sync_asset_value_per_unit(AssetValuations, a)
+                DB.session.commit()
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                                       Splits, WealthSnapshot, AssetValuations, user_id, data['valuation_date'])
+                return json_response(_valuation_to_dict(v), HttpCode.CREATED)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/valuations", methods=['PATCH'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def update_valuation():
+            try:
+                data = UpdateValuationSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            v = AssetValuations.query.filter(
+                AssetValuations.id == data['valuation_id'], AssetValuations.user_id == user_id).first()
+            if not v:
+                return json_response('Valuation not found', HttpCode.NOT_FOUND)
+            a = Assets.query.filter_by(id=v.asset_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+            if data['valuation_date'] != v.valuation_date and AssetValuations.query.filter_by(
+                    asset_id=v.asset_id, valuation_date=data['valuation_date']).first():
+                return json_response('Une valorisation existe déjà à cette date', HttpCode.CONFLICT)
+
+            old_date = v.valuation_date
+            try:
+                v.valuation_date = data['valuation_date']
+                v.value_per_unit = data['value_per_unit']
+                DB.session.flush()
+                _sync_asset_value_per_unit(AssetValuations, a)
+                DB.session.commit()
+                from_date = min(old_date, data['valuation_date'])
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                                       Splits, WealthSnapshot, AssetValuations, user_id, from_date)
+                return json_response(_valuation_to_dict(v), HttpCode.OK)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/valuations", methods=['DELETE'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def delete_valuation():
+            try:
+                data = DeleteValuationSchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            v = AssetValuations.query.filter(
+                AssetValuations.id == data['valuation_id'], AssetValuations.user_id == user_id).first()
+            if not v:
+                return json_response('Valuation not found', HttpCode.NOT_FOUND)
+            a = Assets.query.filter_by(id=v.asset_id).first()
+            valuation_date = v.valuation_date
+            try:
+                DB.session.delete(v)
+                DB.session.flush()
+                if a:
+                    _sync_asset_value_per_unit(AssetValuations, a)
+                DB.session.commit()
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                                       Splits, WealthSnapshot, AssetValuations, user_id, valuation_date)
+                return json_response('Valuation deleted', HttpCode.OK)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
         # ── Possessions ──────────────────────────────────────────────────────
 
         @app.route(f"{ROUTE_PATH}/possessions", methods=['POST'])
@@ -404,7 +593,7 @@ class AssetsRoutes:
                 DB.session.add(p)
                 DB.session.commit()
                 _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits,
-                                       WealthSnapshot, user_id, data['purchase_date'])
+                                       WealthSnapshot, AssetValuations, user_id, data['purchase_date'])
                 return json_response(_possession_to_dict(p), HttpCode.CREATED)
             except Exception as e:
                 DB.session.rollback()
@@ -474,7 +663,7 @@ class AssetsRoutes:
                 if old_purchase_date != data['purchase_date']:
                     from_date = min(old_purchase_date, data['purchase_date']) if old_purchase_date else data['purchase_date']
                     _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
-                                           Splits, WealthSnapshot, user_id, from_date)
+                                           Splits, WealthSnapshot, AssetValuations, user_id, from_date)
                 return json_response(_possession_to_dict(p), HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()
@@ -506,7 +695,7 @@ class AssetsRoutes:
                 DB.session.commit()
                 if purchase_date:
                     _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
-                                           Splits, WealthSnapshot, user_id, purchase_date)
+                                           Splits, WealthSnapshot, AssetValuations, user_id, purchase_date)
                 return json_response('Possession deleted', HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()

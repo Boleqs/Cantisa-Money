@@ -25,6 +25,9 @@ class ConfirmDocumentSchema(Schema):
     description = fields.String(load_default=None)
     post_date = fields.String(required=True)
     lines = fields.List(fields.Dict(), required=True)
+    # Si fourni : applique l'OCR à cette transaction existante (remplace ses splits) au lieu
+    # d'en créer une nouvelle — utilisé par le bouton "Scanner (OCR)" de TransactionModal.vue.
+    tx_id = fields.UUID(load_default=None)
 
 
 class DocumentsRoutes:
@@ -99,6 +102,14 @@ class DocumentsRoutes:
             if not account:
                 return json_response('Compte payeur introuvable', HttpCode.NOT_FOUND)
 
+            existing_tx = None
+            if data.get('tx_id'):
+                existing_tx = Transactions.query.filter(
+                    Transactions.id == data['tx_id'], Transactions.user_id == user_id
+                ).first()
+                if not existing_tx:
+                    return json_response('Transaction introuvable', HttpCode.NOT_FOUND)
+
             lines = data['lines']
             if not lines:
                 return json_response('Aucune ligne à enregistrer', HttpCode.BAD_REQUEST)
@@ -107,25 +118,50 @@ class DocumentsRoutes:
                 total = sum(float(line['amount']) for line in lines)
                 post_date = datetime.strptime(data['post_date'], '%Y-%m-%d')
 
-                tx = Transactions(
-                    user_id=user_id,
-                    currency_id=account.currency_id,
-                    post_date=post_date,
-                    effective_date=post_date,
-                    description=data.get('description') or doc.original_filename,
-                    category_id=data.get('category_id'),
-                    is_cleared=False,
-                )
-                DB.session.add(tx)
-                DB.session.flush()
+                if existing_tx:
+                    # Applique l'OCR à une transaction déjà existante : on la met à jour et on
+                    # remplace entièrement ses splits — même logique que update_transaction dans
+                    # rt_transactions.py (les splits sont toujours recréés, pas de colonne stable
+                    # permettant de les mettre à jour en place). is_reconciled est capturé par
+                    # compte avant suppression pour ne pas dé-pointer un split déjà rapproché.
+                    tx = existing_tx
+                    tx.currency_id = account.currency_id
+                    tx.post_date = post_date
+                    tx.effective_date = post_date
+                    tx.description = data.get('description') or doc.original_filename
+                    tx.category_id = data.get('category_id')
 
-                DB.session.add(Splits(tx_id=tx.id, account_id=account.id, quantity=-total))
+                    reconciled_accounts = {
+                        str(s.account_id) for s in Splits.query.filter(
+                            Splits.tx_id == tx.id, Splits.is_reconciled == True).all()
+                    }
+                    Splits.query.filter(Splits.tx_id == tx.id).delete()
+                    DB.session.flush()
+                else:
+                    tx = Transactions(
+                        user_id=user_id,
+                        currency_id=account.currency_id,
+                        post_date=post_date,
+                        effective_date=post_date,
+                        description=data.get('description') or doc.original_filename,
+                        category_id=data.get('category_id'),
+                        is_cleared=False,
+                    )
+                    DB.session.add(tx)
+                    DB.session.flush()
+                    reconciled_accounts = set()
+
+                DB.session.add(Splits(
+                    tx_id=tx.id, account_id=account.id, quantity=-total,
+                    is_reconciled=str(account.id) in reconciled_accounts,
+                ))
                 for line in lines:
                     split = Splits(
                         tx_id=tx.id,
                         account_id=data['expense_account_id'],
                         quantity=float(line['amount']),
                         description=line.get('label') or None,
+                        is_reconciled=str(data['expense_account_id']) in reconciled_accounts,
                     )
                     DB.session.add(split)
                     DB.session.flush()
@@ -136,7 +172,9 @@ class DocumentsRoutes:
                 doc.status = 'confirmed'
 
                 DB.session.commit()
-                return json_response(_tx_to_dict(tx, Splits, TagsOnSplits), HttpCode.CREATED)
+                return json_response(
+                    _tx_to_dict(tx, Splits, TagsOnSplits),
+                    HttpCode.OK if existing_tx else HttpCode.CREATED)
             except Exception as error:
                 DB.session.rollback()
                 return json_response(str(error), HttpCode.SERVER_ERROR)

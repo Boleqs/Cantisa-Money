@@ -49,10 +49,9 @@
                 <span class="setting-desc">Symbole affiché dans les montants.</span>
               </div>
               <select v-model="currency" class="select" @change="dirty = true">
-                <option value="EUR">€ Euro</option>
-                <option value="USD">$ Dollar</option>
-                <option value="GBP">£ Livre</option>
-                <option value="CHF">CHF Franc suisse</option>
+                <option v-for="c in currencyOptions" :key="c.id" :value="c.short_name">
+                  {{ c.short_name }} — {{ c.name }}
+                </option>
               </select>
             </div>
             <div class="setting-row">
@@ -340,6 +339,17 @@ const commodityEditTarget = ref(null)
 const commodityModalError = ref('')
 const commodityForm = ref({ name: '', short_name: '', type: 'Currency', fraction: 2, description: '', track_live_rate: false })
 const refreshingRateIds = ref(new Set())
+
+// Options de devise dérivées des devises que l'utilisateur a lui-même créées (onglet "Devises"),
+// pas une liste figée — sinon une devise ajoutée ici (ex: JPY) ne serait jamais sélectionnable
+// comme devise affichée, et inversement des devises jamais utilisées y apparaîtraient.
+const currencyOptions = computed(() => {
+  const currencies = commodities.value.filter(c => c.type === 'Currency')
+  if (currencies.length) return currencies
+  // Repli le temps du chargement (ou si l'utilisateur n'a encore aucune devise) : au moins la
+  // valeur actuellement enregistrée, pour ne pas afficher un select vide.
+  return [{ id: currency.value, short_name: currency.value, name: currency.value }]
+})
 
 const dateExample = computed(() => {
   const d = new Date()

@@ -1,7 +1,7 @@
 import uuid
 from .base import Base
 from datetime import datetime, timedelta
-from sqlalchemy import Column, String, Integer, DateTime, func, ForeignKeyConstraint, UniqueConstraint, \
+from sqlalchemy import Column, String, Integer, DateTime, Boolean, func, ForeignKeyConstraint, UniqueConstraint, \
     PrimaryKeyConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from dataclasses import dataclass
@@ -20,6 +20,7 @@ class Budgets(Base):
     name:str = Column(String(100), nullable=False, default='Budget')
     amount_allocated:int = Column(Numeric, nullable=False)
     amount_spent:int = Column(Numeric, default=0, nullable=False)
+    amount_spent_incomplete:bool = Column(Boolean, default=False, nullable=False)
     start_date:datetime = Column(DateTime, default=datetime.now(), nullable=False)
     end_date:datetime = Column(DateTime, default=datetime.now() + timedelta(days=365), nullable=False)
     created_at:datetime = Column(DateTime, default=datetime.now())

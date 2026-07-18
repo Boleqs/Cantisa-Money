@@ -2,6 +2,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import sys
+# Certains modules (routes/*, utils/wealth.py, database/models/users.py...) importent via
+# `from backend.xxx import yyy`, ce qui suppose la racine du repo sur sys.path (PyCharm l'ajoute
+# automatiquement via sa config de run, pas un `python app.py` lancé en terminal nu depuis backend/).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager
 from flask_sqlalchemy import SQLAlchemy
@@ -38,13 +43,13 @@ CommoditiesRoutes(app, DB, Users, Commodities, FxRates, UserSettings, Accounts, 
 AuthRoutes(app, DB, Users, limiter)
 AccountsRoutes(app, DB, Users, Accounts)
 TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts, Categories, Commodities, FxRates)
-BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users)
+BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users, FxRates, Commodities, UserSettings)
 CategoriesRoutes(app, DB, Categories, Users)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)
 SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts)
-DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users)
-AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users)
-ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits)
+DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings)
+AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations)
+ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users, Categories)
 DocumentsRoutes(app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users)
@@ -53,7 +58,7 @@ ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
-SettingsRoutes(app, DB, UserSettings, Users)
+SettingsRoutes(app, DB, UserSettings, Users, Commodities)
 
 
 @app.errorhandler(HTTPException)
@@ -368,11 +373,11 @@ if IS_MAIN_PROCESS:
         seed_market_indices()
         # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
         # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
-        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
+        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
         snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
 
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments)
+                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations)
 
 uuid.uuid4()
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 from .base import Base
 from .accounts import Accounts
 from .asset_possession import AssetPossession
+from .asset_valuations import AssetValuations
 from .assets import Assets
 from .budget_accounts import BudgetAccounts
 from .budget_categories import BudgetCategories

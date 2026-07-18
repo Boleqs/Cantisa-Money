@@ -28,6 +28,11 @@
           <div class="period">
             <span class="budget-name">{{ b.name }}</span>
             <span :class="['status-badge', statusClass(b)]">{{ statusLabel(b) }}</span>
+            <span
+              v-if="b.amount_spent_incomplete"
+              class="status-badge warn"
+              title="Conversion de devise incomplète — total possiblement sous-estimé"
+            >⚠️ Devise incomplète</span>
           </div>
           <div class="date-range">{{ fmtDate(b.start_date) }} → {{ fmtDate(b.end_date) }}</div>
         </div>

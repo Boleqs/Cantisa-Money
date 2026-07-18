@@ -82,20 +82,39 @@
         <div v-if="form.id" class="documents-section">
           <div class="splits-header">
             <span class="splits-title">Justificatifs</span>
-            <label class="btn btn-sm doc-upload-btn">
-              <span v-if="uploadingDoc">Envoi…</span>
-              <span v-else>+ Joindre un fichier</span>
-              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden :disabled="uploadingDoc" @change="onDocFileChange" />
-            </label>
+            <div class="doc-header-actions">
+              <button type="button" class="btn btn-sm" @click="showOcrPanel = !showOcrPanel">
+                {{ showOcrPanel ? '← Retour' : '🔍 Scanner (OCR)' }}
+              </button>
+              <label v-if="!showOcrPanel" class="btn btn-sm doc-upload-btn">
+                <span v-if="uploadingDoc">Envoi…</span>
+                <span v-else>+ Joindre un fichier</span>
+                <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden :disabled="uploadingDoc" @change="onDocFileChange" />
+              </label>
+            </div>
           </div>
-          <p v-if="docError" class="doc-error">{{ docError }}</p>
-          <ul v-if="attachedDocs.length" class="doc-list">
-            <li v-for="doc in attachedDocs" :key="doc.id" class="doc-item">
-              <button type="button" class="doc-link" @click="viewDocument(doc)">📎 {{ doc.original_filename }}</button>
-              <button type="button" class="remove-btn" @click="removeDocument(doc)">✕</button>
-            </li>
-          </ul>
-          <span v-else class="hint">Aucun justificatif joint.</span>
+
+          <ReceiptOcrReview
+            v-if="showOcrPanel"
+            :existing-tx-id="form.id"
+            :existing-splits-count="form.splits.length"
+            :existing-splits="form.splits"
+            :existing-category-id="form.category_id"
+            :accounts="accounts"
+            :categories="categories"
+            :tags="allTags"
+            @confirmed="onOcrConfirmed"
+          />
+          <template v-else>
+            <p v-if="docError" class="doc-error">{{ docError }}</p>
+            <ul v-if="attachedDocs.length" class="doc-list">
+              <li v-for="doc in attachedDocs" :key="doc.id" class="doc-item">
+                <button type="button" class="doc-link" @click="viewDocument(doc)">📎 {{ doc.original_filename }}</button>
+                <button type="button" class="remove-btn" @click="removeDocument(doc)">✕</button>
+              </li>
+            </ul>
+            <span v-else class="hint">Aucun justificatif joint.</span>
+          </template>
         </div>
         <p v-else class="hint">Enregistrez la transaction pour pouvoir y joindre un justificatif.</p>
 
@@ -200,6 +219,7 @@
 <script setup>
 import { computed, reactive, watch, ref, nextTick } from 'vue'
 import axios from 'axios'
+import ReceiptOcrReview from '@/components/ReceiptOcrReview.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -233,7 +253,7 @@ watch(() => props.modelValue, (open) => {
   if (open) loadReferenceData()
 }, { immediate: true })
 
-const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
+const emit = defineEmits(['update:modelValue', 'save', 'cancel', 'ocr-applied'])
 
 const isEdit = computed(() => props.mode === 'edit')
 
@@ -314,6 +334,13 @@ const txCurrencyCode = computed(() => splitAccountCode(primaryAccountId.value))
 const attachedDocs = ref([])
 const uploadingDoc = ref(false)
 const docError = ref('')
+const showOcrPanel = ref(false)
+
+function onOcrConfirmed() {
+  showOcrPanel.value = false
+  emit('ocr-applied')
+  emit('update:modelValue', false)
+}
 
 async function loadDocuments(txId) {
   attachedDocs.value = []
@@ -513,6 +540,7 @@ watch(
     Object.assign(form, base)
     primarySplitTagIds.value = new Set(tx?.splits?.[0]?.tag_ids || [])
     loadDocuments(tx?.id)
+    showOcrPanel.value = false
 
     // Détermine le mode initial
     if (forcedAdvanced.value) {
@@ -794,6 +822,12 @@ const onSubmit = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.doc-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .splits-title {

@@ -191,7 +191,14 @@
         <div v-else class="budget-list">
           <div v-for="b in activeBudgets" :key="b.id" class="budget-row">
             <div class="budget-top">
-              <span class="budget-dates">{{ fmtDate(b.start_date) }} → {{ fmtDate(b.end_date) }}</span>
+              <span class="budget-dates">
+                {{ fmtDate(b.start_date) }} → {{ fmtDate(b.end_date) }}
+                <span
+                  v-if="b.amount_spent_incomplete"
+                  class="budget-pct warn"
+                  title="Conversion de devise incomplète — total possiblement sous-estimé"
+                >⚠️</span>
+              </span>
               <span class="budget-amounts">
                 {{ fmtAmount(b.amount_spent) }} / {{ fmtAmount(b.amount_allocated) }}
               </span>

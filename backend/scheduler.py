@@ -129,16 +129,16 @@ def cleanup_pending_documents(app, DB, TransactionDocuments):
         DB.session.commit()
 
 
-def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot):
+def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
     """Rattrape l'historique pour toute date d'achat pas encore couverte (ex: nouvel actif ajouté
     avec une date d'achat passée pendant que le backend tournait déjà). Appelé par le scheduler."""
     from utils.wealth import backfill_wealth_history
     with app.app_context():
-        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot)
+        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
 
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments):
+                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=cleanup_pending_documents,
@@ -174,7 +174,7 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
     )
     scheduler.add_job(
         func=backfill_wealth_history_job,
-        args=[app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot],
+        args=[app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations],
         trigger='interval',
         hours=24,
         id='wealth_backfill_job',

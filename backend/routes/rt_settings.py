@@ -7,7 +7,6 @@ from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 SETTINGS_PERM = VAR_PERMISSIONS_LIST['Réglages personnels']['id']
-VALID_CURRENCIES = ('EUR', 'USD', 'GBP', 'CHF')
 VALID_DATE_FORMATS = ('fr-FR', 'en-GB', 'en-US', 'iso')
 
 DEFAULT_SETTINGS = {
@@ -19,7 +18,9 @@ DEFAULT_SETTINGS = {
 
 
 class UpdateSettingsSchema(Schema):
-    currency = fields.String(load_default='EUR', validate=validate.OneOf(VALID_CURRENCIES))
+    # Pas de validate.OneOf figé ici : les devises valides dépendent des devises que l'utilisateur
+    # a lui-même créées (table commodities), vérifié dynamiquement dans update_settings().
+    currency = fields.String(load_default='EUR')
     date_format = fields.String(load_default='fr-FR', validate=validate.OneOf(VALID_DATE_FORMATS))
     market_score_weights = fields.Dict(load_default=None, allow_none=True)
     market_score_thresholds = fields.Dict(load_default=None, allow_none=True)
@@ -35,7 +36,7 @@ def _settings_to_dict(s):
 
 
 class SettingsRoutes:
-    def __init__(self, app, DB, UserSettings, Users):
+    def __init__(self, app, DB, UserSettings, Users, Commodities):
         ROUTE_PATH = f"{ROOT_PATH}/settings"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -56,6 +57,11 @@ class SettingsRoutes:
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
             user_id = get_jwt_identity()
+            if not Commodities.query.filter_by(
+                    user_id=user_id, type='Currency', short_name=data['currency']).first():
+                return json_response(
+                    "Devise inconnue — ajoutez-la d'abord dans Paramétrage > Devises",
+                    HttpCode.BAD_REQUEST)
             try:
                 s = UserSettings.query.filter_by(user_id=user_id).first()
                 if not s:

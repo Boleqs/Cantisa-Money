@@ -63,6 +63,7 @@
             <td class="muted">{{ lastUpdatedLabel(a) }}</td>
             <td class="actions" @click.stop>
               <button v-if="a.track_live_price" class="btn-action" :disabled="refreshingIds.has(a.id)" @click="refreshPrice(a)">⟳</button>
+              <button class="btn-action" @click="openHistory(a)" title="Historique">📈</button>
               <button class="btn-action" @click="openEdit(a)">✎</button>
               <button class="btn-action" @click="openAddPossession(a)">+</button>
               <button class="btn-action btn-danger" @click="deleteAsset(a)">✕</button>
@@ -192,6 +193,64 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal history -->
+    <div v-if="showHistoryModal" class="modal-backdrop" @click.self="closeHistory">
+      <div class="modal modal-history">
+        <h2>Historique — {{ historyTarget?.name }}</h2>
+
+        <div v-if="historyLoading" class="empty">Chargement…</div>
+        <div v-else-if="historyError" class="alert">{{ historyError }}</div>
+        <div v-else-if="historyData.length < 2" class="no-data">Pas assez de données pour tracer une courbe.</div>
+        <div v-else class="svg-wrapper">
+          <svg :viewBox="`0 0 ${HIST_SVG_W} ${HIST_SVG_H}`" preserveAspectRatio="none" class="chart-svg">
+            <defs>
+              <linearGradient id="assetHistGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#22c55e" stop-opacity="0.28"/>
+                <stop offset="100%" stop-color="#22c55e" stop-opacity="0.02"/>
+              </linearGradient>
+            </defs>
+            <polygon :points="histAreaPoints" fill="url(#assetHistGrad)" />
+            <polyline :points="histLinePoints" fill="none" stroke="#22c55e" stroke-width="1.6" stroke-linejoin="round"/>
+            <text :x="HIST_PAD.l - 4" :y="HIST_PAD.t + 4" text-anchor="end" class="svg-label">{{ fmtAmountShort(histMax) }}</text>
+            <text :x="HIST_PAD.l - 4" :y="HIST_SVG_H - HIST_PAD.b" text-anchor="end" class="svg-label">{{ fmtAmountShort(histMin) }}</text>
+            <text :x="HIST_PAD.l" :y="HIST_SVG_H - 2" class="svg-label">{{ historyData[0]?.date?.slice(5) }}</text>
+            <text :x="HIST_SVG_W - HIST_PAD.r" :y="HIST_SVG_H - 2" text-anchor="end" class="svg-label">{{ historyData[historyData.length - 1]?.date?.slice(5) }}</text>
+          </svg>
+        </div>
+
+        <template v-if="historyTarget && !historyTarget.track_live_price">
+          <h3 class="history-subtitle">Valorisations manuelles</h3>
+          <table v-if="valuations.length" class="sub-table">
+            <thead><tr><th>Date</th><th>Valeur</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="v in valuations" :key="v.id">
+                <td class="muted">{{ v.valuation_date }}</td>
+                <td>{{ fmtAmount(v.value_per_unit, commodityCode(historyTarget.commodity_id)) }}</td>
+                <td class="actions">
+                  <button class="btn-action" @click="openEditValuation(v)">✎</button>
+                  <button class="btn-action btn-danger" @click="deleteValuation(v)">✕</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="valuation-form">
+            <input v-model="valuationForm.valuation_date" type="date" />
+            <input v-model.number="valuationForm.value_per_unit" type="number" step="0.01" min="0" placeholder="Valeur" />
+            <button
+              class="btn btn-primary"
+              :disabled="!valuationForm.valuation_date || valuationForm.value_per_unit == null"
+              @click="saveValuation"
+            >{{ valuationEditTarget ? 'Modifier' : 'Ajouter' }}</button>
+            <button v-if="valuationEditTarget" class="btn" @click="cancelEditValuation">Annuler</button>
+          </div>
+        </template>
+
+        <div class="modal-actions">
+          <button class="btn" @click="closeHistory">Fermer</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -210,6 +269,21 @@ const editTarget = ref(null)
 const possessionTarget = ref(null)
 const possessionEditTarget = ref(null)
 const expanded = ref(new Set())
+
+const showHistoryModal = ref(false)
+const historyTarget = ref(null)
+const historyData = ref([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const valuations = ref([])
+const valuationForm = ref({ valuation_date: null, value_per_unit: null })
+const valuationEditTarget = ref(null)
+
+const HIST_SVG_W = 500
+const HIST_SVG_H = 160
+const HIST_PAD = { t: 14, b: 22, l: 60, r: 10 }
+const histInnerW = HIST_SVG_W - HIST_PAD.l - HIST_PAD.r
+const histInnerH = HIST_SVG_H - HIST_PAD.t - HIST_PAD.b
 
 const assetTypes = [
   { value: 'Stock', label: 'Action' },
@@ -471,6 +545,125 @@ function lastUpdatedLabel(a) {
   return new Date(a.last_price_updated_at).toLocaleDateString('fr-FR')
 }
 
+// ── Historique / valorisations manuelles ────────────────────────────────
+const histMin = computed(() => Math.min(...historyData.value.map(d => d.total_value)))
+const histMax = computed(() => Math.max(...historyData.value.map(d => d.total_value)))
+
+function histScaleX(i) {
+  const n = historyData.value.length
+  return HIST_PAD.l + (n <= 1 ? 0 : (i / (n - 1)) * histInnerW)
+}
+function histScaleY(val) {
+  const range = histMax.value - histMin.value || 1
+  return HIST_PAD.t + (1 - (val - histMin.value) / range) * histInnerH
+}
+const histLinePoints = computed(() =>
+  historyData.value.map((d, i) => `${histScaleX(i)},${histScaleY(d.total_value)}`).join(' ')
+)
+const histAreaPoints = computed(() => {
+  if (!historyData.value.length) return ''
+  const n = historyData.value.length
+  const bottom = HIST_PAD.t + histInnerH
+  return `${HIST_PAD.l},${bottom} ${histLinePoints.value} ${histScaleX(n - 1)},${bottom}`
+})
+
+function fmtAmountShort(v) {
+  const n = Number(v ?? 0)
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return Math.round(n).toString()
+}
+
+async function openHistory(a) {
+  historyTarget.value = a
+  showHistoryModal.value = true
+  await loadHistory()
+  if (!a.track_live_price) await loadValuations()
+}
+
+function closeHistory() {
+  showHistoryModal.value = false
+  historyTarget.value = null
+  historyData.value = []
+  valuations.value = []
+  cancelEditValuation()
+}
+
+async function loadHistory() {
+  if (!historyTarget.value) return
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const res = await axios.get('/api/assets/history', { params: { asset_id: historyTarget.value.id } })
+    historyData.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    historyError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function loadValuations() {
+  if (!historyTarget.value) return
+  try {
+    const res = await axios.get('/api/assets/valuations', { params: { asset_id: historyTarget.value.id } })
+    valuations.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+function openEditValuation(v) {
+  valuationEditTarget.value = v
+  valuationForm.value = { valuation_date: v.valuation_date, value_per_unit: v.value_per_unit }
+}
+
+function cancelEditValuation() {
+  valuationEditTarget.value = null
+  valuationForm.value = { valuation_date: null, value_per_unit: null }
+}
+
+async function saveValuation() {
+  try {
+    if (valuationEditTarget.value) {
+      await axios.patch('/api/assets/valuations', {
+        valuation_id: valuationEditTarget.value.id,
+        valuation_date: valuationForm.value.valuation_date,
+        value_per_unit: valuationForm.value.value_per_unit,
+      })
+    } else {
+      await axios.post('/api/assets/valuations', {
+        asset_id: historyTarget.value.id,
+        valuation_date: valuationForm.value.valuation_date,
+        value_per_unit: valuationForm.value.value_per_unit,
+      })
+    }
+    cancelEditValuation()
+    await loadValuations()
+    await loadHistory()
+    await reload()
+    if (historyTarget.value) {
+      historyTarget.value = assets.value.find(x => x.id === historyTarget.value.id) || historyTarget.value
+    }
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+async function deleteValuation(v) {
+  if (!confirm(`Supprimer la valorisation du ${v.valuation_date} ?`)) return
+  try {
+    await axios.delete('/api/assets/valuations', { params: { valuation_id: v.id } })
+    await loadValuations()
+    await loadHistory()
+    await reload()
+    if (historyTarget.value) {
+      historyTarget.value = assets.value.find(x => x.id === historyTarget.value.id) || historyTarget.value
+    }
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
 onMounted(() => reload())
 </script>
 
@@ -640,4 +833,14 @@ onMounted(() => reload())
 
 .gain-positive { color: #4ade80; font-weight: 600; }
 .gain-negative { color: #f87171; font-weight: 600; }
+
+.modal-history { width: 640px; }
+.svg-wrapper { width: 100%; }
+.chart-svg { width: 100%; height: 160px; overflow: visible; }
+.svg-label { font-size: 9px; fill: #6b7280; }
+.no-data { font-size: 13px; color: #6b7280; padding: 12px 0; }
+.history-subtitle { margin: 4px 0 0; font-size: 13px; color: #9ca3af; font-weight: 500; }
+.valuation-form { display: flex; gap: 8px; align-items: center; }
+.valuation-form input[type="date"] { flex: 1; }
+.valuation-form input[type="number"] { width: 140px; }
 </style>
