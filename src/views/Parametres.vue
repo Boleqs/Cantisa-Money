@@ -258,6 +258,60 @@
           </div>
         </section>
 
+        <!-- ═══ SAUVEGARDE ═══ -->
+        <section v-if="activeSection === 'sauvegarde'">
+          <h2 class="section-title">Sauvegarde</h2>
+          <p class="section-desc">
+            Exportez l'intégralité de vos données (comptes, transactions, budgets, actifs…) dans un fichier JSON,
+            à conserver ou à réimporter — dans cette instance ou une autre. Les éléments déjà présents (même nom,
+            mêmes montants et dates) sont automatiquement reconnus et ne sont jamais dupliqués.
+          </p>
+
+          <div class="settings-card">
+            <h3 class="card-title">Exporter</h3>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Télécharger une sauvegarde complète</span>
+                <span class="setting-desc">Fichier JSON contenant toutes vos données actuelles.</span>
+              </div>
+              <button class="btn btn-primary" :disabled="exporting" @click="exportBackup">
+                {{ exporting ? 'Export…' : 'Télécharger' }}
+              </button>
+            </div>
+            <div v-if="exportError" class="modal-error">{{ exportError }}</div>
+          </div>
+
+          <div class="settings-card">
+            <h3 class="card-title">Réimporter</h3>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Restaurer depuis un fichier de sauvegarde</span>
+                <span class="setting-desc">Les données déjà présentes sont ignorées, seules les nouvelles sont ajoutées.</span>
+              </div>
+              <button class="btn btn-primary" :disabled="importing" @click="triggerImportPicker">
+                {{ importing ? 'Import…' : 'Choisir un fichier…' }}
+              </button>
+              <input ref="importInput" type="file" accept="application/json,.json" style="display: none" @change="onImportFileChosen" />
+            </div>
+            <div v-if="importError" class="modal-error">{{ importError }}</div>
+
+            <div v-if="importReport" class="import-report">
+              <div class="import-report-row" v-for="(v, k) in importReportEntries" :key="k">
+                <span class="import-entity">{{ entityLabel(k) }}</span>
+                <span class="import-counts">
+                  <span v-if="v.created" class="badge-created">+{{ v.created }}</span>
+                  <span v-if="v.matched" class="badge-matched">{{ v.matched }} déjà présent{{ v.matched > 1 ? 's' : '' }}</span>
+                  <span v-if="!v.created && !v.matched" class="muted">—</span>
+                </span>
+              </div>
+              <p v-if="importReport.errors?.length" class="import-errors">
+                <strong>{{ importReport.errors.length }} ligne(s) ignorée(s) :</strong>
+                <span v-for="(e, i) in importReport.errors" :key="i">{{ e }}<br /></span>
+              </p>
+            </div>
+          </div>
+        </section>
+
       </div>
     </div>
 
@@ -313,6 +367,7 @@ const sections = [
   { id: 'interface', label: 'Interface' },
   { id: 'marches',   label: 'Marchés' },
   { id: 'devises',   label: 'Devises' },
+  { id: 'sauvegarde', label: 'Sauvegarde' },
 ]
 const activeSection = ref('interface')
 
@@ -329,6 +384,29 @@ const dateFormat      = ref('fr-FR')
 // Marchés
 const weights    = reactive({})
 const thresholds = reactive({})
+
+// Sauvegarde
+const exporting     = ref(false)
+const exportError   = ref('')
+const importing     = ref(false)
+const importError   = ref('')
+const importReport  = ref(null)
+const importInput   = ref(null)
+
+const ENTITY_LABELS = {
+  commodities: 'Devises', accounts: 'Comptes', categories: 'Catégories', tags: 'Tags',
+  budgets: 'Budgets', budget_accounts: 'Budgets ↔ comptes', budget_categories: 'Budgets ↔ catégories',
+  budget_tags: 'Budgets ↔ tags', subscriptions: 'Abonnements', assets: 'Actifs',
+  asset_possessions: 'Possessions d\'actifs', asset_valuations: 'Valorisations d\'actifs',
+  transactions: 'Transactions', splits: 'Répartitions (splits)', tags_on_split: 'Tags sur répartitions',
+  transaction_documents: 'Justificatifs',
+}
+function entityLabel(k) { return ENTITY_LABELS[k] || k }
+const importReportEntries = computed(() => {
+  if (!importReport.value) return {}
+  const { errors, user_settings, ...entries } = importReport.value
+  return entries
+})
 
 // Devises
 const commodities        = ref([])
@@ -458,6 +536,54 @@ async function deleteCommodity(c) {
     await reloadCommodities()
   } catch (e) {
     commoditiesError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+// ── Sauvegarde ────────────────────────────────────────────────────────────────
+async function exportBackup() {
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const res = await axios.get('/api/backup/export', { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    const now = new Date()
+    const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    a.href = url
+    a.download = `cantisa-backup-${stamp}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    exportError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    exporting.value = false
+  }
+}
+
+function triggerImportPicker() {
+  importError.value = ''
+  importReport.value = null
+  importInput.value?.click()
+}
+
+async function onImportFileChosen(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  importing.value = true
+  importError.value = ''
+  importReport.value = null
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await axios.post('/api/backup/import', formData)
+    importReport.value = res.data?.response_data || null
+  } catch (e) {
+    importError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    importing.value = false
   }
 }
 
@@ -933,5 +1059,41 @@ async function saveAll() {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* Sauvegarde */
+.import-report {
+  margin-top: 4px;
+  border-top: 1px solid rgba(148,163,184,0.1);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.import-report-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.import-entity { color: #cbd5e1; }
+.import-counts { display: flex; gap: 8px; align-items: center; }
+.badge-created {
+  background: rgba(74,222,128,0.12);
+  color: #4ade80;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-weight: 700;
+  font-size: 12px;
+}
+.badge-matched {
+  color: #64748b;
+  font-size: 12px;
+}
+.import-errors {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #fca5a5;
+  line-height: 1.6;
 }
 </style>

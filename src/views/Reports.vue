@@ -24,6 +24,7 @@
       <button v-if="hasPermission('Planification')" :class="['tab', { active: tab === 'subscriptions' }]" @click="tab = 'subscriptions'; loadSubscriptions()">Abonnements</button>
       <button v-if="hasPermission('Patrimoine')" :class="['tab', { active: tab === 'wealth' }]" @click="tab = 'wealth'; loadWealth()">Patrimoine</button>
       <button v-if="hasPermission('Patrimoine')" :class="['tab', { active: tab === 'portfolio' }]" @click="tab = 'portfolio'; loadWealth()">Portefeuille</button>
+      <button :class="['tab', { active: tab === 'custom' }]" @click="tab = 'custom'; loadCustomTab()">Personnalisé</button>
     </div>
 
     <!-- ── MENSUEL ─────────────────────────────────────────────────────── -->
@@ -717,6 +718,193 @@
       </template>
     </div>
 
+    <!-- ── PERSONNALISÉ ────────────────────────────────────────────────── -->
+    <div v-if="tab === 'custom'" class="custom-layout">
+
+      <div class="custom-main">
+        <div class="card">
+          <div class="card-title">Constructeur de rapport</div>
+
+          <div class="filters" style="margin-bottom: 14px;">
+            <label>Du <input type="date" v-model="customPeriod.start" /></label>
+            <label>Au <input type="date" v-model="customPeriod.end" /></label>
+          </div>
+
+          <div class="filter-builder">
+            <div v-for="(f, i) in customFilters" :key="i" class="filter-row">
+              <select v-model="f.field" class="filter-select" @change="onFilterFieldChange(f)">
+                <option v-for="fd in FILTER_FIELDS" :key="fd.value" :value="fd.value">{{ fd.label }}</option>
+              </select>
+              <select v-model="f.operator" class="filter-select filter-op">
+                <option v-for="op in fieldDef(f.field).ops" :key="op" :value="op">{{ OPERATOR_LABELS[op] }}</option>
+              </select>
+
+              <template v-if="f.operator !== 'is_null'">
+                <select v-if="fieldDef(f.field).valueType === 'account'" v-model="f.value" class="filter-select filter-value">
+                  <option value="" disabled>Choisir…</option>
+                  <option v-for="a in accountsList" :key="a.id" :value="a.id">{{ a.name }}</option>
+                </select>
+                <select v-else-if="fieldDef(f.field).valueType === 'category'" v-model="f.value" class="filter-select filter-value">
+                  <option value="" disabled>Choisir…</option>
+                  <option v-for="c in categoriesList" :key="c.id" :value="c.id">{{ c.name }}</option>
+                </select>
+                <select v-else-if="fieldDef(f.field).valueType === 'tag'" v-model="f.value" class="filter-select filter-value">
+                  <option value="" disabled>Choisir…</option>
+                  <option v-for="t in tagsList" :key="t.id" :value="t.id">{{ t.name }}</option>
+                </select>
+                <select v-else-if="fieldDef(f.field).valueType === 'account_type'" v-model="f.value" class="filter-select filter-value">
+                  <option value="" disabled>Choisir…</option>
+                  <option v-for="at in ACCOUNT_TYPES" :key="at" :value="at">{{ at }}</option>
+                </select>
+                <select v-else-if="fieldDef(f.field).valueType === 'boolean'" v-model="f.value" class="filter-select filter-value">
+                  <option :value="true">Oui</option>
+                  <option :value="false">Non</option>
+                </select>
+                <input v-else-if="fieldDef(f.field).valueType === 'number'" type="number" step="0.01" v-model.number="f.value" class="filter-input filter-value" placeholder="Montant" />
+                <input v-else type="text" v-model="f.value" class="filter-input filter-value" placeholder="Contient…" />
+              </template>
+              <span v-else class="filter-value muted" style="align-self:center">(sans catégorie)</span>
+
+              <button class="btn-action btn-danger" @click="removeFilter(i)" title="Retirer ce filtre">✕</button>
+            </div>
+            <button class="btn-normalize" @click="addFilter">+ Ajouter un filtre</button>
+          </div>
+
+          <div class="filters" style="margin-top: 16px;">
+            <label>Regrouper par
+              <select v-model="customGroupBy" class="select">
+                <option value="category">Catégorie</option>
+                <option value="tag">Tag</option>
+                <option value="account">Compte</option>
+                <option value="day">Jour</option>
+                <option value="week">Semaine</option>
+                <option value="month">Mois</option>
+                <option value="year">Année</option>
+                <option value="none">Aucun (total)</option>
+              </select>
+            </label>
+            <label>Métrique
+              <select v-model="customMetric" class="select">
+                <option value="sum">Somme</option>
+                <option value="count">Nombre de transactions</option>
+                <option value="avg">Moyenne</option>
+              </select>
+            </label>
+            <label>Graphique
+              <select v-model="customChartType" class="select">
+                <option value="bar">Barres</option>
+                <option value="line">Courbe</option>
+                <option value="pie">Camembert</option>
+                <option value="table">Tableau</option>
+              </select>
+            </label>
+            <button class="btn btn-primary" :disabled="customLoading" @click="runCustomReport">
+              {{ customLoading ? 'Génération…' : '▶ Générer' }}
+            </button>
+          </div>
+
+          <div class="filters" style="margin-top: 14px; align-items: center;">
+            <input type="text" v-model="customName" placeholder="Nom du rapport…" class="filter-input" style="flex: 1; min-width: 200px;" />
+            <button class="btn" :disabled="savingReport" @click="saveCustomReport">
+              {{ editingReportId ? 'Mettre à jour' : 'Enregistrer' }}
+            </button>
+            <button v-if="editingReportId" class="btn" @click="newCustomReport">+ Nouveau rapport</button>
+          </div>
+
+          <div v-if="customError" class="alert" style="margin-top: 14px;"><strong>Erreur :</strong> {{ customError }}</div>
+        </div>
+
+        <!-- Résultat -->
+        <div v-if="customResult" class="card" style="margin-top: 16px;">
+          <div class="card-title">
+            Résultat — {{ customResult.start_date }} → {{ customResult.end_date }} ({{ customResult.currency }})
+          </div>
+          <div v-if="!customResult.labels.length" class="empty">Aucune donnée pour ces critères.</div>
+
+          <template v-else-if="customChartType === 'table'">
+            <table class="table">
+              <thead><tr><th>{{ groupByLabel }}</th><th class="num">{{ metricLabel }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(l, i) in customResult.labels" :key="l">
+                  <td>{{ l }}</td>
+                  <td class="num" :class="customResult.values[i] >= 0 ? 'pos' : 'neg'">{{ fmtCustomValue(customResult.values[i]) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+
+          <template v-else-if="customChartType === 'pie'">
+            <div class="cat-layout">
+              <div class="card donut-card">
+                <div class="donut-wrap">
+                  <svg viewBox="0 0 200 200" class="donut-svg">
+                    <g transform="rotate(-90, 100, 100)">
+                      <circle v-for="seg in customPieSegments" :key="seg.name"
+                        cx="100" cy="100" r="70" fill="none" :stroke="seg.color" stroke-width="28"
+                        :stroke-dasharray="seg.dashArray" :stroke-dashoffset="seg.dashOffset" />
+                    </g>
+                  </svg>
+                </div>
+              </div>
+              <div class="card bars-card">
+                <div class="cat-bars">
+                  <div v-for="seg in customPieSegments" :key="seg.name" class="cat-row">
+                    <div class="cat-name">{{ seg.name }}</div>
+                    <div class="cat-bar-wrap"><div class="cat-bar" :style="{ width: seg.pct + '%', background: seg.color }"></div></div>
+                    <div class="cat-amount">{{ fmtCustomValue(seg.total) }}</div>
+                    <div class="cat-pct muted">{{ seg.pct }}%</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="customChartType === 'line'">
+            <div class="svg-wrap">
+              <svg :viewBox="`0 0 ${SW} ${SH}`" preserveAspectRatio="none" class="chart-svg">
+                <line :x1="SP.l" :y1="scaleY(0, customLineMin, customLineMax)" :x2="SW - SP.r" :y2="scaleY(0, customLineMin, customLineMax)"
+                  stroke="rgba(148,163,184,0.3)" stroke-width="1" />
+                <polyline :points="customLinePointsStr" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round" />
+                <circle v-for="(pt, i) in customLinePoints" :key="i" :cx="pt.x" :cy="pt.y" r="3" fill="#60a5fa" stroke="#0b1220" stroke-width="1.5">
+                  <title>{{ pt.label }} : {{ fmtCustomValue(pt.value) }}</title>
+                </circle>
+                <text v-for="(pt, i) in customLinePoints" :key="'xl'+i" :x="pt.x" :y="SH - 2" text-anchor="middle" class="svg-label">{{ pt.label }}</text>
+              </svg>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="cat-bars">
+              <div v-for="(l, i) in customResult.labels" :key="l" class="cat-row">
+                <div class="cat-name">{{ l }}</div>
+                <div class="cat-bar-wrap">
+                  <div class="cat-bar"
+                    :style="{ width: (Math.abs(customResult.values[i]) / customMaxAbs * 100) + '%', background: customResult.values[i] >= 0 ? '#34d399' : '#f87171' }">
+                  </div>
+                </div>
+                <div class="cat-amount" :class="customResult.values[i] >= 0 ? 'pos' : 'neg'">{{ fmtCustomValue(customResult.values[i]) }}</div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Rapports sauvegardés -->
+      <div class="custom-sidebar">
+        <div class="card">
+          <div class="card-title">Rapports enregistrés</div>
+          <div v-if="!savedReports.length" class="empty">Aucun rapport enregistré pour l'instant.</div>
+          <div v-else class="saved-list">
+            <div v-for="r in savedReports" :key="r.id" class="saved-item" :class="{ active: editingReportId === r.id }">
+              <span class="saved-name" @click="loadSavedReport(r)" :title="'Charger « ' + r.name + ' »'">{{ r.name }}</span>
+              <button class="btn-action btn-danger" title="Supprimer" @click="deleteSavedReport(r)">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
   </div>
 </template>
 
@@ -753,6 +941,196 @@ const tagFilter  = ref({ start: monthStart, end: today })
 const wealthFilter = ref({ start: '', end: '' }) // vide = tout l'historique
 
 const STATUS_LABELS = { active: 'En cours', upcoming: 'À venir', past: 'Terminé' }
+
+// ── Rapport personnalisé ─────────────────────────────────────────────────────
+const ACCOUNT_TYPES = ['Current', 'Assets', 'Equity', 'Income', 'Expense']
+const FILTER_FIELDS = [
+  { value: 'account_id',   label: 'Compte',          valueType: 'account',      ops: ['eq', 'ne'] },
+  { value: 'category_id',  label: 'Catégorie',       valueType: 'category',     ops: ['eq', 'ne', 'is_null'] },
+  { value: 'tag_id',       label: 'Tag',             valueType: 'tag',          ops: ['eq'] },
+  { value: 'account_type', label: 'Type de compte',  valueType: 'account_type', ops: ['eq', 'ne'] },
+  { value: 'amount',       label: 'Montant',         valueType: 'number',       ops: ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'] },
+  { value: 'description',  label: 'Description',     valueType: 'text',         ops: ['contains'] },
+  { value: 'is_cleared',   label: 'Pointée',         valueType: 'boolean',      ops: ['eq'] },
+]
+const OPERATOR_LABELS = { eq: '=', ne: '≠', gt: '>', gte: '≥', lt: '<', lte: '≤', contains: 'contient', is_null: 'est vide' }
+const GROUP_BY_LABELS = { category: 'Catégorie', tag: 'Tag', account: 'Compte', day: 'Jour', week: 'Semaine', month: 'Mois', year: 'Année', none: 'Total' }
+const METRIC_LABELS   = { sum: 'Somme', count: 'Nombre', avg: 'Moyenne' }
+
+function fieldDef(field) {
+  return FILTER_FIELDS.find(f => f.value === field) || FILTER_FIELDS[0]
+}
+
+const oneYearAgo = new Date()
+oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+const customPeriod  = ref({ start: oneYearAgo.toISOString().slice(0, 10), end: today })
+const customFilters = ref([])
+const customGroupBy   = ref('category')
+const customMetric    = ref('sum')
+const customChartType = ref('bar')
+const customResult    = ref(null)
+const customLoading   = ref(false)
+const customError     = ref('')
+const customName      = ref('')
+const editingReportId = ref(null)
+const savingReport    = ref(false)
+const savedReports    = ref([])
+const accountsList    = ref([])
+const categoriesList  = ref([])
+const tagsList        = ref([])
+
+const groupByLabel = computed(() => GROUP_BY_LABELS[customGroupBy.value] || customGroupBy.value)
+const metricLabel  = computed(() => METRIC_LABELS[customMetric.value] || customMetric.value)
+
+function fmtCustomValue(v) {
+  return customResult.value?.metric === 'count' ? String(v) : fmtAmount(v)
+}
+
+function addFilter() {
+  customFilters.value.push({ field: 'category_id', operator: 'eq', value: '' })
+}
+function removeFilter(i) {
+  customFilters.value.splice(i, 1)
+}
+function onFilterFieldChange(f) {
+  f.operator = fieldDef(f.field).ops[0]
+  f.value = fieldDef(f.field).valueType === 'boolean' ? true : ''
+}
+
+const customChartRows = computed(() => {
+  if (!customResult.value) return []
+  return customResult.value.labels.map((l, i) => ({ name: l, value: customResult.value.values[i] }))
+})
+const customMaxAbs = computed(() => Math.max(...customChartRows.value.map(d => Math.abs(d.value)), 1))
+const customPieTotal = computed(() => customChartRows.value.reduce((s, d) => s + Math.abs(d.value), 0))
+const customPieSegments = computed(() =>
+  makeDonutSegments(customChartRows.value.map(d => ({ name: d.name, total: Math.abs(d.value) })), customPieTotal.value)
+)
+const customLineMin = computed(() => Math.min(...customChartRows.value.map(d => d.value), 0))
+const customLineMax = computed(() => Math.max(...customChartRows.value.map(d => d.value), 1))
+const customLinePoints = computed(() => {
+  const n = customChartRows.value.length
+  if (!n) return []
+  return customChartRows.value.map((d, i) => ({
+    x: SP.l + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW),
+    y: scaleY(d.value, customLineMin.value, customLineMax.value),
+    label: d.name,
+    value: d.value,
+  }))
+})
+const customLinePointsStr = computed(() => customLinePoints.value.map(p => `${p.x},${p.y}`).join(' '))
+
+function buildCustomConfig() {
+  return {
+    start_date: customPeriod.value.start,
+    end_date: customPeriod.value.end,
+    group_by: customGroupBy.value,
+    metric: customMetric.value,
+    chart_type: customChartType.value,
+    filters: customFilters.value
+      .filter(f => f.operator === 'is_null' || (f.value !== '' && f.value !== null && f.value !== undefined))
+      .map(f => ({ field: f.field, operator: f.operator, value: f.operator === 'is_null' ? true : f.value })),
+  }
+}
+
+function errToText(e) {
+  const d = e?.response?.data?.response_data ?? e?.message ?? 'Erreur inconnue'
+  return typeof d === 'string' ? d : JSON.stringify(d)
+}
+
+async function loadFilterOptions() {
+  const [accRes, catRes, tagRes] = await Promise.all([
+    axios.get('/api/accounts'), axios.get('/api/categories'), axios.get('/api/tags'),
+  ])
+  accountsList.value   = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
+  categoriesList.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
+  tagsList.value        = Array.isArray(tagRes.data?.response_data) ? tagRes.data.response_data : []
+}
+
+async function loadSavedReports() {
+  const res = await axios.get('/api/reports/custom')
+  savedReports.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+}
+
+let customTabLoaded = false
+async function loadCustomTab() {
+  if (customTabLoaded) return
+  try {
+    await Promise.all([loadFilterOptions(), loadSavedReports()])
+    customTabLoaded = true
+  } catch (e) {
+    customError.value = errToText(e)
+  }
+}
+
+async function runCustomReport() {
+  customLoading.value = true
+  customError.value = ''
+  try {
+    const res = await axios.post('/api/reports/custom/run', buildCustomConfig())
+    customResult.value = res.data?.response_data || null
+  } catch (e) {
+    customError.value = errToText(e)
+  } finally {
+    customLoading.value = false
+  }
+}
+
+async function saveCustomReport() {
+  if (!customName.value.trim()) {
+    customError.value = "Donnez un nom au rapport avant de l'enregistrer."
+    return
+  }
+  savingReport.value = true
+  customError.value = ''
+  try {
+    const payload = { name: customName.value.trim(), config: buildCustomConfig() }
+    if (editingReportId.value) {
+      await axios.patch('/api/reports/custom', { report_id: editingReportId.value, ...payload })
+    } else {
+      const res = await axios.post('/api/reports/custom', payload)
+      editingReportId.value = res.data?.response_data?.id || null
+    }
+    await loadSavedReports()
+  } catch (e) {
+    customError.value = errToText(e)
+  } finally {
+    savingReport.value = false
+  }
+}
+
+function loadSavedReport(r) {
+  editingReportId.value = r.id
+  customName.value = r.name
+  const c = r.config || {}
+  customPeriod.value  = { start: c.start_date || customPeriod.value.start, end: c.end_date || customPeriod.value.end }
+  customGroupBy.value   = c.group_by || 'category'
+  customMetric.value    = c.metric || 'sum'
+  customChartType.value = c.chart_type || 'bar'
+  customFilters.value   = (c.filters || []).map(f => ({ ...f }))
+  runCustomReport()
+}
+
+function newCustomReport() {
+  editingReportId.value = null
+  customName.value = ''
+  customFilters.value = []
+  customGroupBy.value = 'category'
+  customMetric.value = 'sum'
+  customChartType.value = 'bar'
+  customResult.value = null
+}
+
+async function deleteSavedReport(r) {
+  if (!confirm(`Supprimer le rapport « ${r.name} » ?`)) return
+  try {
+    await axios.delete('/api/reports/custom', { params: { report_id: r.id } })
+    if (editingReportId.value === r.id) newCustomReport()
+    await loadSavedReports()
+  } catch (e) {
+    customError.value = errToText(e)
+  }
+}
 
 // ── Colors ─────────────────────────────────────────────────────────────────────
 const DONUT_COLORS = ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#84cc16','#14b8a6']
@@ -1110,6 +1488,11 @@ async function reload() {
   if (tab.value === 'budgets') await loadBudgets()
   if (tab.value === 'subscriptions') await loadSubscriptions()
   if (tab.value === 'wealth' || tab.value === 'portfolio') await loadWealth()
+  if (tab.value === 'custom') {
+    customTabLoaded = false
+    await loadCustomTab()
+    if (customResult.value) await runCustomReport()
+  }
 }
 
 onMounted(() => reload())
@@ -1298,4 +1681,66 @@ onMounted(() => reload())
   padding: 6px 0; font-size: 13px; border-bottom: 1px solid rgba(148,163,184,0.07);
 }
 .mover-row:last-child { border-bottom: none; }
+
+/* Rapport personnalisé */
+.select {
+  background: rgba(15,23,42,0.7);
+  border: 1px solid rgba(148,163,184,0.25);
+  border-radius: 8px;
+  color: #e5e7eb;
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-action {
+  background: transparent;
+  border: 1px solid rgba(148,163,184,0.25);
+  color: #cbd5e1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-action:hover { background: rgba(148,163,184,0.1); }
+.btn-danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+.btn-danger:hover { background: rgba(239,68,68,0.1); }
+.btn-normalize {
+  background: rgba(59,130,246,0.1);
+  border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 6px;
+  color: #60a5fa;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-normalize:hover { background: rgba(59,130,246,0.2); }
+
+.custom-layout { display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .custom-layout { grid-template-columns: 1fr; } }
+.custom-main { min-width: 0; }
+.custom-sidebar { position: sticky; top: 16px; }
+
+.filter-builder { display: flex; flex-direction: column; gap: 8px; }
+.filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.filter-select, .filter-input {
+  background: rgba(15,23,42,0.7);
+  border: 1px solid rgba(148,163,184,0.25);
+  border-radius: 8px;
+  color: #e5e7eb;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.filter-value { min-width: 140px; }
+.filter-op { min-width: 70px; }
+
+.saved-list { display: flex; flex-direction: column; gap: 4px; }
+.saved-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: default;
+  border: 1px solid transparent;
+}
+.saved-item:hover { background: rgba(148,163,184,0.06); }
+.saved-item.active { background: rgba(37,99,235,0.15); border-color: rgba(37,99,235,0.3); }
+.saved-name { flex: 1; font-size: 13px; color: #e5e7eb; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

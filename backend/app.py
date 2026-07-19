@@ -59,6 +59,11 @@ TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities)
+BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
+             BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetValuations,
+             Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)
+CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
+                     Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 
 
 @app.errorhandler(HTTPException)

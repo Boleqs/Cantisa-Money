@@ -19,3 +19,5 @@ from .rt_test import TestRoutes
 from .rt_markets import MarketsRoutes
 from .rt_wealth import WealthRoutes
 from .rt_settings import SettingsRoutes
+from .rt_backup import BackupRoutes
+from .rt_custom_reports import CustomReportsRoutes

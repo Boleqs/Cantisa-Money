@@ -9,6 +9,7 @@ from .budget_tags import BudgetTags
 from .budgets import Budgets
 from .categories import Categories
 from .commodities import Commodities
+from .custom_reports import CustomReports
 from .fx_rates import FxRates
 from .splits import Splits
 from .subscriptions import Subscriptions
