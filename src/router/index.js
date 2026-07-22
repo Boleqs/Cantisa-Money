@@ -88,6 +88,18 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/credits',
+        name: 'Credits',
+        component: () => import('../views/Credits.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/credits/:id',
+        name: 'LoanDetail',
+        component: () => import('../views/LoanDetail.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/portfolio',
         name: 'Portfolio',
         component: () => import('../views/Portfolio.vue'),

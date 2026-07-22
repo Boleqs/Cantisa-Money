@@ -48,6 +48,64 @@ def execute_one_subscription(sub, exec_date, DB, Transactions, Splits, Accounts)
     DB.session.commit()
 
 
+def _execute_loan_installment(installment, loan, DB, Transactions, Splits, Accounts):
+    payment_account = Accounts.query.filter_by(id=loan.payment_account_id).first()
+    if not payment_account:
+        return
+    exec_dt = datetime.combine(installment.due_date, datetime.min.time())
+    tx = Transactions(
+        user_id=loan.user_id,
+        currency_id=payment_account.currency_id,
+        post_date=exec_dt,
+        effective_date=exec_dt,
+        description=f"Échéance prêt {loan.name} #{installment.installment_number}",
+        category_id=loan.category_id,
+        is_cleared=True,
+    )
+    DB.session.add(tx)
+    DB.session.flush()
+    DB.session.add(Splits(tx_id=tx.id, account_id=loan.payment_account_id, quantity=-installment.total_amount))
+    DB.session.add(Splits(tx_id=tx.id, account_id=loan.liability_account_id, quantity=installment.principal_portion))
+    if loan.insurance_expense_account_id and installment.insurance_portion:
+        DB.session.add(Splits(
+            tx_id=tx.id, account_id=loan.interest_expense_account_id, quantity=installment.interest_portion))
+        DB.session.add(Splits(
+            tx_id=tx.id, account_id=loan.insurance_expense_account_id, quantity=installment.insurance_portion))
+    else:
+        # Pas de compte d'assurance dédié -> assurance fondue dans la ligne d'intérêts (choix
+        # utilisateur à la création du prêt, voir rt_loans.py).
+        DB.session.add(Splits(
+            tx_id=tx.id, account_id=loan.interest_expense_account_id,
+            quantity=installment.interest_portion + installment.insurance_portion))
+    installment.is_paid = True
+    installment.paid_at = exec_dt
+    installment.transaction_id = tx.id
+
+
+def execute_due_loan_installments(app, DB, Loans, LoanInstallments, Transactions, Splits, Accounts):
+    """Poste les échéances dues pour tous les prêts en auto_debit=True (rattrape les échéances en
+    retard, comme execute_due_subscriptions). Les prêts à validation manuelle (auto_debit=False,
+    par défaut) ne sont jamais touchés ici — voir POST /loans/execute. Appelé par le scheduler."""
+    with app.app_context():
+        today = date.today()
+        loans = Loans.query.filter(Loans.auto_debit == True, Loans.is_closed == False).all()
+        for loan in loans:
+            due = LoanInstallments.query.filter(
+                LoanInstallments.loan_id == loan.id,
+                LoanInstallments.is_paid == False,
+                LoanInstallments.due_date <= today,
+            ).order_by(LoanInstallments.installment_number).all()
+            for inst in due:
+                _execute_loan_installment(inst, loan, DB, Transactions, Splits, Accounts)
+        DB.session.commit()
+
+
+def execute_one_loan_installment(installment, loan, DB, Transactions, Splits, Accounts):
+    """Exécution manuelle d'une échéance unique (bouton 'Exécuter' / POST /loans/execute)."""
+    _execute_loan_installment(installment, loan, DB, Transactions, Splits, Accounts)
+    DB.session.commit()
+
+
 def refresh_tracked_asset_prices(app, DB, Assets, Commodities, FxRates):
     """Rafraîchit value_per_unit (converti dans la devise de l'actif) pour tous les actifs
     suivis en temps réel. Appelé par le scheduler."""
@@ -96,14 +154,17 @@ def refresh_tracked_commodity_rates(app, DB, Commodities, FxRates, UserSettings)
 def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot):
     """Enregistre un point quotidien (bancaire + portefeuille, converti en EUR) par utilisateur.
     Appelé par le scheduler et une fois au démarrage (voir app.py)."""
-    from utils.wealth import compute_bank_net_worth, compute_portfolio_value
+    from utils.wealth import compute_bank_net_worth, compute_portfolio_value, compute_total_liabilities
     with app.app_context():
         today = date.today()
         user_ids = {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
         for user_id in user_ids:
             bank_nw = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, 'EUR')
             portfolio_val = compute_portfolio_value(Assets, AssetPossession, Commodities, FxRates, user_id, 'EUR')
-            total = round(bank_nw + portfolio_val, 2)
+            liabilities = compute_total_liabilities(Accounts, Commodities, FxRates, user_id, 'EUR')
+            # bank_nw/portfolio_val restent bruts (soldes bancaires + portefeuille, sans dette) —
+            # seul le total (le "Patrimoine") est net des crédits en cours.
+            total = round(bank_nw + portfolio_val - liabilities, 2)
             existing = WealthSnapshot.query.filter_by(user_id=user_id, snapshot_date=today).first()
             if existing:
                 existing.bank_net_worth = bank_nw
@@ -138,7 +199,8 @@ def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Comm
 
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations):
+                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
+                     Loans, LoanInstallments):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=cleanup_pending_documents,
@@ -154,6 +216,14 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
         trigger='interval',
         hours=1,
         id='subscriptions_job',
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=execute_due_loan_installments,
+        args=[app, DB, Loans, LoanInstallments, Transactions, Splits, Accounts],
+        trigger='interval',
+        hours=1,
+        id='loan_installments_job',
         replace_existing=True,
     )
     scheduler.add_job(

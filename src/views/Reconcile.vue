@@ -20,7 +20,7 @@
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Solde final du relevé (€)</label>
+          <label class="form-label">Solde final du relevé ({{ selectedAccountCurrency }})</label>
           <input
             type="number"
             v-model.number="statementBalance"
@@ -36,22 +36,22 @@
       <div v-if="selectedAccountId && data" class="kpi-row">
         <div class="kpi-card">
           <div class="kpi-label">Solde rapproché actuel</div>
-          <div class="kpi-value">{{ fmtAmount(data.reconciled_balance) }} €</div>
+          <div class="kpi-value">{{ fmtAmount(data.reconciled_balance) }} {{ selectedAccountCurrency }}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Sélectionnés</div>
-          <div class="kpi-value">{{ fmtAmount(checkedSum) }} €</div>
+          <div class="kpi-value">{{ fmtAmount(checkedSum) }} {{ selectedAccountCurrency }}</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Solde après rapprochement</div>
           <div class="kpi-value" :class="afterBalance >= 0 ? 'pos' : 'neg'">
-            {{ fmtAmount(afterBalance) }} €
+            {{ fmtAmount(afterBalance) }} {{ selectedAccountCurrency }}
           </div>
         </div>
         <div class="kpi-card" :class="{ 'kpi-ok': isBalanced, 'kpi-warn': !isBalanced }">
           <div class="kpi-label">Différence</div>
           <div class="kpi-value" :class="isBalanced ? 'pos' : 'neg'">
-            {{ fmtAmount(difference) }} €
+            {{ fmtAmount(difference) }} {{ selectedAccountCurrency }}
           </div>
         </div>
       </div>
@@ -119,7 +119,7 @@
       <div class="confirm-bar">
         <div class="confirm-info" :class="isBalanced ? 'balanced' : 'unbalanced'">
           <span v-if="isBalanced">✓ Soldes équilibrés — vous pouvez confirmer le rapprochement.</span>
-          <span v-else>Différence restante : {{ fmtAmount(difference) }} € — cochez les transactions correspondant à votre relevé.</span>
+          <span v-else>Différence restante : {{ fmtAmount(difference) }} {{ selectedAccountCurrency }} — cochez les transactions correspondant à votre relevé.</span>
         </div>
         <button
           class="btn btn-primary"
@@ -139,6 +139,7 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 
 const accounts = ref([])
+const commodities = ref([])
 const selectedAccountId = ref('')
 const statementBalance = ref(0)
 const data = ref(null)
@@ -155,6 +156,14 @@ const afterBalance = computed(() => (data.value?.reconciled_balance ?? 0) + chec
 const difference = computed(() => statementBalance.value - afterBalance.value)
 const isBalanced = computed(() => Math.abs(difference.value) < 0.01)
 const allChecked = computed(() => pending.value.length > 0 && pending.value.every(r => r.checked))
+// Chaque compte a sa propre devise — pas de "devise par défaut" ici (contrairement au patrimoine
+// global) puisque le rapprochement porte toujours sur UN SEUL compte à la fois.
+const selectedAccountCurrency = computed(() => {
+  const acc = accounts.value.find(a => String(a.id) === String(selectedAccountId.value))
+  if (!acc) return ''
+  const c = commodities.value.find(c => String(c.id) === String(acc.currency_id))
+  return c ? c.short_name : ''
+})
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -170,9 +179,13 @@ function fmtDate(iso) {
 // ── data ──────────────────────────────────────────────────────────────────────
 
 async function loadAccounts() {
-  const res = await axios.get('/api/accounts')
-  accounts.value = (Array.isArray(res.data?.response_data) ? res.data.response_data : [])
+  const [accRes, comRes] = await Promise.all([
+    axios.get('/api/accounts'),
+    axios.get('/api/commodities'),
+  ])
+  accounts.value = (Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : [])
     .filter(a => ['Current', 'Assets'].includes(a.account_type))
+  commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
 }
 
 async function loadData() {

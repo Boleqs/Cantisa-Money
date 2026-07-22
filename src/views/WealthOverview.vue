@@ -3,7 +3,7 @@
     <header class="page-header">
       <div class="title-block">
         <h1>Vue d'ensemble patrimoniale</h1>
-        <p class="subtitle">Patrimoine bancaire et financier combinés, en {{ currency }}.</p>
+        <p class="subtitle">Actifs (portefeuille) et passifs (crédits) uniquement, en {{ currency }} — hors soldes bancaires, voir Rapports prédéfinis pour le patrimoine total.</p>
       </div>
       <button class="btn" :disabled="loading" @click="reload">
         <span v-if="!loading">↻ Rafraîchir</span>
@@ -16,23 +16,24 @@
     <!-- KPI Cards -->
     <div class="kpi-grid">
       <div class="kpi-card kpi-card--featured">
-        <div class="kpi-label">Patrimoine total</div>
-        <div class="kpi-value" :class="kpis.net_worth_total >= 0 ? 'pos' : 'neg'">
-          {{ fmtAmount(kpis.net_worth_total) }}
+        <div class="kpi-label">Patrimoine financier net</div>
+        <div class="kpi-value" :class="financialNet >= 0 ? 'pos' : 'neg'">
+          {{ fmtAmount(financialNet) }}
         </div>
-        <div class="kpi-sub">Bancaire + Portefeuille</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Patrimoine bancaire</div>
-        <div class="kpi-value" :class="kpis.bank_net_worth >= 0 ? 'pos' : 'neg'">
-          {{ fmtAmount(kpis.bank_net_worth) }}
+        <div class="kpi-sub" v-if="kpis.total_liabilities">
+          Brut {{ fmtAmount(kpis.portfolio_value) }} − Crédits {{ fmtAmount(kpis.total_liabilities) }}
         </div>
-        <div class="kpi-sub">Liquidités, épargne, comptes titres</div>
+        <div class="kpi-sub" v-else>Portefeuille, aucun crédit en cours</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Valeur du portefeuille</div>
         <div class="kpi-value">{{ fmtAmount(kpis.portfolio_value) }}</div>
-        <div class="kpi-sub">Actifs financiers &amp; physiques</div>
+        <div class="kpi-sub">Actifs financiers &amp; physiques (brut, avant crédits)</div>
+      </div>
+      <div class="kpi-card" v-if="kpis.total_liabilities">
+        <div class="kpi-label">Crédits en cours</div>
+        <div class="kpi-value neg">{{ fmtAmount(kpis.total_liabilities) }}</div>
+        <div class="kpi-sub">Capital restant dû — déjà déduit du patrimoine financier net</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Plus-value latente</div>
@@ -47,29 +48,19 @@
     </div>
 
     <!-- Combined history -->
-    <div class="card">
-      <div class="card-title">Évolution du patrimoine total</div>
-      <div v-if="history.length < 2" class="no-data">Pas assez de données (l'historique se construit jour après jour).</div>
-      <div v-else class="svg-wrapper">
-        <svg :viewBox="`0 0 ${SVG_W} ${SVG_H}`" preserveAspectRatio="none" class="chart-svg">
-          <defs>
-            <linearGradient id="whGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#10b981" stop-opacity="0.30"/>
-              <stop offset="100%" stop-color="#10b981" stop-opacity="0.02"/>
-            </linearGradient>
-          </defs>
-          <line v-if="zeroY !== null"
-            :x1="PAD.l" :y1="zeroY" :x2="SVG_W - PAD.r" :y2="zeroY"
-            stroke="rgba(148,163,184,0.2)" stroke-width="1" stroke-dasharray="4,3"
-          />
-          <polygon :points="areaPoints" fill="url(#whGrad)" />
-          <polyline :points="linePoints" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linejoin="round"/>
-          <circle v-for="(d, i) in history" :key="d.date" :cx="scaleX(i)" :cy="scaleY(d.total)" r="2.2" fill="#10b981" />
-          <text :x="PAD.l - 4" :y="PAD.t + 4" text-anchor="end" class="svg-label">{{ fmtAmountShort(maxVal) }}</text>
-          <text :x="PAD.l - 4" :y="SVG_H - PAD.b" text-anchor="end" class="svg-label">{{ fmtAmountShort(minVal) }}</text>
-          <text v-for="lbl in xLabels" :key="lbl.label" :x="lbl.x" :y="SVG_H - 4" text-anchor="middle" class="svg-label">{{ lbl.label }}</text>
-        </svg>
-      </div>
+    <LineGraph
+      v-if="financialHistory.length >= 2"
+      title="Évolution du patrimoine financier (actifs − passifs)"
+      :labels="financialHistory.map(d => d.date.slice(5))"
+      :values="financialHistory.map(d => d.value)"
+      dataset-label="Patrimoine financier"
+      color="#10b981"
+      :format-value="fmtAmount"
+      :show-last-value="false"
+    />
+    <div v-else class="card">
+      <div class="card-title">Évolution du patrimoine financier (actifs − passifs)</div>
+      <div class="no-data">Pas assez de données (l'historique se construit jour après jour).</div>
     </div>
 
     <!-- Répartitions -->
@@ -142,8 +133,13 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { currency } from '@/utils/settings.js'
+import LineGraph from '../components/graphs/LineGraph.vue'
 
-const kpis = ref({ net_worth_total: 0, bank_net_worth: 0, portfolio_value: 0, unrealized_gain: 0, unrealized_gain_pct: null })
+const kpis = ref({
+  net_worth_total: 0, net_worth_total_gross: 0,
+  bank_net_worth: 0, total_liabilities: 0, portfolio_value: 0,
+  unrealized_gain: 0, unrealized_gain_pct: null,
+})
 const allocationByType = ref([])
 const allocationByCurrency = ref([])
 const allocationBySector = ref([])
@@ -154,55 +150,24 @@ const history = ref([])
 const loading = ref(false)
 const error = ref('')
 
-const SVG_W = 500
-const SVG_H = 130
-const PAD = { t: 14, b: 22, l: 52, r: 10 }
-const innerW = SVG_W - PAD.l - PAD.r
-const innerH = SVG_H - PAD.t - PAD.b
-
 function fmtAmount(v) {
   const n = Number(v ?? 0)
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n) + ' ' + currency.value
-}
-function fmtAmountShort(v) {
-  const n = Number(v ?? 0)
-  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k'
-  return Math.round(n).toString()
 }
 
 function maxAlloc(list) {
   return Math.max(...list.map(c => c.value), 1)
 }
 
-const minVal = computed(() => Math.min(...history.value.map(d => d.total), 0))
-const maxVal = computed(() => Math.max(...history.value.map(d => d.total), 1))
-
-function scaleX(i) {
-  const n = history.value.length
-  return PAD.l + (n <= 1 ? 0 : (i / (n - 1)) * innerW)
-}
-function scaleY(val) {
-  const range = maxVal.value - minVal.value || 1
-  return PAD.t + (1 - (val - minVal.value) / range) * innerH
-}
-
-const linePoints = computed(() => history.value.map((d, i) => `${scaleX(i)},${scaleY(d.total)}`).join(' '))
-const areaPoints = computed(() => {
-  if (!history.value.length) return ''
-  const n = history.value.length
-  const bottom = PAD.t + innerH
-  return `${PAD.l},${bottom} ${linePoints.value} ${scaleX(n - 1)},${bottom}`
-})
-const zeroY = computed(() => {
-  if (minVal.value >= 0 || maxVal.value <= 0) return null
-  return scaleY(0)
-})
-const xLabels = computed(() => {
-  const h = history.value
-  if (!h.length) return []
-  const idxs = [0, Math.floor((h.length - 1) / 2), h.length - 1]
-  return [...new Set(idxs)].map(i => ({ x: scaleX(i), label: h[i].date.slice(5) }))
-})
+// Patrimoine financier net = actifs (portefeuille) - passifs (crédits), calculé côté client à
+// partir de la réponse combinée /api/wealth/overview|history (qui reste pleine — bancaire compris
+// — pour Reports.vue, voir rt_wealth.py). total - bank_net_worth = portfolio_value - dettes, par
+// construction (total = bank_net_worth + portfolio_value - dettes).
+const financialNet = computed(() => (kpis.value.portfolio_value ?? 0) - (kpis.value.total_liabilities ?? 0))
+const financialHistory = computed(() => history.value.map(d => ({
+  date: d.date,
+  value: (d.total ?? 0) - (d.bank_net_worth ?? 0),
+})))
 
 async function reload() {
   loading.value = true
@@ -296,10 +261,6 @@ onMounted(() => reload())
 }
 .card-title { font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 14px; }
 .no-data { font-size: 13px; color: #4b5563; }
-
-.svg-wrapper { width: 100%; }
-.chart-svg { width: 100%; height: 130px; overflow: visible; }
-.svg-label { font-size: 9px; fill: #6b7280; }
 
 .cat-list { display: flex; flex-direction: column; gap: 10px; }
 .cat-row { display: grid; grid-template-columns: 100px 1fr 90px; align-items: center; gap: 10px; }

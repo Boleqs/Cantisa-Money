@@ -6,16 +6,11 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import convert_amount
-from backend.utils.wealth import compute_bank_net_worth, get_portfolio_breakdown, _portfolio_account_ids
+from backend.utils.wealth import compute_bank_net_worth, compute_total_liabilities, get_portfolio_breakdown, _portfolio_account_ids
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 WEALTH_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
 
-BANK_TYPE_LABELS = {
-    'Current': 'Liquidités',
-    'Assets': 'Épargne / autres comptes',
-    'Equity': 'Comptes Equity / PEA',
-}
 PORTFOLIO_TYPE_LABELS = {
     'Stock': 'Actions',
     'ETF': 'ETF',
@@ -23,26 +18,6 @@ PORTFOLIO_TYPE_LABELS = {
     'Vehicle': 'Véhicules',
     'Other': 'Autres actifs',
 }
-
-
-def _bank_allocation(Accounts, Commodities, AssetPossession, FxRates, user_id, target_currency):
-    accounts = Accounts.query.filter(
-        Accounts.user_id == user_id,
-        Accounts.account_type.in_(BANK_TYPE_LABELS.keys()),
-        Accounts.is_virtual == False,
-        Accounts.is_hidden == False,
-        ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
-    ).all()
-    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
-    totals = {}
-    for a in accounts:
-        balance = float(a.total_earned or 0) - float(a.total_spent or 0)
-        commodity = commodities_by_id.get(a.currency_id)
-        code = commodity.short_name if commodity else target_currency
-        converted = convert_amount(balance, code, target_currency, FxRates) or 0
-        label = BANK_TYPE_LABELS[a.account_type]
-        totals[label] = totals.get(label, 0) + converted
-    return [{'label': label, 'value': round(v, 2)} for label, v in totals.items() if v]
 
 
 def _portfolio_allocation(portfolio):
@@ -53,21 +28,11 @@ def _portfolio_allocation(portfolio):
     return [{'label': label, 'value': round(v, 2)} for label, v in totals.items() if v]
 
 
-def _currency_allocation(Accounts, Commodities, AssetPossession, FxRates, user_id, portfolio, target_currency):
-    accounts = Accounts.query.filter(
-        Accounts.user_id == user_id,
-        Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
-        Accounts.is_virtual == False,
-        Accounts.is_hidden == False,
-        ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
-    ).all()
-    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+def _currency_allocation(portfolio):
+    """Répartition du portefeuille par devise — volontairement sans les comptes bancaires (Current/
+    Assets/Equity) : la page Patrimoine (Gestion financière) ne concerne que les actifs et passifs,
+    voir la note sur le périmètre du Patrimoine dans get_wealth_overview()."""
     totals = {}
-    for a in accounts:
-        balance = float(a.total_earned or 0) - float(a.total_spent or 0)
-        commodity = commodities_by_id.get(a.currency_id)
-        code = commodity.short_name if commodity else target_currency
-        totals[code] = totals.get(code, 0) + (convert_amount(balance, code, target_currency, FxRates) or 0)
     for a in portfolio:
         totals[a['currency']] = totals.get(a['currency'], 0) + a['value']
     return [{'currency': code, 'value': round(v, 2)} for code, v in totals.items() if v]
@@ -93,7 +58,15 @@ class WealthRoutes:
             currency = request.args.get('currency', 'EUR').upper()
             user_id = get_jwt_identity()
 
+            # Cet endpoint reste la source de la vue "Patrimoine totale" (bancaire + portefeuille,
+            # dette déduite) consommée par Rapports prédéfinis > Patrimoine (Reports.vue) — c'est le
+            # SEUL endroit de l'appli qui affiche ce total combiné, voir kpis.net_worth_total plus
+            # bas. La page Patrimoine de Gestion financière (WealthOverview.vue) n'utilise elle que
+            # les champs actifs/passifs (portfolio_value, total_liabilities) de cette même réponse et
+            # ignore bank_net_worth/net_worth_total — un solde bancaire n'est pas "le Patrimoine" par
+            # définition côté Gestion financière (voir rt_dashboard.py pour la vue bancaire).
             bank_net_worth = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, currency)
+            total_liabilities = compute_total_liabilities(Accounts, Commodities, FxRates, user_id, currency)
             portfolio = get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_id, currency)
             portfolio_value = round(sum(a['value'] for a in portfolio), 2)
 
@@ -102,8 +75,10 @@ class WealthRoutes:
             invested = sum(a['purchase_value'] for a in gains)
             unrealized_gain_pct = round(unrealized_gain / invested * 100, 2) if invested else None
 
-            allocation_by_type = _bank_allocation(Accounts, Commodities, AssetPossession, FxRates, user_id, currency) + _portfolio_allocation(portfolio)
-            allocation_by_currency = _currency_allocation(Accounts, Commodities, AssetPossession, FxRates, user_id, portfolio, currency)
+            # Répartitions par type/devise : portefeuille uniquement (pas de comptes bancaires) — ne
+            # sont consommées que par WealthOverview.vue (Gestion financière, actifs/passifs).
+            allocation_by_type = _portfolio_allocation(portfolio)
+            allocation_by_currency = _currency_allocation(portfolio)
             allocation_by_sector = _sector_allocation(portfolio)
 
             top_movers = sorted(
@@ -118,8 +93,15 @@ class WealthRoutes:
             return json_response({
                 'currency': currency,
                 'kpis': {
-                    'net_worth_total': round(bank_net_worth + portfolio_value, 2),
+                    # net_worth_total/net_worth_total_gross/bank_net_worth : combiné bancaire +
+                    # portefeuille, dette déduite pour le premier — réservé à Reports.vue (onglet
+                    # Patrimoine), voir le commentaire plus haut. Ne pas les afficher sur la page
+                    # Patrimoine de Gestion financière (WealthOverview.vue) : elle recalcule son
+                    # propre brut/net à partir de portfolio_value et total_liabilities uniquement.
+                    'net_worth_total': round(bank_net_worth + portfolio_value - total_liabilities, 2),
+                    'net_worth_total_gross': round(bank_net_worth + portfolio_value, 2),
                     'bank_net_worth': bank_net_worth,
+                    'total_liabilities': total_liabilities,
                     'portfolio_value': portfolio_value,
                     'unrealized_gain': unrealized_gain,
                     'unrealized_gain_pct': unrealized_gain_pct,

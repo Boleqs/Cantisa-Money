@@ -336,55 +336,14 @@
           </div>
         </div>
 
-        <!-- SVG: Taux d'épargne -->
-        <div class="card">
-          <div class="card-title">Évolution du taux d'épargne</div>
-          <div class="svg-wrap">
-            <svg :viewBox="`0 0 ${SW} ${SH}`" preserveAspectRatio="none" class="chart-svg">
-              <defs>
-                <linearGradient id="savGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#34d399" stop-opacity="0.3"/>
-                  <stop offset="100%" stop-color="#34d399" stop-opacity="0.02"/>
-                </linearGradient>
-              </defs>
-              <!-- 0% baseline -->
-              <line v-if="zeroSavY !== null"
-                :x1="SP.l" :y1="zeroSavY" :x2="SW - SP.r" :y2="zeroSavY"
-                stroke="rgba(148,163,184,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
-              <!-- 20% target -->
-              <line v-if="targetSavY !== null"
-                :x1="SP.l" :y1="targetSavY" :x2="SW - SP.r" :y2="targetSavY"
-                stroke="rgba(251,191,36,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
-              <text v-if="targetSavY !== null"
-                :x="SW - SP.r + 2" :y="targetSavY + 4"
-                class="svg-label" fill="#fbbf24">20%</text>
-              <!-- Area fill -->
-              <polygon v-if="savingsAreaPoints" :points="savingsAreaPoints" fill="url(#savGrad)" />
-              <!-- Line -->
-              <polyline v-if="savingsLinePoints" :points="savingsLinePoints"
-                fill="none" stroke="#34d399" stroke-width="1.8" stroke-linejoin="round"/>
-              <!-- Points -->
-              <circle v-for="(pt, i) in savingsPointCoords" :key="i"
-                :cx="pt.x" :cy="pt.y" r="3"
-                :fill="pt.rate >= 0 ? '#34d399' : '#f87171'"
-                stroke="#0b1220" stroke-width="1.5">
-                <title>{{ pt.label }} : {{ pt.rate.toFixed(1) }}%</title>
-              </circle>
-              <!-- Y labels -->
-              <text :x="SP.l - 4" :y="SP.t + 8"      text-anchor="end" class="svg-label">{{ Math.round(savRateMax) }}%</text>
-              <text :x="SP.l - 4" :y="SH - SP.b + 4"  text-anchor="end" class="svg-label">{{ Math.round(savRateMin) }}%</text>
-              <!-- X labels -->
-              <text v-for="(pt, i) in savingsPointCoords" :key="'xl'+i"
-                :x="pt.x" :y="SH - 2" text-anchor="middle" class="svg-label">
-                {{ pt.label.slice(0, 3) }}
-              </text>
-            </svg>
-          </div>
-          <div class="legend">
-            <span style="color:#fbbf24">- - -</span> Objectif 20%
-            <span style="color:rgba(148,163,184,0.6)">- - -</span> 0%
-          </div>
-        </div>
+        <!-- Taux d'épargne -->
+        <LineGraph
+          title="Évolution du taux d'épargne"
+          :labels="monthly.map(m => m.label)"
+          :series="savingsChartSeries"
+          :format-value="v => Math.round(v) + ' %'"
+          :show-last-value="false"
+        />
 
         <!-- Table -->
         <div class="card">
@@ -579,63 +538,59 @@
       <div v-else-if="!wealthOverview" class="empty">Pas encore de données de patrimoine.</div>
       <template v-else>
 
-        <p class="hint">
-          <template v-if="wealthHistory.length">
-            Période affichée : {{ fmtDate(wealthHistory[0].date) }} → {{ fmtDate(wealthHistory[wealthHistory.length - 1].date) }}
-            ({{ wealthHistory.length }} jour{{ wealthHistory.length > 1 ? 's' : '' }}). Les 3 premières cartes reflètent la fin de cette période ; "Aujourd'hui" affiche l'état actuel réel.
-          </template>
-        </p>
-
-        <div class="kpi-row">
-          <div class="kpi-card">
-            <div class="kpi-label">Patrimoine ({{ wealthHistory.length ? 'fin période' : '—' }})</div>
-            <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.total) : '—' }}</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Bancaire</div>
-            <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.bank_net_worth) : '—' }}</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Portefeuille</div>
-            <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.portfolio_value) : '—' }}</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Évolution sur la période</div>
-            <div class="kpi-value" :class="wealthGrowth === null ? '' : (wealthGrowth >= 0 ? 'pos' : 'neg')">
-              {{ wealthGrowth === null ? '—' : (wealthGrowth >= 0 ? '+' : '') + fmtAmount(wealthGrowth) }}
+        <!-- Aujourd'hui : seul endroit de l'appli combinant bancaire + portefeuille + crédits -->
+        <div class="card">
+          <div class="card-title">Patrimoine net — aujourd'hui</div>
+          <div class="kpi-row">
+            <div class="kpi-card kpi-card--featured">
+              <div class="kpi-label">Patrimoine net</div>
+              <div class="kpi-value">{{ fmtAmount(wealthOverview.kpis.net_worth_total) }}</div>
+              <div class="kpi-sub">
+                Bancaire {{ fmtAmount(wealthOverview.kpis.bank_net_worth) }} + Portefeuille {{ fmtAmount(wealthOverview.kpis.portfolio_value) }}<template v-if="wealthOverview.kpis.total_liabilities"> − Crédits {{ fmtAmount(wealthOverview.kpis.total_liabilities) }}</template>
+              </div>
             </div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Patrimoine (aujourd'hui)</div>
-            <div class="kpi-value">{{ fmtAmount(wealthOverview.kpis.net_worth_total) }}</div>
           </div>
         </div>
 
+        <!-- Évolution sur la période filtrée -->
         <div class="card">
-          <div class="card-title">Évolution du patrimoine total</div>
+          <div class="card-title">Évolution sur la période</div>
+          <p class="hint" v-if="wealthHistory.length">
+            {{ fmtDate(wealthHistory[0].date) }} → {{ fmtDate(wealthHistory[wealthHistory.length - 1].date) }}
+            ({{ wealthHistory.length }} jour{{ wealthHistory.length > 1 ? 's' : '' }})
+          </p>
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="kpi-label">Patrimoine net (fin de période)</div>
+              <div class="kpi-value">{{ wealthLatest ? fmtAmount(wealthLatest.total) : '—' }}</div>
+              <div class="kpi-sub" v-if="wealthLatest">
+                Bancaire {{ fmtAmount(wealthLatest.bank_net_worth) }} + Portefeuille {{ fmtAmount(wealthLatest.portfolio_value) }}<template v-if="wealthLatestLiabilities"> − Crédits {{ fmtAmount(wealthLatestLiabilities) }}</template>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Croissance sur la période</div>
+              <div class="kpi-value" :class="wealthGrowth === null ? '' : (wealthGrowth >= 0 ? 'pos' : 'neg')">
+                {{ wealthGrowth === null ? '—' : (wealthGrowth >= 0 ? '+' : '') + fmtAmount(wealthGrowth) }}
+              </div>
+              <div class="kpi-sub" v-if="wealthGrowthPct !== null">
+                {{ wealthGrowthPct >= 0 ? '+' : '' }}{{ wealthGrowthPct.toFixed(1) }} %
+              </div>
+            </div>
+          </div>
+
           <div v-if="wealthHistory.length < 2" class="empty">
             Pas assez de points sur cette période pour tracer une évolution ({{ wealthHistory.length }} jour{{ wealthHistory.length > 1 ? 's' : '' }} disponible{{ wealthHistory.length > 1 ? 's' : '' }}). Essayez d'élargir la plage de dates.
           </div>
-          <div v-else class="svg-wrap">
-            <svg :viewBox="`0 0 ${SW} ${SH}`" preserveAspectRatio="none" class="chart-svg">
-              <defs>
-                <linearGradient id="wealthGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.3"/>
-                  <stop offset="100%" stop-color="#60a5fa" stop-opacity="0.02"/>
-                </linearGradient>
-              </defs>
-              <polygon v-if="wealthAreaPoints" :points="wealthAreaPoints" fill="url(#wealthGrad)" />
-              <polyline v-if="wealthLinePoints" :points="wealthLinePoints"
-                fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round"/>
-              <circle v-for="(pt, i) in wealthPointCoords" :key="i" :cx="pt.x" :cy="pt.y" r="2.2" fill="#60a5fa">
-                <title>{{ fmtDate(wealthHistory[i].date) }} : {{ fmtAmount(wealthHistory[i].total) }}</title>
-              </circle>
-              <text :x="SP.l - 4" :y="SP.t + 8"      text-anchor="end" class="svg-label">{{ fmtShort(wealthMax) }}</text>
-              <text :x="SP.l - 4" :y="SH - SP.b + 4"  text-anchor="end" class="svg-label">{{ fmtShort(wealthMin) }}</text>
-              <text :x="SP.l" :y="SH - 2" text-anchor="start" class="svg-label">{{ fmtDate(wealthHistory[0].date) }}</text>
-              <text :x="SW - SP.r" :y="SH - 2" text-anchor="end" class="svg-label">{{ fmtDate(wealthHistory[wealthHistory.length-1].date) }}</text>
-            </svg>
-          </div>
+          <LineGraph
+            v-else
+            title="Décomposition du patrimoine"
+            subtitle="Bancaire, portefeuille et crédits (dettes), jour par jour"
+            :labels="wealthHistory.map(h => fmtDate(h.date))"
+            :series="wealthSeries"
+            :format-value="fmtAmount"
+            :show-last-value="false"
+            height="220px"
+          />
         </div>
 
       </template>
@@ -860,17 +815,15 @@
           </template>
 
           <template v-else-if="customChartType === 'line'">
-            <div class="svg-wrap">
-              <svg :viewBox="`0 0 ${SW} ${SH}`" preserveAspectRatio="none" class="chart-svg">
-                <line :x1="SP.l" :y1="scaleY(0, customLineMin, customLineMax)" :x2="SW - SP.r" :y2="scaleY(0, customLineMin, customLineMax)"
-                  stroke="rgba(148,163,184,0.3)" stroke-width="1" />
-                <polyline :points="customLinePointsStr" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round" />
-                <circle v-for="(pt, i) in customLinePoints" :key="i" :cx="pt.x" :cy="pt.y" r="3" fill="#60a5fa" stroke="#0b1220" stroke-width="1.5">
-                  <title>{{ pt.label }} : {{ fmtCustomValue(pt.value) }}</title>
-                </circle>
-                <text v-for="(pt, i) in customLinePoints" :key="'xl'+i" :x="pt.x" :y="SH - 2" text-anchor="middle" class="svg-label">{{ pt.label }}</text>
-              </svg>
-            </div>
+            <LineGraph
+              title="Évolution"
+              :labels="customChartRows.map(d => d.name)"
+              :values="customChartRows.map(d => d.value)"
+              dataset-label="Valeur"
+              color="#60a5fa"
+              :format-value="fmtCustomValue"
+              :show-last-value="false"
+            />
           </template>
 
           <template v-else>
@@ -912,6 +865,8 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { hasPermission } from '@/utils/permissions.js'
+import { currency } from '@/utils/settings.js'
+import LineGraph from '../components/graphs/LineGraph.vue'
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const monthly   = ref([])
@@ -1006,20 +961,6 @@ const customPieTotal = computed(() => customChartRows.value.reduce((s, d) => s +
 const customPieSegments = computed(() =>
   makeDonutSegments(customChartRows.value.map(d => ({ name: d.name, total: Math.abs(d.value) })), customPieTotal.value)
 )
-const customLineMin = computed(() => Math.min(...customChartRows.value.map(d => d.value), 0))
-const customLineMax = computed(() => Math.max(...customChartRows.value.map(d => d.value), 1))
-const customLinePoints = computed(() => {
-  const n = customChartRows.value.length
-  if (!n) return []
-  return customChartRows.value.map((d, i) => ({
-    x: SP.l + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW),
-    y: scaleY(d.value, customLineMin.value, customLineMax.value),
-    label: d.name,
-    value: d.value,
-  }))
-})
-const customLinePointsStr = computed(() => customLinePoints.value.map(p => `${p.x},${p.y}`).join(' '))
-
 function buildCustomConfig() {
   return {
     start_date: customPeriod.value.start,
@@ -1144,12 +1085,15 @@ const innerH = SH - SP.t - SP.b
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 function fmtAmount(v) {
-  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(v || 0)
+  // Pas de style: 'currency' — Intl choisirait un symbole localisé (ex: "$US" pour USD en fr-FR)
+  // qui ne correspond pas au code stocké en base (commodities.short_name) et peut désorienter
+  // l'utilisateur. On affiche toujours le nombre + le code tel quel (ex: "1 234,56 USD").
+  return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0) + ' ' + currency.value
 }
 function fmtAmountShort(v) {
   const n = Number(v || 0)
-  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k €'
-  return Math.round(n) + ' €'
+  const short = Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toString()
+  return short + ' ' + currency.value
 }
 function fmtShort(v) {
   const n = Number(v || 0)
@@ -1275,30 +1219,31 @@ const subsDonutSegments = computed(() => makeDonutSegments(subsData.value.by_cat
 
 // ── Patrimoine ─────────────────────────────────────────────────────────────────
 const wealthLatest = computed(() => wealthHistory.value[wealthHistory.value.length - 1] || null)
+// Les crédits (dettes) ne sont pas stockés comme une série à part dans WealthSnapshot — dérivés
+// algébriquement de total = bank_net_worth + portfolio_value - dettes, voir aussi
+// utils/wealth.py::daily_liabilities_series côté backend pour la même logique.
+const wealthLatestLiabilities = computed(() => {
+  const h = wealthLatest.value
+  if (!h) return 0
+  return (h.bank_net_worth ?? 0) + (h.portfolio_value ?? 0) - (h.total ?? 0)
+})
 const wealthGrowth = computed(() => {
   if (wealthHistory.value.length < 2) return null
   return wealthHistory.value[wealthHistory.value.length - 1].total - wealthHistory.value[0].total
 })
-const wealthRawMax = computed(() => Math.max(...wealthHistory.value.map(h => h.total), 0))
-const wealthRawMin = computed(() => Math.min(...wealthHistory.value.map(h => h.total), 0))
-const wealthPad = computed(() => Math.max((wealthRawMax.value - wealthRawMin.value) * 0.1, 1))
-const wealthMax = computed(() => wealthRawMax.value + wealthPad.value)
-const wealthMin = computed(() => wealthRawMin.value - wealthPad.value)
-const wealthPointCoords = computed(() => {
-  const n = wealthHistory.value.length
-  if (!n) return []
-  return wealthHistory.value.map((h, i) => ({
-    x: SP.l + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW),
-    y: scaleY(h.total, wealthMin.value, wealthMax.value),
-  }))
+const wealthGrowthPct = computed(() => {
+  if (wealthHistory.value.length < 2) return null
+  const start = wealthHistory.value[0].total
+  if (!start) return null
+  return (wealthGrowth.value / Math.abs(start)) * 100
 })
-const wealthLinePoints = computed(() => wealthPointCoords.value.map(p => `${p.x},${p.y}`).join(' '))
-const wealthAreaPoints = computed(() => {
-  const pts = wealthPointCoords.value
-  if (!pts.length) return ''
-  const baseY = scaleY(wealthMin.value, wealthMin.value, wealthMax.value)
-  const line = pts.map(p => `${p.x},${p.y}`).join(' ')
-  return `${pts[0].x},${baseY} ${line} ${pts[pts.length - 1].x},${baseY}`
+const wealthSeries = computed(() => {
+  const h = wealthHistory.value
+  return [
+    { label: 'Bancaire', values: h.map(d => d.bank_net_worth ?? 0), color: '#60a5fa' },
+    { label: 'Portefeuille', values: h.map(d => d.portfolio_value ?? 0), color: '#34d399' },
+    { label: 'Crédits (dettes)', values: h.map(d => (d.bank_net_worth ?? 0) + (d.portfolio_value ?? 0) - (d.total ?? 0)), color: '#f87171' },
+  ]
 })
 
 // ── Portefeuille ───────────────────────────────────────────────────────────────
@@ -1317,53 +1262,12 @@ const maxAbsNet = computed(() =>
 )
 
 // ── Savings line chart ────────────────────────────────────────────────────────
-const savingsPointCoords = computed(() => {
-  const data = monthly.value.filter(m => m.savings_rate !== null)
-  if (!data.length) return []
-  const n = monthly.value.length
-  return data.map(m => {
-    const i = monthly.value.indexOf(m)
-    return {
-      x: SP.l + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW),
-      y: scaleY(m.savings_rate, savRateMin.value, savRateMax.value),
-      rate: m.savings_rate,
-      label: m.label,
-    }
-  })
-})
-
-const savRateMin = computed(() => {
-  if (!validSavings.value.length) return -20
-  return Math.min(...validSavings.value.map(m => m.savings_rate), 0) - 10
-})
-const savRateMax = computed(() => {
-  if (!validSavings.value.length) return 100
-  return Math.max(...validSavings.value.map(m => m.savings_rate), 20) + 10
-})
-
-function scaleY(val, min, max) {
-  const range = max - min || 1
-  return SP.t + (1 - (val - min) / range) * innerH
-}
-
-const savingsLinePoints = computed(() =>
-  savingsPointCoords.value.map(p => `${p.x},${p.y}`).join(' ')
-)
-const savingsAreaPoints = computed(() => {
-  const pts = savingsPointCoords.value
-  if (!pts.length) return ''
-  const baseY = scaleY(0, savRateMin.value, savRateMax.value)
-  const line = pts.map(p => `${p.x},${p.y}`).join(' ')
-  return `${pts[0].x},${baseY} ${line} ${pts[pts.length-1].x},${baseY}`
-})
-const zeroSavY = computed(() => {
-  const y = scaleY(0, savRateMin.value, savRateMax.value)
-  return (y > SP.t && y < SH - SP.b) ? y : null
-})
-const targetSavY = computed(() => {
-  const y = scaleY(20, savRateMin.value, savRateMax.value)
-  return (y > SP.t && y < SH - SP.b) ? y : null
-})
+// Chart.js gère nativement les trous (mois sans donnée, savings_rate === null) en coupant la
+// ligne — pas besoin de recalculer un index dédié comme avec l'ancien SVG dessiné à la main.
+const savingsChartSeries = computed(() => [
+  { label: "Taux d'épargne", values: monthly.value.map(m => m.savings_rate), color: '#34d399' },
+  { label: 'Objectif (20%)', values: monthly.value.map(() => 20), color: '#fbbf24' },
+])
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 async function loadMonthly() {
@@ -1464,9 +1368,13 @@ async function loadWealth(force = false) {
   try {
     const [histRes, overviewRes] = await Promise.all([
       axios.get('/api/wealth/history', {
-        params: { start_date: wealthFilter.value.start || undefined, end_date: wealthFilter.value.end || undefined },
+        params: {
+          start_date: wealthFilter.value.start || undefined,
+          end_date: wealthFilter.value.end || undefined,
+          currency: currency.value,
+        },
       }),
-      axios.get('/api/wealth/overview'),
+      axios.get('/api/wealth/overview', { params: { currency: currency.value } }),
     ])
     wealthHistory.value = Array.isArray(histRes.data?.response_data) ? histRes.data.response_data : []
     wealthOverview.value = overviewRes.data?.response_data || null
@@ -1564,6 +1472,8 @@ onMounted(() => reload())
 }
 .kpi-label { font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; }
 .kpi-value { font-size: 22px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 12px; color: #6b7280; margin-top: 6px; }
+.kpi-card--featured { border-color: rgba(96,165,250,0.35); background: rgba(96,165,250,0.06); }
 .pos { color: #34d399; }
 .neg { color: #f87171; }
 

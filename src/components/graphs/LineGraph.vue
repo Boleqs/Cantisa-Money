@@ -16,7 +16,7 @@
       <canvas ref="canvasRef"></canvas>
     </div>
 
-    <p v-if="!labels.length || !values.length" class="chart-status">
+    <p v-if="!hasData" class="chart-status">
       Aucune donnée à afficher.
     </p>
   </div>
@@ -39,23 +39,28 @@ const props = defineProps({
     type: Array,
     required: true
   },
+  /**
+   * Mode simple (une seule courbe) : values + datasetLabel + color. Ignoré si `series` est fourni.
+   */
   values: {
     type: Array,
-    required: true
+    default: () => []
   },
-  /**
-   * étiquette de la courbe (pour la légende / tooltip)
-   */
   datasetLabel: {
     type: String,
     default: 'Série'
   },
-  /**
-   * couleur principale de la courbe
-   */
   color: {
     type: String,
     default: '#6366f1'
+  },
+  /**
+   * Mode multi-courbes (prioritaire sur values/datasetLabel/color) : [{ label, values, color }, ...],
+   * toutes alignées sur `labels`. La légende Chart.js s'affiche automatiquement dans ce mode.
+   */
+  series: {
+    type: Array,
+    default: () => []
   },
   /**
    * hauteur du graphique
@@ -65,66 +70,84 @@ const props = defineProps({
     default: '180px'
   },
   /**
-   * afficher la dernière valeur en haut à droite
+   * afficher la dernière valeur en haut à droite (mode simple uniquement — ambigu en multi-courbes)
    */
   showLastValue: {
     type: Boolean,
     default: true
   },
   /**
-   * callback optionnel pour formater les valeurs de l’axe Y et du dernier total
-   * ex: v => v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
+   * callback optionnel pour formater les valeurs de l'axe Y et du dernier total. Composant
+   * générique : par défaut, nombre brut sans devise supposée — ex: v => `${v.toLocaleString('fr-FR')} USD`
+   * (ne pas utiliser style: 'currency', qui affiche un symbole localisé, ex: "$US" pour USD en
+   * fr-FR, différent du code stocké en base).
    */
   formatValue: {
     type: Function,
-    default: (v) =>
-  v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
+    default: (v) => v.toLocaleString('fr-FR', { maximumFractionDigits: 2 })
   }
 })
 
 const canvasRef = ref(null)
 const chartInstance = ref(null)
 
+const isMulti = computed(() => props.series.length > 0)
+const hasData = computed(() => {
+  if (!props.labels.length) return false
+  return isMulti.value ? props.series.some(s => s.values?.length) : props.values.length > 0
+})
+
 const lastValue = computed(() => {
-  if (!props.values.length) return null
+  if (isMulti.value || !props.values.length) return null
   const v = props.values[props.values.length - 1]
   return props.formatValue ? props.formatValue(v) : v
 })
 
 const buildChart = () => {
-  if (!canvasRef.value || !props.labels.length || !props.values.length) return
+  if (!canvasRef.value || !hasData.value) return
 
   // détruire l’ancien graphique si besoin
   if (chartInstance.value) {
     chartInstance.value.destroy()
   }
 
-  const borderColor = props.color
-  const backgroundColor = props.color + '33' // même couleur, faible opacité
+  const datasets = isMulti.value
+    ? props.series.map(s => ({
+        label: s.label,
+        data: s.values,
+        borderColor: s.color,
+        backgroundColor: s.color + '33',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 2,
+        pointHoverRadius: 4
+      }))
+    : [{
+        label: props.datasetLabel,
+        data: props.values,
+        borderColor: props.color,
+        backgroundColor: props.color + '33',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 4
+      }]
 
   chartInstance.value = new Chart(canvasRef.value.getContext('2d'), {
     type: 'line',
     data: {
       labels: props.labels,
-      datasets: [
-        {
-          label: props.datasetLabel,
-          data: props.values,
-          borderColor,
-          backgroundColor,
-          fill: true,
-          tension: 0.3,
-          pointRadius: 3,
-          pointHoverRadius: 4
-        }
-      ]
+      datasets
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
-          display: false
+          display: isMulti.value,
+          position: 'bottom',
+          labels: { color: '#9ca3af', boxWidth: 12, font: { size: 11 } }
         },
         tooltip: {
           mode: 'index',
@@ -132,10 +155,8 @@ const buildChart = () => {
           callbacks: {
             label: (ctx) => {
               const v = ctx.parsed.y
-              if (props.formatValue) {
-                return props.formatValue(v)
-              }
-              return v
+              const label = isMulti.value ? `${ctx.dataset.label} : ` : ''
+              return label + (props.formatValue ? props.formatValue(v) : v)
             }
           }
         }
@@ -170,7 +191,7 @@ onBeforeUnmount(() => {
 
 // si les données changent → on reconstruit
 watch(
-  () => [props.labels, props.values, props.color],
+  () => [props.labels, props.values, props.color, props.series],
   () => {
     buildChart()
   },

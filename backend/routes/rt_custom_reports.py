@@ -13,7 +13,13 @@ from backend.utils.restricted_by_permission import restricted_by_permission
 
 REPORTS_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
-ACCOUNT_TYPES = ('Income', 'Expense', 'Equity', 'Assets', 'Current')
+# Volontairement inchangé (n'inclut PAS 'Liability') : c'est le filtre par défaut appliqué quand
+# l'utilisateur n'a pas explicitement filtré sur account_type, pour éviter de compter deux fois un
+# même mouvement via les contreparties Income/Expense. Y ajouter Liability injecterait par défaut
+# les mouvements de capital d'un crédit (déblocage, remboursements) dans des agrégations pensées
+# pour des flux réels (revenus/dépenses) — l'utilisateur peut toujours cibler explicitement les
+# comptes Liability via un filtre account_type (voir ACCOUNT_TYPES ci-dessous).
+ACCOUNT_TYPES = ('Income', 'Expense', 'Equity', 'Assets', 'Current', 'Liability')
 
 GROUP_BY_OPTIONS = {'category', 'tag', 'account', 'day', 'week', 'month', 'year', 'none'}
 METRIC_OPTIONS = {'sum', 'count', 'avg'}

@@ -236,6 +236,10 @@ class DashboardRoutes:
                 })
 
             # ── Patrimoine net (KPI) ───────────────────────────────────────────
+            # Volontairement limité à Current/Assets/Equity (soldes bancaires) : le vrai "Patrimoine"
+            # (net worth complet, avec soustraction des crédits) est un concept propre à la page
+            # Patrimoine (voir GET /api/wealth/overview) qui inclut aussi le portefeuille — les soldes
+            # bancaires seuls n'en font pas partie et n'ont donc pas de distinction brut/net ici.
             net_worth = sum(
                 (float(a.total_earned or 0) - float(a.total_spent or 0)) * rate_to_target(account_currency(a))
                 for a in all_accounts if a.account_type in WEALTH_TYPES

@@ -13,8 +13,11 @@ def _portfolio_account_ids(AssetPossession, user_id):
 
 
 def compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, target_currency='EUR'):
-    """Somme des comptes Current/Assets/Equity (comme WEALTH_TYPES dans rt_dashboard.py), convertie,
-    à l'exclusion des comptes servant de conteneur à des positions de portefeuille (cf. _portfolio_account_ids)."""
+    """Somme des comptes Current/Assets/Equity (soldes bancaires), convertie, à l'exclusion des
+    comptes servant de conteneur à des positions de portefeuille (cf. _portfolio_account_ids).
+    Volontairement SANS les comptes Liability : un solde bancaire n'est pas le "Patrimoine" au sens
+    strict (qui inclut aussi le portefeuille et soustrait les crédits, voir compute_total_liabilities
+    et son usage dans rt_wealth.py::get_wealth_overview pour net_worth_total)."""
     accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
         Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
@@ -27,6 +30,28 @@ def compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user
     total = 0.0
     for a in accounts:
         balance = float(a.total_earned or 0) - float(a.total_spent or 0)
+        commodity = commodities_by_id.get(a.currency_id)
+        code = commodity.short_name if commodity else target_currency
+        total += convert_amount(balance, code, target_currency, FxRates) or 0
+    return round(total, 2)
+
+
+def compute_total_liabilities(Accounts, Commodities, FxRates, user_id, target_currency='EUR'):
+    """Somme des comptes de type Liability (crédits en cours), convertie, retournée en valeur
+    POSITIVE ("dette totale"). Utilisée pour soustraire les crédits UNIQUEMENT au niveau du
+    "Patrimoine" complet (bancaire + portefeuille, voir net_worth_total dans rt_wealth.py) — pas
+    du solde bancaire seul, qui n'est pas "le Patrimoine" par définition."""
+    accounts = Accounts.query.filter(
+        Accounts.user_id == user_id,
+        Accounts.account_type == 'Liability',
+        Accounts.is_virtual == False,
+        Accounts.is_hidden == False,
+    ).all()
+    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+
+    total = 0.0
+    for a in accounts:
+        balance = float(a.total_spent or 0) - float(a.total_earned or 0)
         commodity = commodities_by_id.get(a.currency_id)
         code = commodity.short_name if commodity else target_currency
         total += convert_amount(balance, code, target_currency, FxRates) or 0
@@ -84,19 +109,25 @@ def _day_range(start_date, end_date):
     return [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
 
-def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, end_date, target_currency='EUR'):
-    """Reconstruit le solde bancaire net (Current/Assets/Equity, converti) jour par jour sur la période,
-    à l'exclusion des comptes-conteneurs de portefeuille (cf. _portfolio_account_ids).
-    Une seule requête réseau par devise distincte (pas par jour) pour la conversion historique."""
+def _daily_account_balance_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB,
+                                   user_id, start_date, end_date, account_types, exclude_portfolio_containers,
+                                   target_currency='EUR'):
+    """Reconstruit, jour par jour sur la période, la somme convertie de (total_earned - total_spent)
+    pour les comptes du user filtrés sur `account_types`. Brique commune à
+    daily_bank_net_worth_series (Current/Assets/Equity) et daily_liabilities_series (Liability) —
+    factorisée pour ne pas dupliquer la logique de reconstruction jour par jour + conversion FX
+    historique. Une seule requête réseau par devise distincte (pas par jour)."""
     from sqlalchemy import func
 
-    accounts = Accounts.query.filter(
+    query = Accounts.query.filter(
         Accounts.user_id == user_id,
-        Accounts.account_type.in_(('Current', 'Assets', 'Equity')),
+        Accounts.account_type.in_(account_types),
         Accounts.is_virtual == False,
         Accounts.is_hidden == False,
-        ~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id))
-    ).all()
+    )
+    if exclude_portfolio_containers:
+        query = query.filter(~Accounts.id.in_(_portfolio_account_ids(AssetPossession, user_id)))
+    accounts = query.all()
     if not accounts:
         return {}
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
@@ -151,6 +182,28 @@ def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, Ass
                 day_total += running[aid] * last_fx[code]
         result[d] = round(day_total, 2)
     return result
+
+
+def daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, end_date, target_currency='EUR'):
+    """Solde bancaire (Current/Assets/Equity, soldes bancaires — PAS le Patrimoine complet) jour par
+    jour, à l'exclusion des comptes-conteneurs de portefeuille. Voir compute_bank_net_worth pour le
+    même principe en un seul point dans le temps."""
+    return _daily_account_balance_series(
+        Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, end_date,
+        account_types=('Current', 'Assets', 'Equity'), exclude_portfolio_containers=True, target_currency=target_currency,
+    )
+
+
+def daily_liabilities_series(Accounts, Commodities, Transactions, Splits, FxRates, DB, user_id, start_date, end_date, target_currency='EUR'):
+    """Dette totale (comptes Liability), jour par jour, retournée en valeur POSITIVE — même convention
+    que compute_total_liabilities. À soustraire explicitement du total (bancaire + portefeuille) par
+    l'appelant pour obtenir le Patrimoine NET historique, voir backfill_wealth_history()."""
+    raw = _daily_account_balance_series(
+        Accounts, Commodities, Transactions, Splits, None, FxRates, DB, user_id, start_date, end_date,
+        account_types=('Liability',), exclude_portfolio_containers=False, target_currency=target_currency,
+    )
+    # raw = total_earned - total_spent par compte Liability = -(capital restant dû), voir loans.py.
+    return {d: round(-v, 2) for d, v in raw.items()}
 
 
 def _asset_price_by_day(a, commodities_by_id, FxRates, all_days, start_date, end_date, target_currency, valuations=None):
@@ -302,14 +355,19 @@ def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, 
 
         bank_series = daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, today, 'EUR')
         portfolio_series = portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, user_id, start_date, today, 'EUR')
+        liabilities_series = daily_liabilities_series(Accounts, Commodities, Transactions, Splits, FxRates, DB, user_id, start_date, today, 'EUR')
 
         for d in missing_days:
             bank_val = bank_series.get(d, 0.0)
             portfolio_val = portfolio_series.get(d, 0.0)
+            liabilities_val = liabilities_series.get(d, 0.0)
+            # bank_net_worth/portfolio_value restent des grandeurs BRUTES (sans dette) — seul le
+            # total (le vrai "Patrimoine") est net des crédits en cours, voir la note dans
+            # compute_bank_net_worth sur le périmètre du "Patrimoine".
             DB.session.add(WealthSnapshot(
                 user_id=user_id, snapshot_date=d,
                 bank_net_worth=round(bank_val, 2),
                 portfolio_value=round(portfolio_val, 2),
-                total=round(bank_val + portfolio_val, 2),
+                total=round(bank_val + portfolio_val - liabilities_val, 2),
             ))
     DB.session.commit()

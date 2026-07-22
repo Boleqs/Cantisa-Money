@@ -35,6 +35,12 @@ VAR_PERMISSIONS_LIST = {'Delete users': {'id': uuid.UUID('00000000-cafe-4c9d-8ab
                                                 'description': 'Budgets et abonnements récurrents'},
                         'Patrimoine':          {'id': uuid.UUID('0fe500ae-af15-467a-9220-e054ed103801'),
                                                 'description': 'Actifs/portefeuille, valeur nette (wealth) et suivi des marchés'},
+                        # Groupe dédié plutôt que rattaché à Planification/Patrimoine : un crédit
+                        # poste de vraies transactions (comme Comptabilité), suit une récurrence
+                        # (comme Planification) et affecte le patrimoine net (comme Patrimoine),
+                        # sans appartenir clairement à aucun des trois.
+                        'Crédits':             {'id': uuid.UUID('5a3f8e12-6d4b-49a1-9c7e-2b1f0d8a6e3c'),
+                                                'description': 'Gestion des crédits/prêts : échéanciers, révisions de taux, remboursement anticipé'},
                         'Pilotage':            {'id': uuid.UUID('c3816617-599d-40f2-8e10-229b3a528fe5'),
                                                 'description': 'Rapports et tableau de bord'},
                         'Réglages personnels': {'id': uuid.UUID('9ed54ea7-03cb-4e75-b6dd-f10c789fcf6a'),

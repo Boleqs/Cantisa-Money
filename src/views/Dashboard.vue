@@ -42,102 +42,38 @@
     </div>
 
     <!-- Net worth history -->
-    <div class="card">
+    <LineGraph
+      v-if="networthHistory.length >= 2"
+      title="Évolution du patrimoine net — 12 derniers mois"
+      :labels="networthHistory.map(d => d.month)"
+      :values="networthHistory.map(d => d.net_worth)"
+      dataset-label="Patrimoine net"
+      color="#10b981"
+      :format-value="fmtAmount"
+      :show-last-value="false"
+    />
+    <div v-else class="card">
       <div class="card-title">Évolution du patrimoine net — 12 derniers mois</div>
-      <div v-if="networthHistory.length < 2" class="no-data">Pas assez de données.</div>
-      <div v-else class="svg-wrapper">
-        <svg :viewBox="`0 0 ${SVG_W} ${SVG_H}`" preserveAspectRatio="none" class="chart-svg">
-          <defs>
-            <linearGradient id="nwGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#10b981" stop-opacity="0.30"/>
-              <stop offset="100%" stop-color="#10b981" stop-opacity="0.02"/>
-            </linearGradient>
-          </defs>
-
-          <!-- Zero line -->
-          <line v-if="nwZeroY !== null"
-            :x1="NW_PAD.l" :y1="nwZeroY" :x2="SVG_W - NW_PAD.r" :y2="nwZeroY"
-            stroke="rgba(148,163,184,0.2)" stroke-width="1" stroke-dasharray="4,3"
-          />
-
-          <!-- Area fill -->
-          <polygon :points="nwAreaPoints" fill="url(#nwGrad)" />
-
-          <!-- Line -->
-          <polyline :points="nwLinePoints" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linejoin="round"/>
-
-          <!-- Dots at each data point -->
-          <circle
-            v-for="(d, i) in networthHistory"
-            :key="d.month"
-            :cx="nwScaleX(i)" :cy="nwScaleY(d.net_worth)"
-            r="2.5" fill="#10b981"
-          />
-
-          <!-- Y labels -->
-          <text :x="NW_PAD.l - 4" :y="NW_PAD.t + 4" text-anchor="end" class="svg-label">
-            {{ fmtAmountShort(nwMax) }}
-          </text>
-          <text :x="NW_PAD.l - 4" :y="SVG_H - NW_PAD.b" text-anchor="end" class="svg-label">
-            {{ fmtAmountShort(nwMin) }}
-          </text>
-
-          <!-- X labels -->
-          <text
-            v-for="lbl in nwXLabels"
-            :key="lbl.label"
-            :x="lbl.x" :y="SVG_H - 4"
-            text-anchor="middle" class="svg-label"
-          >{{ lbl.label }}</text>
-        </svg>
-      </div>
+      <div class="no-data">Pas assez de données.</div>
     </div>
 
     <!-- Charts -->
     <div class="charts-grid">
 
       <!-- Balance history -->
-      <div class="card">
+      <LineGraph
+        v-if="balanceHistory.length >= 2"
+        title="Évolution du solde — 30 derniers jours"
+        :labels="balanceHistory.map(d => d.date.slice(5))"
+        :values="balanceHistory.map(d => d.balance)"
+        dataset-label="Solde"
+        color="#3b82f6"
+        :format-value="fmtAmount"
+        :show-last-value="false"
+      />
+      <div v-else class="card">
         <div class="card-title">Évolution du solde — 30 derniers jours</div>
-        <div v-if="balanceHistory.length < 2" class="no-data">Pas assez de données.</div>
-        <div v-else class="svg-wrapper">
-          <svg :viewBox="`0 0 ${SVG_W} ${SVG_H}`" preserveAspectRatio="none" class="chart-svg">
-            <defs>
-              <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.25"/>
-                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.02"/>
-              </linearGradient>
-            </defs>
-
-            <!-- Zero line -->
-            <line v-if="zeroY !== null"
-              :x1="PAD.l" :y1="zeroY" :x2="SVG_W - PAD.r" :y2="zeroY"
-              stroke="rgba(148,163,184,0.2)" stroke-width="1" stroke-dasharray="4,3"
-            />
-
-            <!-- Area fill -->
-            <polygon :points="areaPoints" fill="url(#areaGrad)" />
-
-            <!-- Line -->
-            <polyline :points="linePoints" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round"/>
-
-            <!-- Y labels -->
-            <text :x="PAD.l - 4" :y="PAD.t + 4" text-anchor="end" class="svg-label">
-              {{ fmtAmountShort(chartMax) }}
-            </text>
-            <text :x="PAD.l - 4" :y="SVG_H - PAD.b" text-anchor="end" class="svg-label">
-              {{ fmtAmountShort(chartMin) }}
-            </text>
-
-            <!-- X labels -->
-            <text :x="PAD.l" :y="SVG_H - 2" class="svg-label">
-              {{ balanceHistory[0]?.date?.slice(5) }}
-            </text>
-            <text :x="SVG_W - PAD.r" :y="SVG_H - 2" text-anchor="end" class="svg-label">
-              {{ balanceHistory[balanceHistory.length - 1]?.date?.slice(5) }}
-            </text>
-          </svg>
-        </div>
+        <div class="no-data">Pas assez de données.</div>
       </div>
 
       <!-- Expenses by category -->
@@ -243,6 +179,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import LineGraph from '../components/graphs/LineGraph.vue'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 const kpis = ref({ current_balance: 0, assets_balance: 0, monthly_income: 0, monthly_expenses: 0, net_worth: 0 })
@@ -255,16 +192,6 @@ const transactions = ref([])
 
 const loading = ref(false)
 const error = ref('')
-
-// ── SVG constants ─────────────────────────────────────────────────────────────
-const SVG_W = 500
-const SVG_H = 130
-const PAD = { t: 14, b: 18, l: 44, r: 10 }
-const innerW = SVG_W - PAD.l - PAD.r
-const innerH = SVG_H - PAD.t - PAD.b
-
-// net worth chart uses same dimensions
-const NW_PAD = { t: 14, b: 22, l: 52, r: 10 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const currentMonthLabel = computed(() => {
@@ -279,11 +206,6 @@ function fmtAmount(v) {
 function fmtAmountSigned(v) {
   const n = Number(v ?? 0)
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2, signDisplay: 'always' }).format(n)
-}
-function fmtAmountShort(v) {
-  const n = Number(v ?? 0)
-  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k'
-  return Math.round(n).toString()
 }
 function fmtDate(v) {
   if (!v) return '—'
@@ -348,73 +270,6 @@ const recentTransactions = computed(() =>
     .slice(0, 10)
 )
 
-// ── SVG chart ─────────────────────────────────────────────────────────────────
-const chartMin = computed(() => Math.min(...balanceHistory.value.map(d => d.balance)))
-const chartMax = computed(() => Math.max(...balanceHistory.value.map(d => d.balance)))
-
-function scaleX(i) {
-  const n = balanceHistory.value.length
-  return PAD.l + (n <= 1 ? 0 : (i / (n - 1)) * innerW)
-}
-function scaleY(val) {
-  const range = chartMax.value - chartMin.value || 1
-  return PAD.t + (1 - (val - chartMin.value) / range) * innerH
-}
-
-const linePoints = computed(() =>
-  balanceHistory.value.map((d, i) => `${scaleX(i)},${scaleY(d.balance)}`).join(' ')
-)
-const areaPoints = computed(() => {
-  if (!balanceHistory.value.length) return ''
-  const n = balanceHistory.value.length
-  const bottom = PAD.t + innerH
-  const left = `${PAD.l},${bottom}`
-  const right = `${scaleX(n - 1)},${bottom}`
-  return `${left} ${linePoints.value} ${right}`
-})
-const zeroY = computed(() => {
-  const min = chartMin.value
-  const max = chartMax.value
-  if (min >= 0 || max <= 0) return null   // pas de ligne zéro si tout positif/négatif
-  return scaleY(0)
-})
-
-// ── Net worth SVG chart ────────────────────────────────────────────────────────
-const nwInnerW = SVG_W - NW_PAD.l - NW_PAD.r
-const nwInnerH = SVG_H - NW_PAD.t - NW_PAD.b
-
-const nwMin = computed(() => Math.min(...networthHistory.value.map(d => d.net_worth), 0))
-const nwMax = computed(() => Math.max(...networthHistory.value.map(d => d.net_worth), 1))
-
-function nwScaleX(i) {
-  const n = networthHistory.value.length
-  return NW_PAD.l + (n <= 1 ? 0 : (i / (n - 1)) * nwInnerW)
-}
-function nwScaleY(val) {
-  const range = nwMax.value - nwMin.value || 1
-  return NW_PAD.t + (1 - (val - nwMin.value) / range) * nwInnerH
-}
-
-const nwLinePoints = computed(() =>
-  networthHistory.value.map((d, i) => `${nwScaleX(i)},${nwScaleY(d.net_worth)}`).join(' ')
-)
-const nwAreaPoints = computed(() => {
-  if (!networthHistory.value.length) return ''
-  const n = networthHistory.value.length
-  const bottom = NW_PAD.t + nwInnerH
-  return `${NW_PAD.l},${bottom} ${nwLinePoints.value} ${nwScaleX(n - 1)},${bottom}`
-})
-const nwZeroY = computed(() => {
-  if (nwMin.value >= 0 || nwMax.value <= 0) return null
-  return nwScaleY(0)
-})
-// X-axis label positions: first, middle, last
-const nwXLabels = computed(() => {
-  const h = networthHistory.value
-  if (!h.length) return []
-  const idxs = [0, Math.floor((h.length - 1) / 2), h.length - 1]
-  return [...new Set(idxs)].map(i => ({ x: nwScaleX(i), label: h[i].month }))
-})
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 async function reload() {
@@ -535,11 +390,6 @@ onMounted(() => reload())
 .mt { margin-top: 0; }
 .card-title { font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 14px; }
 .no-data { font-size: 13px; color: #4b5563; }
-
-/* ── SVG chart ──────────────────────────────────────────────────────────────── */
-.svg-wrapper { width: 100%; }
-.chart-svg { width: 100%; height: 130px; overflow: visible; }
-.svg-label { font-size: 9px; fill: #6b7280; }
 
 /* ── Category bars ──────────────────────────────────────────────────────────── */
 .cat-list { display: flex; flex-direction: column; gap: 10px; }

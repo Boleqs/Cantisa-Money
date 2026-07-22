@@ -45,16 +45,17 @@ export default {
         <div class="sidebar-nav">
             <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
 
-            <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')">
+            <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification') || hasPermission('Crédits')">
               <SidebarSectionTitle label="Gestion bancaire"/>
-              <SidebarGroup v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')" label="Comptes Bancaires" :paths="['/Dashboard', '/accounts', '/transactions', '/import', '/reconcile', '/subscriptions']">
-                <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard">Dashboard</SidebarLink>
-                <SidebarLink v-if="hasPermission('Comptabilité')" to="/accounts">Liste des comptes</SidebarLink>
-                <SidebarLink v-if="hasPermission('Comptabilité')" to="/transactions">Transactions</SidebarLink>
-                <SidebarLink v-if="hasPermission('Comptabilité')" to="/import">Importer</SidebarLink>
-                <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile">Rapprochement</SidebarLink>
-                <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions">Abonnements</SidebarLink>
+              <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard">Dashboard</SidebarLink>
+              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :paths="['/accounts', '/transactions', '/import']">
+                <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
+                <SidebarLink to="/transactions">Transactions</SidebarLink>
+                <SidebarLink to="/import">Importer</SidebarLink>
               </SidebarGroup>
+              <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile">Rapprochement</SidebarLink>
+              <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions">Abonnements</SidebarLink>
+              <SidebarLink v-if="hasPermission('Crédits')" to="/credits">Crédits</SidebarLink>
               <SidebarLink to="/invoices">Factures</SidebarLink>
               <SidebarLink v-if="hasPermission('Planification')" to="/budgets">Budgets</SidebarLink>
             </template>

@@ -201,11 +201,12 @@ const showVirtual = ref(false);
 const collapsed = ref(new Set());
 
 // Order & labels for account_type
-const TYPE_ORDER = ["Current", "Assets", "Equity", "Income", "Expense"];
+const TYPE_ORDER = ["Current", "Assets", "Equity", "Liability", "Income", "Expense"];
 const TYPE_LABELS = {
   Current: "Current accounts",
   Assets: "Assets",
   Equity: "Equity",
+  Liability: "Crédits / Dettes",
   Income: "Income",
   Expense: "Expense",
 };

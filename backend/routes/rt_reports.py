@@ -10,6 +10,11 @@ from backend.utils.market_price import get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
 from backend.utils.recurrence import next_occurrence, parse_weekdays
 
+# Volontairement sans 'Liability' : tous les usages de cette constante dans ce fichier calculent des
+# flux réels (revenus/dépenses par mois/catégorie/tag/compte), pas un patrimoine net — y inclure les
+# comptes de crédit ferait apparaître le remboursement de capital comme un "revenu" (côté Liability,
+# quantity>0) et le déblocage comme une "dépense sans catégorie" (quantity<0), ce qui fausserait ces
+# rapports. Voir NET_WORTH_TYPES dans rt_dashboard.py pour l'équivalent qui, lui, inclut Liability.
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
 REPORTS_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
 PLANIFICATION_PERM = VAR_PERMISSIONS_LIST['Planification']['id']

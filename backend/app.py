@@ -58,6 +58,7 @@ ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
+LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities)
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
              BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetValuations,
@@ -382,7 +383,8 @@ if IS_MAIN_PROCESS:
         snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
 
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations)
+                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
+                     Loans, LoanInstallments)
 
 uuid.uuid4()
 if __name__ == '__main__':

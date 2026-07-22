@@ -11,6 +11,9 @@ from .categories import Categories
 from .commodities import Commodities
 from .custom_reports import CustomReports
 from .fx_rates import FxRates
+from .loans import Loans
+from .loan_installments import LoanInstallments
+from .loan_rate_revisions import LoanRateRevisions
 from .splits import Splits
 from .subscriptions import Subscriptions
 from .tags import Tags
