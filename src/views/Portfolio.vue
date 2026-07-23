@@ -50,12 +50,12 @@
             <td>{{ a.name }}</td>
             <td><span class="badge" :class="'badge-' + a.asset_type.toLowerCase()">{{ typeLabel(a.asset_type) }}</span></td>
             <td class="muted">{{ a.sector || '—' }}</td>
-            <td>{{ fmtAmount(a.value_per_unit, commodityCode(a.commodity_id)) }}</td>
+            <td>{{ fmtAmount(a.converted_value_per_unit, a.display_currency) }}</td>
             <td>{{ a.total_quantity }}</td>
-            <td class="value">{{ fmtAmount(a.total_value, commodityCode(a.commodity_id)) }}</td>
+            <td class="value">{{ fmtAmount(a.converted_total_value, a.display_currency) }}</td>
             <td :class="gainLoss(a) ? (gainLoss(a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
               <template v-if="gainLoss(a)">
-                {{ fmtAmount(gainLoss(a).abs, commodityCode(a.commodity_id)) }}
+                {{ fmtAmount(gainLoss(a).abs, a.display_currency) }}
                 <span v-if="gainLoss(a).pct != null">({{ gainLoss(a).pct >= 0 ? '+' : '' }}{{ gainLoss(a).pct.toFixed(1) }}%)</span>
               </template>
               <template v-else>—</template>
@@ -80,12 +80,12 @@
                   <tr v-for="p in a.possessions" :key="p.id">
                     <td class="muted">{{ p.account_id }}</td>
                     <td>{{ p.quantity }}</td>
-                    <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price, commodityCode(a.commodity_id)) : '—' }}</td>
+                    <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price * conversionRate(a), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ p.purchase_date ? p.purchase_date.slice(0, 10) : '—' }}</td>
-                    <td>{{ fmtAmount(p.quantity * a.value_per_unit, commodityCode(a.commodity_id)) }}</td>
+                    <td>{{ fmtAmount(p.quantity * a.converted_value_per_unit, a.display_currency) }}</td>
                     <td :class="possessionGain(p, a) ? (possessionGain(p, a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
                       <template v-if="possessionGain(p, a)">
-                        {{ fmtAmount(possessionGain(p, a).abs, commodityCode(a.commodity_id)) }}
+                        {{ fmtAmount(possessionGain(p, a).abs, a.display_currency) }}
                         <span v-if="possessionGain(p, a).pct != null">({{ possessionGain(p, a).pct >= 0 ? '+' : '' }}{{ possessionGain(p, a).pct.toFixed(1) }}%)</span>
                       </template>
                       <template v-else>—</template>
@@ -205,8 +205,8 @@
         <LineGraph
           v-else
           title="Valorisation"
-          :labels="historyData.map(d => d.date.slice(5))"
-          :values="historyData.map(d => d.total_value)"
+          :labels="historyLabels"
+          :values="historyValues"
           dataset-label="Valeur"
           color="#22c55e"
           :format-value="v => fmtAmount(v, commodityCode(historyTarget?.commodity_id))"
@@ -275,6 +275,13 @@ const valuations = ref([])
 const valuationForm = ref({ valuation_date: null, value_per_unit: null })
 const valuationEditTarget = ref(null)
 
+// Mémoïsés pour ne pas recréer le graphique Chart.js (via le watch de LineGraph) à chaque
+// re-render du parent (ex: chargement de `valuations`) — un simple `.map()` inline dans le
+// template produirait un nouveau tableau à chaque rendu et déclencherait un rebuild concurrent
+// pendant que le précédent chart est encore en train de se dessiner (crash Chart.js).
+const historyLabels = computed(() => historyData.value.map(d => d.date.slice(5)))
+const historyValues = computed(() => historyData.value.map(d => d.total_value))
+
 const assetTypes = [
   { value: 'Stock', label: 'Action' },
   { value: 'ETF', label: 'ETF' },
@@ -310,10 +317,16 @@ function fmtAmount(v, currency = 'EUR') {
 }
 
 function typeSummaryValue(group) {
-  const total = group.reduce((s, a) => s + a.total_value, 0)
-  const codes = new Set(group.map(a => commodityCode(a.commodity_id)))
-  if (codes.size === 1) return fmtAmount(total, [...codes][0])
-  return `${total.toFixed(2)} (devises mixtes)`
+  // converted_total_value est déjà dans la devise par défaut de l'utilisateur (cf. GET /api/assets
+  // côté backend) — plus besoin de gérer un cas "devises mixtes" ici, tout est ramené à une seule devise.
+  const total = group.reduce((s, a) => s + (a.converted_total_value ?? a.total_value), 0)
+  return fmtAmount(total, group[0]?.display_currency)
+}
+
+// Taux implicite devise native -> devise d'affichage, dérivé des deux valeurs déjà renvoyées par
+// l'API (évite de dupliquer côté frontend la logique de taux de change du backend).
+function conversionRate(a) {
+  return a.value_per_unit ? a.converted_value_per_unit / a.value_per_unit : 1
 }
 
 const byType = computed(() => {
@@ -506,9 +519,12 @@ async function refreshPrice(a) {
 
 function possessionGain(p, a) {
   if (p.purchase_price == null) return null
-  const abs = (a.value_per_unit - p.purchase_price) * p.quantity
+  // abs converti dans la devise d'affichage (même taux que converted_value_per_unit) ; pct
+  // invariant par conversion (même taux appliqué au numérateur et au dénominateur), pas besoin
+  // de le convertir.
+  const abs = (a.value_per_unit - p.purchase_price) * p.quantity * conversionRate(a)
   const purchaseValue = p.purchase_price * p.quantity
-  const pct = purchaseValue !== 0 ? (abs / purchaseValue) * 100 : null
+  const pct = purchaseValue !== 0 ? ((a.value_per_unit - p.purchase_price) * p.quantity / purchaseValue) * 100 : null
   return { abs, pct }
 }
 
@@ -517,8 +533,8 @@ function gainLoss(a) {
   if (!priced.length) return null
   const currentValue = priced.reduce((s, p) => s + p.quantity * a.value_per_unit, 0)
   const purchaseValue = priced.reduce((s, p) => s + p.quantity * p.purchase_price, 0)
-  const abs = currentValue - purchaseValue
-  const pct = purchaseValue !== 0 ? (abs / purchaseValue) * 100 : null
+  const abs = (currentValue - purchaseValue) * conversionRate(a)
+  const pct = purchaseValue !== 0 ? ((currentValue - purchaseValue) / purchaseValue) * 100 : null
   return { abs, pct }
 }
 

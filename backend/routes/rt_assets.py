@@ -214,7 +214,7 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commoditie
 
 
 class AssetsRoutes:
-    def __init__(self, app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations):
+    def __init__(self, app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings):
         ROUTE_PATH = f"{ROOT_PATH}/assets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -222,15 +222,30 @@ class AssetsRoutes:
         @restricted_by_permission(Users, ASSETS_PERM)
         def get_assets():
             user_id = get_jwt_identity()
+            # `value_per_unit`/`total_value` restent dans la devise native de l'actif (nécessaire
+            # pour l'édition et le calcul de plus-value par lot) ; `converted_*` est ajouté pour
+            # l'affichage liste, dans la devise par défaut de l'utilisateur (cf. Dashboard/Reports
+            # qui font déjà cette conversion — Portfolio.vue affichait jusqu'ici uniquement la
+            # devise native, ce qui restait en USD/etc. même après changement de devise par défaut).
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            target_currency = settings.currency if settings else 'EUR'
+            commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+
             assets = Assets.query.filter(Assets.user_id == user_id).order_by(Assets.name).all()
             result = []
             for a in assets:
                 possessions = AssetPossession.query.filter(AssetPossession.asset_id == a.id).all()
                 total_qty = sum(p.quantity for p in possessions)
                 total_value = round(total_qty * float(a.value_per_unit or 0), 2)
+                native_commodity = commodities_by_id.get(a.commodity_id)
+                native_code = native_commodity.short_name if native_commodity else target_currency
+                rate = 1.0 if native_code == target_currency else (get_fx_rate(native_code, target_currency, FxRates) or 1.0)
                 d = _asset_to_dict(a)
                 d['total_quantity'] = total_qty
                 d['total_value'] = total_value
+                d['display_currency'] = target_currency
+                d['converted_value_per_unit'] = round(float(a.value_per_unit or 0) * rate, 4)
+                d['converted_total_value'] = round(total_value * rate, 2)
                 d['possessions'] = [_possession_to_dict(p) for p in possessions]
                 result.append(d)
             return json_response(result, HttpCode.OK)
