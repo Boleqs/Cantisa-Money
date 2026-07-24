@@ -59,7 +59,7 @@ TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
 LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
-SettingsRoutes(app, DB, UserSettings, Users, Commodities)
+SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
              BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetValuations,
              Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)

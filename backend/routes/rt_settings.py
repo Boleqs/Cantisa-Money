@@ -5,6 +5,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.routes.rt_budgets import _recompute_budget_spent
 
 SETTINGS_PERM = VAR_PERMISSIONS_LIST['Réglages personnels']['id']
 VALID_DATE_FORMATS = ('fr-FR', 'en-GB', 'en-US', 'iso')
@@ -36,7 +37,7 @@ def _settings_to_dict(s):
 
 
 class SettingsRoutes:
-    def __init__(self, app, DB, UserSettings, Users, Commodities):
+    def __init__(self, app, DB, UserSettings, Users, Commodities, Budgets, FxRates):
         ROUTE_PATH = f"{ROOT_PATH}/settings"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -64,6 +65,7 @@ class SettingsRoutes:
                     HttpCode.BAD_REQUEST)
             try:
                 s = UserSettings.query.filter_by(user_id=user_id).first()
+                old_currency = s.currency if s else DEFAULT_SETTINGS['currency']
                 if not s:
                     s = UserSettings(user_id=user_id)
                     DB.session.add(s)
@@ -72,6 +74,16 @@ class SettingsRoutes:
                 s.market_score_weights = data['market_score_weights']
                 s.market_score_thresholds = data['market_score_thresholds']
                 DB.session.commit()
+
+                # `amount_spent` des budgets est mis en cache (trigger Postgres / _recompute_budget_spent),
+                # pas recalculé à la lecture — sans ce recalcul explicite, changer de devise par défaut
+                # laisserait tous les budgets figés sous l'ancienne devise mais réétiquetés avec la
+                # nouvelle (montant faux). Voir memory backlog_budget_recompute_on_currency_change.
+                if old_currency != s.currency:
+                    for budget in Budgets.query.filter_by(user_id=user_id).all():
+                        _recompute_budget_spent(DB, budget.id, Budgets, FxRates, Commodities, UserSettings)
+                    DB.session.commit()
+
                 return json_response(_settings_to_dict(s), HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()

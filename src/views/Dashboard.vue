@@ -114,7 +114,7 @@
               <span class="acc-type chip">{{ a.account_type }}</span>
             </div>
             <span class="acc-balance" :class="accountBalance(a) >= 0 ? 'pos' : 'neg'">
-              {{ fmtAmount(accountBalance(a)) }}
+              {{ fmtAmountNative(accountBalance(a), a.id) }}
             </span>
           </div>
         </div>
@@ -166,7 +166,7 @@
           <div class="tx-splits">
             <span v-for="s in tx.splits" :key="s.id"
               :class="['tx-amount', s.quantity >= 0 ? 'pos' : 'neg']">
-              {{ fmtAmountSigned(s.quantity) }}
+              {{ fmtAmountSignedNative(s.quantity, s.account_id) }}
             </span>
           </div>
         </div>
@@ -179,6 +179,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { currency } from '@/utils/settings.js'
 import LineGraph from '../components/graphs/LineGraph.vue'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
@@ -189,6 +190,7 @@ const expensesByCategory = ref([])
 const accounts = ref([])
 const budgets = ref([])
 const transactions = ref([])
+const commodities = ref([])
 
 const loading = ref(false)
 const error = ref('')
@@ -201,11 +203,26 @@ const currentMonthLabel = computed(() => {
 
 function fmtAmount(v) {
   const n = Number(v ?? 0)
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n)
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n) + ' ' + currency.value
 }
-function fmtAmountSigned(v) {
+// `/api/accounts` et les splits de `/api/transactions` renvoient des montants dans la devise
+// propre du compte (non convertis vers la devise par défaut, contrairement aux KPI/budgets qui
+// passent par des endpoints qui convertissent côté serveur) — on affiche donc leur devise native.
+function currencyShort(id) {
+  const c = commodities.value.find(c => String(c.id) === String(id))
+  return c?.short_name?.toUpperCase?.() || '—'
+}
+function accountCurrencyShort(accountId) {
+  const a = accounts.value.find(a => String(a.id) === String(accountId))
+  return a ? currencyShort(a.currency_id) : '—'
+}
+function fmtAmountNative(v, accountId) {
   const n = Number(v ?? 0)
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2, signDisplay: 'always' }).format(n)
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n) + ' ' + accountCurrencyShort(accountId)
+}
+function fmtAmountSignedNative(v, accountId) {
+  const n = Number(v ?? 0)
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2, signDisplay: 'always' }).format(n) + ' ' + accountCurrencyShort(accountId)
 }
 function fmtDate(v) {
   if (!v) return '—'
@@ -276,11 +293,12 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const [statsRes, accRes, budRes, txRes] = await Promise.all([
+    const [statsRes, accRes, budRes, txRes, comRes] = await Promise.all([
       axios.get('/api/dashboard/stats'),
       axios.get('/api/accounts'),
       axios.get('/api/budgets'),
       axios.get('/api/transactions', { params: { per_page: 10, page: 1 } }),
+      axios.get('/api/commodities'),
     ])
     const stats = statsRes.data?.response_data
     kpis.value = stats?.kpis ?? kpis.value
@@ -291,6 +309,7 @@ async function reload() {
     budgets.value = Array.isArray(budRes.data?.response_data) ? budRes.data.response_data : []
     const txRd = txRes.data?.response_data
     transactions.value = Array.isArray(txRd?.transactions) ? txRd.transactions : []
+    commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {

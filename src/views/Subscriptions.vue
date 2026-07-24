@@ -40,7 +40,7 @@
             <span v-if="s.is_forecast_only" class="badge-forecast" title="Ne crée pas de transaction automatiquement">Prévisionnel</span>
             <span v-else-if="s.is_overdue" class="badge-overdue">En retard</span>
           </td>
-          <td>{{ fmtAmount(s.amount) }}</td>
+          <td>{{ fmtAmount(s.amount, s.from_account_id) }}</td>
           <td class="muted">{{ scheduleLabel(s) }}</td>
           <td :class="s.is_overdue ? 'overdue' : 'muted'">{{ fmtDate(s.next_due_at) }}</td>
           <td class="muted">{{ s.last_executed_at ? fmtDate(s.last_executed_at) : '—' }}</td>
@@ -152,6 +152,7 @@ const WEEKDAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samed
 const subscriptions = ref([])
 const accounts = ref([])
 const categories = ref([])
+const commodities = ref([])
 const loading = ref(false)
 const error = ref('')
 const showModal = ref(false)
@@ -182,8 +183,17 @@ function scheduleLabel(s) {
   return '—'
 }
 
-function fmtAmount(v) {
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0))
+// Un abonnement n'a pas de devise propre : le montant est implicitement dans celle du compte
+// débité (from_account_id), voir le même commentaire côté backend (rt_reports.py) — jamais
+// converti vers la devise par défaut, donc on affiche sa devise native plutôt que globale.
+function currencyShort(id) {
+  const c = commodities.value.find(c => String(c.id) === String(id))
+  return c?.short_name?.toUpperCase?.() || '—'
+}
+function fmtAmount(v, accountId) {
+  const a = accounts.value.find(a => String(a.id) === String(accountId))
+  const short = a ? currencyShort(a.currency_id) : '—'
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0)) + ' ' + short
 }
 
 function fmtDate(iso) {
@@ -204,14 +214,16 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const [subRes, accRes, catRes] = await Promise.all([
+    const [subRes, accRes, catRes, comRes] = await Promise.all([
       axios.get('/api/subscriptions'),
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
+      axios.get('/api/commodities'),
     ])
     subscriptions.value = (Array.isArray(subRes.data?.response_data) ? subRes.data.response_data : [])
       .map(s => ({ ...s, executing: false }))
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
+    commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'

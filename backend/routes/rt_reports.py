@@ -204,6 +204,7 @@ class ReportsRoutes:
             user_id = get_jwt_identity()
             today = date.today()
             month_start = today.replace(day=1)
+            target_currency = _target_currency(user_id)
 
             start_str = request.args.get('start_date')
             end_str = request.args.get('end_date')
@@ -213,14 +214,19 @@ class ReportsRoutes:
             except ValueError:
                 return json_response('Invalid date format (YYYY-MM-DD expected)', HttpCode.BAD_REQUEST)
 
-            # Uniquement les comptes de valeur réelle (Current, Assets, Equity)
+            # Uniquement les comptes de valeur réelle (Current, Assets, Equity). Chaque compte a sa
+            # propre devise (Accounts.currency_id) — jamais convertie ailleurs (total_earned/total_spent
+            # bruts) — on convertit ici vers la devise par défaut pour que ce rapport reste comparable
+            # d'un compte à l'autre, comme les autres onglets de Reports.vue.
             net_rows = DB.session.query(
                 Accounts.id,
                 Accounts.name,
                 Accounts.account_type,
+                Commodities.short_name,
                 func.coalesce(func.sum(Splits.quantity), 0).label('net'),
             ).join(Splits, Accounts.id == Splits.account_id
             ).join(Transactions, Splits.tx_id == Transactions.id
+            ).join(Commodities, Accounts.currency_id == Commodities.id
             ).filter(
                 Accounts.user_id == user_id,
                 Accounts.account_type.in_(WEALTH_TYPES),
@@ -228,7 +234,7 @@ class ReportsRoutes:
                 Accounts.is_hidden == False,
                 Transactions.post_date >= start,
                 Transactions.post_date <= end,
-            ).group_by(Accounts.id, Accounts.name, Accounts.account_type
+            ).group_by(Accounts.id, Accounts.name, Accounts.account_type, Commodities.short_name
             ).order_by(Accounts.account_type, Accounts.name
             ).all()
 
@@ -251,18 +257,19 @@ class ReportsRoutes:
 
             by_account = []
             for r in net_rows:
-                net = round(float(r.net), 2)
-                credits = round(credits_map.get(str(r.id), 0.0), 2)
-                debits = round(abs(credits - net), 2)
-                if credits == 0 and debits == 0:
+                net_raw = float(r.net)
+                credits_raw = credits_map.get(str(r.id), 0.0)
+                debits_raw = abs(credits_raw - net_raw)
+                if credits_raw == 0 and debits_raw == 0:
                     continue
+                rate = _rate_to(r.short_name, target_currency)
                 by_account.append({
                     'id': str(r.id),
                     'name': r.name,
                     'account_type': r.account_type,
-                    'credits': credits,
-                    'debits': debits,
-                    'net': net,
+                    'credits': round(credits_raw * rate, 2),
+                    'debits': round(debits_raw * rate, 2),
+                    'net': round(net_raw * rate, 2),
                 })
 
             return json_response({
@@ -396,6 +403,7 @@ class ReportsRoutes:
             total_monthly = 0.0
             for s in subs:
                 amount = float(s.amount or 0)
+                rate = _rate_to(sub_currency(s), target_currency)
 
                 if s.schedule_type == 'yearly':
                     monthly_equiv = round(amount / 12, 2)
@@ -404,7 +412,7 @@ class ReportsRoutes:
                     monthly_equiv = round(amount * nb_days * (30.44 / 7), 2)
                 else:  # monthly
                     monthly_equiv = round(amount, 2)
-                monthly_equiv_converted = monthly_equiv * _rate_to(sub_currency(s), target_currency)
+                monthly_equiv_converted = monthly_equiv * rate
                 total_monthly += monthly_equiv_converted
 
                 ref = s.last_executed_at or s.created_at
@@ -416,15 +424,19 @@ class ReportsRoutes:
                 cat_name = cat_map.get(s.category_id, 'Sans catégorie')
                 by_category[cat_name] = by_category.get(cat_name, 0) + monthly_equiv_converted
 
+                # `amount`/`monthly_equivalent` convertis vers la devise par défaut (contrairement à
+                # Subscriptions.vue, qui est une vue de gestion et affiche la devise native du compte
+                # débité — voir memory fix_currency_labels_dashboard_budgets_subscriptions) : ce
+                # tableau est un rapport agrégé, il doit rester cohérent avec `total_monthly`.
                 result.append({
                     'id': str(s.id),
                     'name': s.name,
-                    'amount': round(amount, 2),
+                    'amount': round(amount * rate, 2),
                     'schedule_type': s.schedule_type,
                     'day_of_month': s.day_of_month,
                     'month_of_year': s.month_of_year,
                     'weekdays': sorted(parse_weekdays(s.weekdays)),
-                    'monthly_equivalent': monthly_equiv,
+                    'monthly_equivalent': round(monthly_equiv_converted, 2),
                     'category': cat_name,
                     'next_due_date': next_due.isoformat(),
                 })

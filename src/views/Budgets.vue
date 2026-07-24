@@ -99,6 +99,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { currency } from '@/utils/settings.js'
 import BudgetModal from '@/components/modal/BudgetModal.vue'
 
 const budgets = ref([])
@@ -123,7 +124,7 @@ function fmtDate(v) {
 
 function fmtAmount(v) {
   const n = Number(v ?? 0)
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n)
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n) + ' ' + currency.value
 }
 
 function pct(b) {
