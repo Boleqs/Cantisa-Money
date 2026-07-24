@@ -77,12 +77,12 @@
                   <tr><th>Compte</th><th>Quantité</th><th>Prix d'achat</th><th>Date d'achat</th><th>Valeur</th><th>Plus-value</th><th></th></tr>
                 </thead>
                 <tbody>
-                  <tr v-for="p in a.possessions" :key="p.id">
+                  <tr v-for="p in a.possessions" :key="p.id" :class="{ 'possession-closed': remainingQty(p) === 0 }">
                     <td class="muted">{{ p.account_id }}</td>
-                    <td>{{ p.quantity }}</td>
+                    <td>{{ p.disposals?.length ? `${remainingQty(p)} / ${p.quantity}` : p.quantity }}</td>
                     <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price * conversionRate(a), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ p.purchase_date ? p.purchase_date.slice(0, 10) : '—' }}</td>
-                    <td>{{ fmtAmount(p.quantity * a.converted_value_per_unit, a.display_currency) }}</td>
+                    <td>{{ fmtAmount(remainingQty(p) * a.converted_value_per_unit, a.display_currency) }}</td>
                     <td :class="possessionGain(p, a) ? (possessionGain(p, a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
                       <template v-if="possessionGain(p, a)">
                         {{ fmtAmount(possessionGain(p, a).abs, a.display_currency) }}
@@ -91,8 +91,14 @@
                       <template v-else>—</template>
                     </td>
                     <td class="actions">
+                      <button v-if="remainingQty(p) > 0" class="btn-action" title="Vendre" @click="openSell(p, a)">💰</button>
                       <button class="btn-action" @click="openEditPossession(p, a)">✎</button>
-                      <button class="btn-action btn-danger" @click="deletePossession(p, a)">✕</button>
+                      <button
+                        class="btn-action btn-danger"
+                        :disabled="!!p.disposals?.length"
+                        :title="p.disposals?.length ? 'Impossible : des ventes sont liées à cette position' : ''"
+                        @click="deletePossession(p, a)"
+                      >✕</button>
                     </td>
                   </tr>
                 </tbody>
@@ -194,6 +200,37 @@
       </div>
     </div>
 
+    <!-- Modal vente -->
+    <div v-if="showSellModal" class="modal-backdrop" @click.self="showSellModal = false">
+      <div class="modal">
+        <h2>Vendre — {{ sellAssetTarget?.name }}</h2>
+        <p class="hint-text">Position restante : {{ remainingQty(sellTarget) }} unité{{ remainingQty(sellTarget) > 1 ? 's' : '' }}.</p>
+        <label>Quantité vendue *
+          <input v-model.number="sellForm.quantity" type="number" min="1" :max="remainingQty(sellTarget)" />
+        </label>
+        <label>Prix de vente unitaire *{{ sellAssetTarget?.track_live_price ? ` (devise native du titre)` : '' }}
+          <input v-model.number="sellForm.sale_price" type="number" step="0.01" min="0" placeholder="Montant reçu par unité" />
+        </label>
+        <label>Date de vente *
+          <input v-model="sellForm.sale_date" type="date" />
+        </label>
+        <label>Compte crédité (facultatif)
+          <select v-model="sellForm.dest_account_id">
+            <option :value="null">Aucun — pas d'écriture comptable</option>
+            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button class="btn" @click="showSellModal = false">Annuler</button>
+          <button
+            class="btn btn-primary"
+            :disabled="!sellForm.quantity || sellForm.quantity < 1 || sellForm.quantity > remainingQty(sellTarget) || sellForm.sale_price == null || !sellForm.sale_date"
+            @click="saveSell"
+          >Vendre</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal history -->
     <div v-if="showHistoryModal" class="modal-backdrop" @click.self="closeHistory">
       <div class="modal modal-history">
@@ -265,6 +302,11 @@ const editTarget = ref(null)
 const possessionTarget = ref(null)
 const possessionEditTarget = ref(null)
 const expanded = ref(new Set())
+
+const showSellModal = ref(false)
+const sellTarget = ref(null)
+const sellAssetTarget = ref(null)
+const sellForm = ref({ quantity: 1, sale_price: null, sale_date: null, dest_account_id: null })
 
 const showHistoryModal = ref(false)
 const historyTarget = ref(null)
@@ -505,6 +547,34 @@ async function deletePossession(p, a) {
   }
 }
 
+function remainingQty(p) {
+  if (!p) return 0
+  return p.remaining_quantity != null ? p.remaining_quantity : p.quantity
+}
+
+function openSell(p, a) {
+  sellTarget.value = p
+  sellAssetTarget.value = a
+  sellForm.value = { quantity: remainingQty(p), sale_price: null, sale_date: null, dest_account_id: null }
+  showSellModal.value = true
+}
+
+async function saveSell() {
+  try {
+    await axios.post('/api/assets/possessions/sell', {
+      possession_id: sellTarget.value.id,
+      quantity: sellForm.value.quantity,
+      sale_price: sellForm.value.sale_price,
+      sale_date: sellForm.value.sale_date,
+      dest_account_id: sellForm.value.dest_account_id || null,
+    })
+    showSellModal.value = false
+    await reload()
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
 async function refreshPrice(a) {
   refreshingIds.value.add(a.id)
   try {
@@ -519,20 +589,21 @@ async function refreshPrice(a) {
 
 function possessionGain(p, a) {
   if (p.purchase_price == null) return null
-  // abs converti dans la devise d'affichage (même taux que converted_value_per_unit) ; pct
-  // invariant par conversion (même taux appliqué au numérateur et au dénominateur), pas besoin
-  // de le convertir.
-  const abs = (a.value_per_unit - p.purchase_price) * p.quantity * conversionRate(a)
-  const purchaseValue = p.purchase_price * p.quantity
-  const pct = purchaseValue !== 0 ? ((a.value_per_unit - p.purchase_price) * p.quantity / purchaseValue) * 100 : null
+  // Quantité restante (pas la quantité brute achetée) — sinon un lot partiellement vendu
+  // surestime sa plus-value latente. abs converti dans la devise d'affichage (même taux que
+  // converted_value_per_unit) ; pct invariant par conversion, pas besoin de le convertir.
+  const qty = remainingQty(p)
+  const abs = (a.value_per_unit - p.purchase_price) * qty * conversionRate(a)
+  const purchaseValue = p.purchase_price * qty
+  const pct = purchaseValue !== 0 ? ((a.value_per_unit - p.purchase_price) * qty / purchaseValue) * 100 : null
   return { abs, pct }
 }
 
 function gainLoss(a) {
   const priced = (a.possessions || []).filter(p => p.purchase_price != null)
   if (!priced.length) return null
-  const currentValue = priced.reduce((s, p) => s + p.quantity * a.value_per_unit, 0)
-  const purchaseValue = priced.reduce((s, p) => s + p.quantity * p.purchase_price, 0)
+  const currentValue = priced.reduce((s, p) => s + remainingQty(p) * a.value_per_unit, 0)
+  const purchaseValue = priced.reduce((s, p) => s + remainingQty(p) * p.purchase_price, 0)
   const abs = (currentValue - purchaseValue) * conversionRate(a)
   const pct = purchaseValue !== 0 ? ((currentValue - purchaseValue) / purchaseValue) * 100 : null
   return { abs, pct }
@@ -735,6 +806,7 @@ onMounted(() => reload())
 .sub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .sub-table th { padding: 6px 24px; color: #6b7280; font-weight: 400; }
 .sub-table td { padding: 6px 24px; border-bottom: 1px solid rgba(148,163,184,0.05); }
+.possession-closed { opacity: 0.55; }
 
 .badge {
   padding: 3px 8px;

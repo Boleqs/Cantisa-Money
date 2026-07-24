@@ -176,6 +176,36 @@ const routes = [
         name: 'WealthOverview',
         component: () => import('../views/WealthOverview.vue'),
         meta: { requiresAuth: true }
+    },
+    {
+        path: '/fiscalite',
+        name: 'FiscaliteOverview',
+        component: () => import('../views/FiscaliteOverview.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/fiscalite/simulateur',
+        name: 'FiscaliteSimulateur',
+        component: () => import('../views/FiscaliteSimulateur.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/fiscalite/regime',
+        name: 'FiscaliteRegime',
+        component: () => import('../views/FiscaliteRegime.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/fiscalite/foyer',
+        name: 'FiscaliteFoyer',
+        component: () => import('../views/FiscaliteFoyer.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/fiscalite/dossier',
+        name: 'FiscaliteDossier',
+        component: () => import('../views/FiscaliteDossier.vue'),
+        meta: { requiresAuth: true }
     }
 ]
 

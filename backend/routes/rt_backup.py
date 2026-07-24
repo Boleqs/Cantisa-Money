@@ -53,7 +53,7 @@ def _dec(v):
 
 
 def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
-                      BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession,
+                      BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
                       TransactionDocuments):
     commodities = Commodities.query.filter_by(user_id=user_id).all()
@@ -68,6 +68,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
     subscriptions = Subscriptions.query.filter_by(user_id=user_id).all()
     assets = Assets.query.filter_by(user_id=user_id).all()
     asset_possessions = AssetPossession.query.filter_by(user_id=user_id).all()
+    asset_disposals = AssetDisposal.query.filter_by(user_id=user_id).all()
     asset_valuations = AssetValuations.query.filter_by(user_id=user_id).all()
     transactions = Transactions.query.filter_by(user_id=user_id).all()
     tx_ids = [t.id for t in transactions]
@@ -122,6 +123,15 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'purchase_price': _n(p.purchase_price), 'purchase_price_native': _n(p.purchase_price_native),
             'purchase_date': _dt(p.purchase_date),
         } for p in asset_possessions],
+        # tx_id/source_split_id/dest_split_id volontairement absents, même raison que pour
+        # asset_possessions (voir commentaire dans import_user_data) — la donnée fiscale/patrimoniale
+        # (quantité, prix, date, plus-value) est préservée intégralement sans reconstituer les splits.
+        'asset_disposals': [{
+            'id': _u(d.id), 'possession_id': _u(d.possession_id), 'quantity': d.quantity,
+            'sale_price': _n(d.sale_price), 'sale_price_native': _n(d.sale_price_native),
+            'sale_date': _dt(d.sale_date), 'dest_account_id': _u(d.dest_account_id),
+            'realized_gain': _n(d.realized_gain), 'holding_period_days': d.holding_period_days,
+        } for d in asset_disposals],
         'asset_valuations': [{
             'id': _u(v.id), 'asset_id': _u(v.asset_id), 'valuation_date': _dt(v.valuation_date),
             'value_per_unit': _n(v.value_per_unit),
@@ -167,7 +177,7 @@ def _resolve(cache, key, finder, creator, DB):
 
 
 def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
-                      BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession,
+                      BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
                       TransactionDocuments, apply_settings=False):
     report = {}
@@ -181,6 +191,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     # catégorie dans deux exports différents concaténés à la main).
     map_commodity, map_account, map_category, map_tag = {}, {}, {}, {}
     map_budget, map_subscription, map_asset, map_tx = {}, {}, {}, {}
+    map_possession = {}
 
     # ── Commodities ──────────────────────────────────────────────────────────
     cache_commodity = {c.short_name.strip().upper(): c
@@ -381,7 +392,8 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     # est préservée intégralement.
     existing_possessions = AssetPossession.query.filter_by(user_id=user_id).all()
     cache_possession = {
-        (p.asset_id, p.account_id, p.purchase_date, p.quantity, p.purchase_price) for p in existing_possessions
+        (p.asset_id, p.account_id, p.purchase_date, p.quantity, p.purchase_price): p.id
+        for p in existing_possessions
     }
     for row in payload.get('asset_possessions', []):
         asset_local = map_asset.get(row.get('asset_id'))
@@ -391,7 +403,9 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             continue
         purchase_date = _parse_dt(row.get('purchase_date'))
         key = (asset_local, account_local, purchase_date, row.get('quantity'), _dec(row.get('purchase_price')))
-        if key in cache_possession:
+        existing_id = cache_possession.get(key)
+        if existing_id:
+            map_possession[row['id']] = existing_id
             bump('asset_possessions', False)
         else:
             obj = AssetPossession(
@@ -400,7 +414,9 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                 quantity=row.get('quantity', 0), purchase_price=row.get('purchase_price'),
                 purchase_price_native=row.get('purchase_price_native'), purchase_date=purchase_date)
             DB.session.add(obj)
-            cache_possession.add(key)
+            DB.session.flush()
+            cache_possession[key] = obj.id
+            map_possession[row['id']] = obj.id
             bump('asset_possessions', True)
 
     # ── AssetValuations (clé : actif + date) ─────────────────────────────────
@@ -419,6 +435,33 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                                            value_per_unit=row.get('value_per_unit', 0)))
             cache_valuation.add(key)
             bump('asset_valuations', True)
+    DB.session.flush()
+
+    # ── AssetDisposal (clé heuristique : lot local + date + qté + prix de vente) ─
+    # Même convention que AssetPossession : tx_id/source_split_id/dest_split_id ne sont pas
+    # ré-établis, la donnée fiscale/patrimoniale (quantité cédée, prix, date, plus-value réalisée)
+    # est préservée intégralement. possession_id est résolu via map_possession construit ci-dessus.
+    existing_disposals = AssetDisposal.query.filter_by(user_id=user_id).all()
+    cache_disposal = {
+        (d.possession_id, d.sale_date, d.quantity, d.sale_price) for d in existing_disposals
+    }
+    for row in payload.get('asset_disposals', []):
+        possession_local = map_possession.get(row.get('possession_id'))
+        if not possession_local:
+            report.setdefault('errors', []).append("Cession d'actif ignorée (lot introuvable)")
+            continue
+        sale_date = _parse_dt(row.get('sale_date'))
+        key = (possession_local, sale_date, row.get('quantity'), _dec(row.get('sale_price')))
+        if key in cache_disposal:
+            bump('asset_disposals', False)
+        else:
+            DB.session.add(AssetDisposal(
+                user_id=user_id, possession_id=possession_local, quantity=row.get('quantity', 0),
+                sale_price=row.get('sale_price'), sale_price_native=row.get('sale_price_native'),
+                sale_date=sale_date, dest_account_id=map_account.get(row.get('dest_account_id')),
+                realized_gain=row.get('realized_gain'), holding_period_days=row.get('holding_period_days')))
+            cache_disposal.add(key)
+            bump('asset_disposals', True)
     DB.session.flush()
 
     # ── Transactions + Splits + TagsOnSplits ─────────────────────────────────
@@ -552,8 +595,8 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
 
 class BackupRoutes:
     def __init__(self, app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
-                 BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetValuations,
-                 Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments):
+                 BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
+                 AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments):
         ROUTE_PATH = f"{ROOT_PATH}/backup"
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
@@ -562,8 +605,8 @@ class BackupRoutes:
             user_id = get_jwt_identity()
             data = export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets,
                                     BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions, Assets,
-                                    AssetPossession, AssetValuations, Transactions, Splits, TagsOnSplits,
-                                    UserSettings, TransactionDocuments)
+                                    AssetPossession, AssetDisposal, AssetValuations, Transactions, Splits,
+                                    TagsOnSplits, UserSettings, TransactionDocuments)
             filename = f"cantisa-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
             return Response(
                 json_lib.dumps(data, ensure_ascii=False, indent=2),
@@ -586,8 +629,8 @@ class BackupRoutes:
             try:
                 report = import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Tags,
                                           Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions,
-                                          Assets, AssetPossession, AssetValuations, Transactions, Splits,
-                                          TagsOnSplits, UserSettings, TransactionDocuments,
+                                          Assets, AssetPossession, AssetDisposal, AssetValuations, Transactions,
+                                          Splits, TagsOnSplits, UserSettings, TransactionDocuments,
                                           apply_settings=apply_settings)
                 DB.session.commit()
                 return json_response(report, HttpCode.OK)

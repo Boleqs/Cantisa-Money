@@ -1,6 +1,7 @@
 from .base import Base
 from .accounts import Accounts
 from .asset_possession import AssetPossession
+from .asset_disposal import AssetDisposal
 from .asset_valuations import AssetValuations
 from .assets import Assets
 from .budget_accounts import BudgetAccounts
@@ -18,6 +19,9 @@ from .splits import Splits
 from .subscriptions import Subscriptions
 from .tags import Tags
 from .tags_on_split import TagsOnSplits
+from .tax_regime import TaxRegime
+from .tax_household_profile import TaxHouseholdProfile
+from .tax_household_income import TaxHouseholdIncome
 from .transactions import Transactions
 from .transaction_documents import TransactionDocuments
 from .users import Users

@@ -23,4 +23,6 @@ class Categories(Base):
     user_id:uuid = Column(UUID(as_uuid=True))
     name:str = Column(String(100), nullable=False)
     description:str = Column(String(1000), nullable=True)
+    # 'taxable_income' | 'deductible' | 'real_estate_income' | 'real_estate_expense' | None (non fiscal)
+    tax_treatment:str = Column(String(32), nullable=True)
     created_at:datetime = Column(DateTime, nullable=False, default=datetime.now())

@@ -151,7 +151,7 @@ def refresh_tracked_commodity_rates(app, DB, Commodities, FxRates, UserSettings)
         DB.session.commit()
 
 
-def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot):
+def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot):
     """Enregistre un point quotidien (bancaire + portefeuille, converti en EUR) par utilisateur.
     Appelé par le scheduler et une fois au démarrage (voir app.py)."""
     from utils.wealth import compute_bank_net_worth, compute_portfolio_value, compute_total_liabilities
@@ -160,7 +160,7 @@ def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxR
         user_ids = {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
         for user_id in user_ids:
             bank_nw = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, 'EUR')
-            portfolio_val = compute_portfolio_value(Assets, AssetPossession, Commodities, FxRates, user_id, 'EUR')
+            portfolio_val = compute_portfolio_value(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, 'EUR')
             liabilities = compute_total_liabilities(Accounts, Commodities, FxRates, user_id, 'EUR')
             # bank_nw/portfolio_val restent bruts (soldes bancaires + portefeuille, sans dette) —
             # seul le total (le "Patrimoine") est net des crédits en cours.
@@ -190,16 +190,16 @@ def cleanup_pending_documents(app, DB, TransactionDocuments):
         DB.session.commit()
 
 
-def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
+def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
     """Rattrape l'historique pour toute date d'achat pas encore couverte (ex: nouvel actif ajouté
     avec une date d'achat passée pendant que le backend tournait déjà). Appelé par le scheduler."""
     from utils.wealth import backfill_wealth_history
     with app.app_context():
-        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
+        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
 
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
+                     AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
                      Loans, LoanInstallments):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
@@ -244,7 +244,7 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
     )
     scheduler.add_job(
         func=backfill_wealth_history_job,
-        args=[app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations],
+        args=[app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations],
         trigger='interval',
         hours=24,
         id='wealth_backfill_job',
@@ -252,7 +252,7 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
     )
     scheduler.add_job(
         func=snapshot_wealth,
-        args=[app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot],
+        args=[app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot],
         trigger='interval',
         hours=24,
         id='wealth_snapshot_job',

@@ -24,6 +24,7 @@
         <tr>
           <th>Nom</th>
           <th>Description</th>
+          <th>Ligne fiscale</th>
           <th>Créée le</th>
           <th></th>
         </tr>
@@ -32,6 +33,7 @@
         <tr v-for="c in categories" :key="c.id">
           <td>{{ c.name }}</td>
           <td class="muted">{{ c.description || '—' }}</td>
+          <td class="muted">{{ taxTreatmentLabel(c.tax_treatment) }}</td>
           <td class="muted">{{ fmtDate(c.created_at) }}</td>
           <td class="actions">
             <button class="btn-action" @click="openEdit(c)">✎</button>
@@ -51,6 +53,12 @@
         <label>Description
           <input v-model="form.description" placeholder="Optionnel" />
         </label>
+        <label>Ligne fiscale
+          <select v-model="form.tax_treatment">
+            <option :value="null">— Non fiscal —</option>
+            <option v-for="t in TAX_TREATMENTS" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </select>
+        </label>
         <div class="modal-actions">
           <button class="btn" @click="showModal = false">Annuler</button>
           <button class="btn btn-primary" :disabled="!form.name.trim()" @click="save">Enregistrer</button>
@@ -69,7 +77,18 @@ const loading = ref(false)
 const error = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
-const form = ref({ name: '', description: '' })
+const form = ref({ name: '', description: '', tax_treatment: null })
+
+const TAX_TREATMENTS = [
+  { value: 'taxable_income', label: 'Revenu imposable' },
+  { value: 'deductible', label: 'Charge déductible' },
+  { value: 'real_estate_income', label: 'Revenu foncier' },
+  { value: 'real_estate_expense', label: 'Charge foncière' },
+]
+
+function taxTreatmentLabel(v) {
+  return TAX_TREATMENTS.find(t => t.value === v)?.label || '—'
+}
 
 function fmtDate(v) {
   if (!v) return '—'
@@ -91,13 +110,13 @@ async function reload() {
 
 function openCreate() {
   editTarget.value = null
-  form.value = { name: '', description: '' }
+  form.value = { name: '', description: '', tax_treatment: null }
   showModal.value = true
 }
 
 function openEdit(c) {
   editTarget.value = c
-  form.value = { name: c.name, description: c.description || '' }
+  form.value = { name: c.name, description: c.description || '', tax_treatment: c.tax_treatment || null }
   showModal.value = true
 }
 
@@ -108,11 +127,13 @@ async function save() {
         category_id: editTarget.value.id,
         name: form.value.name,
         description: form.value.description || null,
+        tax_treatment: form.value.tax_treatment || null,
       })
     } else {
       await axios.post('/api/categories', {
         name: form.value.name,
         description: form.value.description || null,
+        tax_treatment: form.value.tax_treatment || null,
       })
     }
     showModal.value = false
@@ -242,7 +263,7 @@ onMounted(() => reload())
   font-size: 13px;
   color: #9ca3af;
 }
-.modal input {
+.modal input, .modal select {
   background: rgba(15,23,42,0.7);
   border: 1px solid rgba(148,163,184,0.25);
   border-radius: 8px;

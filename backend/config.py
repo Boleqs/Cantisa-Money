@@ -45,6 +45,11 @@ VAR_PERMISSIONS_LIST = {'Delete users': {'id': uuid.UUID('00000000-cafe-4c9d-8ab
                                                 'description': 'Rapports et tableau de bord'},
                         'Réglages personnels': {'id': uuid.UUID('9ed54ea7-03cb-4e75-b6dd-f10c789fcf6a'),
                                                 'description': 'Préférences personnelles (devise affichée, format de date, pondération du score de marché)'},
+                        # Groupe dédié (pas rattaché à Comptabilité/Pilotage/Réglages) : la fiscalité
+                        # est amenée à devenir un domaine à part entière (régimes, foyer fiscal,
+                        # plus-values réalisées en Phase 2, dossier annuel en Phase 3).
+                        'Fiscalité':           {'id': uuid.UUID('a1c9e4d7-2b6f-4e83-9d5a-7c1f0e8b3d6a'),
+                                                'description': 'Régimes fiscaux, foyer fiscal, marquage fiscal des catégories, simulation d\'impôt'},
                         }
 # Rôle assigné par défaut à tout nouvel utilisateur (inscription publique ou seed) — voir
 # insert_roles() dans app.py et le endpoint public POST /api/auth/signup dans rt_auth.py.

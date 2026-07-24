@@ -73,6 +73,15 @@ export default {
               </SidebarGroup>
             </template>
 
+            <template v-if="hasPermission('Fiscalité')">
+              <SidebarSectionTitle label="Gestion Fiscale"/>
+              <SidebarLink to="/fiscalite">Vue d'ensemble</SidebarLink>
+              <SidebarLink to="/fiscalite/simulateur">Simulateur d'impôt</SidebarLink>
+              <SidebarLink to="/fiscalite/regime">Régime fiscal</SidebarLink>
+              <SidebarLink to="/fiscalite/foyer">Foyer fiscal</SidebarLink>
+              <SidebarLink to="/fiscalite/dossier">Dossier fiscal</SidebarLink>
+            </template>
+
             <template v-if="hasPermission('Pilotage')">
               <SidebarSectionTitle label="Reporting"/>
               <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>

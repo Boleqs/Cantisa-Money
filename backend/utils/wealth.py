@@ -58,26 +58,52 @@ def compute_total_liabilities(Accounts, Commodities, FxRates, user_id, target_cu
     return round(total, 2)
 
 
-def get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_id, target_currency='EUR'):
+def _group_disposals_by_possession(disposals):
+    grouped = {}
+    for d in disposals:
+        grouped.setdefault(d.possession_id, []).append(d)
+    return grouped
+
+
+def _remaining_quantity_as_of(possession, disposals_by_possession, as_of_date=None):
+    """Quantité restante d'un lot à une date donnée (ou pour toujours si as_of_date=None) :
+    quantité achetée moins les AssetDisposal dont sale_date <= as_of_date. AssetPossession.quantity
+    reste IMMUABLE (la quantité initialement achetée) — la quantité "ouverte" à un instant T se
+    déduit toujours des cessions liées, jamais stockée directement sur le lot."""
+    disposed = 0
+    for d in disposals_by_possession.get(possession.id, []):
+        d_date = d.sale_date.date() if hasattr(d.sale_date, 'date') else d.sale_date
+        if as_of_date is None or d_date <= as_of_date:
+            disposed += d.quantity
+    return max(0, possession.quantity - disposed)
+
+
+def get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency='EUR'):
     """Retourne la liste enrichie des actifs (valeur + plus-value converties dans target_currency).
     La plus-value est agrégée sur les lots (AssetPossession) qui ont un prix d'achat renseigné —
-    les lots sans prix d'achat comptent dans la valeur actuelle mais pas dans la plus-value."""
+    les lots sans prix d'achat comptent dans la valeur actuelle mais pas dans la plus-value. Ne
+    compte que la quantité RESTANTE de chaque lot (après cessions éventuelles, voir
+    _remaining_quantity_as_of) — sinon un lot vendu continuerait à apparaître comme détenu."""
     assets = Assets.query.filter_by(user_id=user_id).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+    disposals_by_possession = _group_disposals_by_possession(AssetDisposal.query.filter_by(user_id=user_id).all())
 
     result = []
     for a in assets:
         possessions = AssetPossession.query.filter_by(asset_id=a.id).all()
-        qty = sum(p.quantity for p in possessions)
+        qty = sum(_remaining_quantity_as_of(p, disposals_by_possession) for p in possessions)
         commodity = commodities_by_id.get(a.commodity_id)
         code = commodity.short_name if commodity else target_currency
 
         value = convert_amount(qty * float(a.value_per_unit or 0), code, target_currency, FxRates) or 0
 
-        priced_qty = sum(p.quantity for p in possessions if p.purchase_price is not None)
+        priced_possessions = [p for p in possessions if p.purchase_price is not None]
+        priced_qty = sum(_remaining_quantity_as_of(p, disposals_by_possession) for p in priced_possessions)
         purchase_value = None
         if priced_qty:
-            raw_purchase_total = sum(p.quantity * float(p.purchase_price) for p in possessions if p.purchase_price is not None)
+            raw_purchase_total = sum(
+                _remaining_quantity_as_of(p, disposals_by_possession) * float(p.purchase_price)
+                for p in priced_possessions)
             purchase_value = convert_amount(raw_purchase_total, code, target_currency, FxRates)
 
         priced_value = convert_amount(priced_qty * float(a.value_per_unit or 0), code, target_currency, FxRates) if priced_qty else None
@@ -100,8 +126,8 @@ def get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_
     return result
 
 
-def compute_portfolio_value(Assets, AssetPossession, Commodities, FxRates, user_id, target_currency='EUR'):
-    breakdown = get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_id, target_currency)
+def compute_portfolio_value(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency='EUR'):
+    breakdown = get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency)
     return round(sum(a['value'] for a in breakdown), 2)
 
 
@@ -262,7 +288,7 @@ def _asset_price_by_day(a, commodities_by_id, FxRates, all_days, start_date, end
     return price_by_day
 
 
-def asset_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, asset, start_date, end_date, target_currency='EUR'):
+def asset_value_series(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, AssetValuations, asset, start_date, end_date, target_currency='EUR'):
     """Comme portfolio_value_series mais pour un seul actif, avec le détail quantité/prix unitaire
     par jour (pas juste la valeur totale) — utilisé par GET /api/assets/<id>/history."""
     possessions = [p for p in AssetPossession.query.filter_by(asset_id=asset.id).all() if p.quantity]
@@ -270,6 +296,8 @@ def asset_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValua
     if not possessions:
         return []
 
+    disposals_by_possession = _group_disposals_by_possession(
+        AssetDisposal.query.filter(AssetDisposal.possession_id.in_([p.id for p in possessions])).all())
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=asset.user_id).all()}
     valuations = None
     if not asset.track_live_price:
@@ -282,7 +310,7 @@ def asset_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValua
         unit_value = price_by_day.get(d)
         if unit_value is None:
             continue
-        qty = sum(p.quantity for p in possessions
+        qty = sum(_remaining_quantity_as_of(p, disposals_by_possession, as_of_date=d) for p in possessions
                    if d >= (p.purchase_date.date() if p.purchase_date else p.created_at.date()))
         if not qty:
             continue
@@ -295,16 +323,18 @@ def asset_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValua
     return result
 
 
-def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, user_id, start_date, end_date, target_currency='EUR'):
+def portfolio_value_series(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, AssetValuations, user_id, start_date, end_date, target_currency='EUR'):
     """Reconstruit la valeur du portefeuille jour par jour. Actifs suivis en temps réel : cours
     historique réel (yfinance, une requête par actif — partagée par tous ses lots). Actifs manuels :
     fonction en escalier sur AssetValuations si des points ont été saisis, sinon valeur actuelle
     constante. Chaque lot (AssetPossession) démarre sa contribution à sa propre date d'achat (ou sa
-    date de création si non renseignée), pas à celle de l'actif."""
+    date de création si non renseignée), pas à celle de l'actif, et s'arrête (totalement ou
+    partiellement) à la date de toute cession liée — voir _remaining_quantity_as_of."""
     assets = Assets.query.filter_by(user_id=user_id).all()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
     all_days = _day_range(start_date, end_date)
     result = {d: 0.0 for d in all_days}
+    disposals_by_possession = _group_disposals_by_possession(AssetDisposal.query.filter_by(user_id=user_id).all())
 
     for a in assets:
         possessions = AssetPossession.query.filter_by(asset_id=a.id).all()
@@ -325,12 +355,15 @@ def portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, AssetV
                 unit_value = price_by_day.get(d)
                 if unit_value is None:
                     continue
-                result[d] += p.quantity * unit_value
+                remaining = _remaining_quantity_as_of(p, disposals_by_possession, as_of_date=d)
+                if not remaining:
+                    continue
+                result[d] += remaining * unit_value
 
     return {d: round(v, 2) for d, v in result.items()}
 
 
-def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
+def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
     """Reconstruit l'historique quotidien du patrimoine (bancaire + portefeuille, en EUR) depuis la
     date d'achat la plus ancienne renseignée jusqu'à aujourd'hui, pour chaque utilisateur. Idempotent :
     ne recalcule jamais un jour déjà présent en base."""
@@ -354,7 +387,7 @@ def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, 
             continue
 
         bank_series = daily_bank_net_worth_series(Accounts, Commodities, Transactions, Splits, AssetPossession, FxRates, DB, user_id, start_date, today, 'EUR')
-        portfolio_series = portfolio_value_series(Assets, AssetPossession, Commodities, FxRates, AssetValuations, user_id, start_date, today, 'EUR')
+        portfolio_series = portfolio_value_series(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, AssetValuations, user_id, start_date, today, 'EUR')
         liabilities_series = daily_liabilities_series(Accounts, Commodities, Transactions, Splits, FxRates, DB, user_id, start_date, today, 'EUR')
 
         for d in missing_days:

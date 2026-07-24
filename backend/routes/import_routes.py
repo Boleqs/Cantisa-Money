@@ -23,3 +23,4 @@ from .rt_backup import BackupRoutes
 from .rt_custom_reports import CustomReportsRoutes
 from .rt_loans import LoansRoutes
 from .rt_onboarding import OnboardingRoutes
+from .rt_tax import TaxRoutes

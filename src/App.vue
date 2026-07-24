@@ -74,4 +74,24 @@ html, body, #app {
   padding: 16px;
   background: #0b1220;
 }
+
+/* Impression (ex: Dossier fiscal) : masque la navigation, laisse le contenu de la page décider
+   de sa propre mise en page via ses classes .no-print / @media print. */
+@media print {
+  .sidebar, .topbar {
+    display: none !important;
+  }
+  .app-main {
+    padding-left: 0 !important;
+    padding-top: 0 !important;
+  }
+  .app-root {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .app-content {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+}
 </style>

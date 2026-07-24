@@ -1,4 +1,4 @@
-from marshmallow import Schema, fields, ValidationError
+from marshmallow import Schema, fields, ValidationError, validate
 from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
@@ -7,17 +7,21 @@ from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 CATEGORIES_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
+# Tenu synchronisé avec TAX_TREATMENTS dans rt_tax.py.
+TAX_TREATMENT_VALUES = ('taxable_income', 'deductible', 'real_estate_income', 'real_estate_expense')
 
 
 class AddCategorySchema(Schema):
     name = fields.String(required=True)
     description = fields.String(load_default=None)
+    tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
 
 class UpdateCategorySchema(Schema):
     category_id = fields.UUID(required=True)
     name = fields.String(required=True)
     description = fields.String(load_default=None)
+    tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
 
 class GetCategorySchema(Schema):
@@ -34,6 +38,7 @@ def _cat_to_dict(c):
         'user_id': str(c.user_id),
         'name': c.name,
         'description': c.description,
+        'tax_treatment': c.tax_treatment,
         'created_at': c.created_at.isoformat() if c.created_at else None,
     }
 
@@ -84,6 +89,7 @@ class CategoriesRoutes:
                     user_id=get_jwt_identity(),
                     name=data['name'],
                     description=data.get('description'),
+                    tax_treatment=data.get('tax_treatment'),
                 )
                 DB.session.add(c)
                 DB.session.commit()
@@ -110,6 +116,7 @@ class CategoriesRoutes:
             try:
                 c.name = data['name']
                 c.description = data.get('description')
+                c.tax_treatment = data.get('tax_treatment')
                 DB.session.commit()
                 return json_response(_cat_to_dict(c), HttpCode.OK)
             except Exception as error:

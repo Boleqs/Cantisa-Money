@@ -48,7 +48,7 @@ def _sector_allocation(portfolio):
 
 
 class WealthRoutes:
-    def __init__(self, app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users):
+    def __init__(self, app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users):
         ROUTE_PATH = f"{ROOT_PATH}/wealth"
 
         @app.route(f"{ROUTE_PATH}/overview", methods=['GET'])
@@ -67,7 +67,7 @@ class WealthRoutes:
             # définition côté Gestion financière (voir rt_dashboard.py pour la vue bancaire).
             bank_net_worth = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, currency)
             total_liabilities = compute_total_liabilities(Accounts, Commodities, FxRates, user_id, currency)
-            portfolio = get_portfolio_breakdown(Assets, AssetPossession, Commodities, FxRates, user_id, currency)
+            portfolio = get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, currency)
             portfolio_value = round(sum(a['value'] for a in portfolio), 2)
 
             gains = [a for a in portfolio if a['gain_abs'] is not None]

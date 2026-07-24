@@ -63,6 +63,14 @@ class DeletePossessionSchema(Schema):
     possession_id = fields.UUID(required=True)
 
 
+class SellPossessionSchema(Schema):
+    possession_id = fields.UUID(required=True)
+    quantity = fields.Integer(required=True, validate=validate.Range(min=1))
+    sale_price = fields.Decimal(required=True, as_string=False)  # devise native si track_live_price, miroir purchase_price
+    sale_date = fields.Date(required=True)
+    dest_account_id = fields.UUID(load_default=None)
+
+
 class GetAssetHistorySchema(Schema):
     asset_id = fields.UUID(required=True)
     start_date = fields.Date(load_default=None)
@@ -105,7 +113,9 @@ def _asset_to_dict(a):
     }
 
 
-def _possession_to_dict(p):
+def _possession_to_dict(p, disposals=None):
+    disposals = disposals or []
+    disposed_qty = sum(d.quantity for d in disposals)
     return {
         'id': str(p.id),
         'asset_id': str(p.asset_id),
@@ -113,10 +123,16 @@ def _possession_to_dict(p):
         'source_account_id': str(p.source_account_id) if p.source_account_id else None,
         'tx_id': str(p.tx_id) if p.tx_id else None,
         'quantity': p.quantity,
+        'remaining_quantity': p.quantity - disposed_qty,
         'purchase_price': float(p.purchase_price) if p.purchase_price is not None else None,
         'purchase_price_native': float(p.purchase_price_native) if p.purchase_price_native is not None else None,
         'purchase_date': p.purchase_date.isoformat() if p.purchase_date else None,
         'created_at': p.created_at.isoformat() if p.created_at else None,
+        'disposals': [{
+            'id': str(d.id), 'quantity': d.quantity,
+            'sale_date': d.sale_date.isoformat() if d.sale_date else None,
+            'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
+        } for d in disposals],
     }
 
 
@@ -196,7 +212,7 @@ def _resolve_split_amounts(Accounts, Commodities, dest_account, source_account, 
     return dest_amount, source_amount, dest_fx_rate, None
 
 
-def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits,
+def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits,
                            WealthSnapshot, AssetValuations, user_id, from_date):
     """Supprime les snapshots de patrimoine existants à partir de from_date pour cet utilisateur puis
     les reconstruit immédiatement — appelé après ajout/modification/suppression d'une position (ou
@@ -209,12 +225,12 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commoditie
         WealthSnapshot.snapshot_date >= from_date,
     ).delete()
     DB.session.commit()
-    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
-    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
+    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
+    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot)
 
 
 class AssetsRoutes:
-    def __init__(self, app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings):
+    def __init__(self, app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings):
         ROUTE_PATH = f"{ROOT_PATH}/assets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -235,7 +251,15 @@ class AssetsRoutes:
             result = []
             for a in assets:
                 possessions = AssetPossession.query.filter(AssetPossession.asset_id == a.id).all()
-                total_qty = sum(p.quantity for p in possessions)
+                possession_ids = [p.id for p in possessions]
+                disposals = (AssetDisposal.query.filter(AssetDisposal.possession_id.in_(possession_ids)).all()
+                             if possession_ids else [])
+                disposals_by_possession = {}
+                for disp in disposals:
+                    disposals_by_possession.setdefault(disp.possession_id, []).append(disp)
+
+                total_qty = sum(p.quantity - sum(d.quantity for d in disposals_by_possession.get(p.id, []))
+                                 for p in possessions)
                 total_value = round(total_qty * float(a.value_per_unit or 0), 2)
                 native_commodity = commodities_by_id.get(a.commodity_id)
                 native_code = native_commodity.short_name if native_commodity else target_currency
@@ -246,7 +270,7 @@ class AssetsRoutes:
                 d['display_currency'] = target_currency
                 d['converted_value_per_unit'] = round(float(a.value_per_unit or 0) * rate, 4)
                 d['converted_total_value'] = round(total_value * rate, 2)
-                d['possessions'] = [_possession_to_dict(p) for p in possessions]
+                d['possessions'] = [_possession_to_dict(p, disposals_by_possession.get(p.id, [])) for p in possessions]
                 result.append(d)
             return json_response(result, HttpCode.OK)
 
@@ -401,7 +425,7 @@ class AssetsRoutes:
 
             from backend.utils.wealth import asset_value_series
             history = asset_value_series(
-                Assets, AssetPossession, Commodities, FxRates, AssetValuations,
+                Assets, AssetPossession, AssetDisposal, Commodities, FxRates, AssetValuations,
                 a, start_date, end_date, data['currency'].upper())
             return json_response(history, HttpCode.OK)
 
@@ -447,7 +471,7 @@ class AssetsRoutes:
                 DB.session.flush()
                 _sync_asset_value_per_unit(AssetValuations, a)
                 DB.session.commit()
-                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
                                        Splits, WealthSnapshot, AssetValuations, user_id, data['valuation_date'])
                 return json_response(_valuation_to_dict(v), HttpCode.CREATED)
             except Exception as e:
@@ -482,7 +506,7 @@ class AssetsRoutes:
                 _sync_asset_value_per_unit(AssetValuations, a)
                 DB.session.commit()
                 from_date = min(old_date, data['valuation_date'])
-                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
                                        Splits, WealthSnapshot, AssetValuations, user_id, from_date)
                 return json_response(_valuation_to_dict(v), HttpCode.OK)
             except Exception as e:
@@ -510,7 +534,7 @@ class AssetsRoutes:
                 if a:
                     _sync_asset_value_per_unit(AssetValuations, a)
                 DB.session.commit()
-                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
                                        Splits, WealthSnapshot, AssetValuations, user_id, valuation_date)
                 return json_response('Valuation deleted', HttpCode.OK)
             except Exception as e:
@@ -607,7 +631,7 @@ class AssetsRoutes:
                 )
                 DB.session.add(p)
                 DB.session.commit()
-                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits,
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits,
                                        WealthSnapshot, AssetValuations, user_id, data['purchase_date'])
                 return json_response(_possession_to_dict(p), HttpCode.CREATED)
             except Exception as e:
@@ -629,6 +653,14 @@ class AssetsRoutes:
             ).first()
             if not p:
                 return json_response('Possession not found', HttpCode.NOT_FOUND)
+
+            existing_disposals = AssetDisposal.query.filter_by(possession_id=p.id).all()
+            sold_qty = sum(disp.quantity for disp in existing_disposals)
+            if data['quantity'] < sold_qty:
+                return json_response(
+                    f"Impossible de réduire la quantité en dessous de {sold_qty} "
+                    f"(déjà cédée via {len(existing_disposals)} vente(s))",
+                    HttpCode.BAD_REQUEST)
 
             purchase_price_native = data['purchase_price']
             purchase_price = purchase_price_native
@@ -677,9 +709,9 @@ class AssetsRoutes:
                 DB.session.commit()
                 if old_purchase_date != data['purchase_date']:
                     from_date = min(old_purchase_date, data['purchase_date']) if old_purchase_date else data['purchase_date']
-                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
                                            Splits, WealthSnapshot, AssetValuations, user_id, from_date)
-                return json_response(_possession_to_dict(p), HttpCode.OK)
+                return json_response(_possession_to_dict(p, existing_disposals), HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)
@@ -699,6 +731,8 @@ class AssetsRoutes:
             ).first()
             if not p:
                 return json_response('Possession not found', HttpCode.NOT_FOUND)
+            if AssetDisposal.query.filter_by(possession_id=p.id).first():
+                return json_response('Possession is still used by one or more disposals (sales)', HttpCode.CONFLICT)
             purchase_date = p.purchase_date.date() if p.purchase_date else None
             tx_id = p.tx_id
             try:
@@ -709,9 +743,127 @@ class AssetsRoutes:
                         DB.session.delete(tx)  # cascade supprime les Splits liés (splits.py: ondelete='CASCADE')
                 DB.session.commit()
                 if purchase_date:
-                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions,
+                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
                                            Splits, WealthSnapshot, AssetValuations, user_id, purchase_date)
                 return json_response('Possession deleted', HttpCode.OK)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/possessions/sell", methods=['POST'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def sell_possession():
+            try:
+                data = SellPossessionSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            p = AssetPossession.query.filter(
+                AssetPossession.id == data['possession_id'],
+                AssetPossession.user_id == user_id
+            ).first()
+            if not p:
+                return json_response('Possession not found', HttpCode.NOT_FOUND)
+
+            existing_disposals = AssetDisposal.query.filter_by(possession_id=p.id).all()
+            already_sold = sum(disp.quantity for disp in existing_disposals)
+            remaining = p.quantity - already_sold
+            if data['quantity'] > remaining:
+                return json_response(
+                    f"Quantité vendue ({data['quantity']}) supérieure à la quantité restante du lot ({remaining})",
+                    HttpCode.BAD_REQUEST)
+
+            a = Assets.query.filter_by(id=p.asset_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+            commodity = Commodities.query.filter_by(id=a.commodity_id).first()
+            if not commodity:
+                return json_response('Commodity not found', HttpCode.NOT_FOUND)
+
+            sale_price_native = data['sale_price']
+            sale_price = sale_price_native
+            if a.track_live_price:
+                sale_price, error = _resolve_purchase_price(
+                    a.symbol, commodity.short_name, sale_price_native, data['sale_date'], FxRates)
+                if error:
+                    return error
+
+            position_account = Accounts.query.filter_by(id=p.account_id).first()
+            dest_account_id = data.get('dest_account_id')
+            dest_account = None
+            if dest_account_id:
+                dest_account = Accounts.query.filter(
+                    Accounts.id == dest_account_id, Accounts.user_id == user_id).first()
+                if not dest_account:
+                    return json_response('Destination account not found', HttpCode.NOT_FOUND)
+                if dest_account.account_type not in ('Current', 'Assets', 'Equity'):
+                    return json_response(
+                        "Le compte crédité doit être de type 'Current', 'Assets' ou 'Equity'", HttpCode.BAD_REQUEST)
+
+            dest_amount = source_amount = dest_fx_rate = None
+            if dest_account:
+                total_proceeds = float(data['quantity']) * float(sale_price)
+                # Rôles inversés par rapport à add_possession : ici "dest_account" est le compte
+                # crédité (le cash qui entre), "source_account" est le compte débité (la position
+                # qui sort) — cf. décision de conception Phase 2 (vente = renversement à 2 splits,
+                # au montant de la vente, pas au coût d'achat).
+                dest_amount, source_amount, dest_fx_rate, error = _resolve_split_amounts(
+                    Accounts, Commodities, dest_account, position_account, total_proceeds,
+                    commodity.short_name, data['sale_date'], FxRates)
+                if error:
+                    return error
+
+            realized_gain = None
+            if p.purchase_price is not None:
+                realized_gain = (float(sale_price) - float(p.purchase_price)) * data['quantity']
+
+            holding_period_days = None
+            if p.purchase_date:
+                purchase_date_only = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
+                holding_period_days = (data['sale_date'] - purchase_date_only).days
+
+            try:
+                tx = None
+                source_split_id = dest_split_id = None
+                if dest_account:
+                    tx = Transactions(
+                        user_id=user_id,
+                        currency_id=position_account.currency_id,
+                        post_date=data['sale_date'],
+                        effective_date=data['sale_date'],
+                        description=f"Vente {a.symbol} x{data['quantity']}",
+                        category_id=None,
+                        is_cleared=True,
+                    )
+                    DB.session.add(tx)
+                    DB.session.flush()
+                    source_split_id, dest_split_id = uuid.uuid4(), uuid.uuid4()
+                    # source = compte de la position (débité, les titres "sortent") ; dest = compte
+                    # crédité (le cash entre) — voir commentaire ci-dessus sur l'inversion des rôles.
+                    DB.session.add(Splits(id=source_split_id, tx_id=tx.id, account_id=position_account.id, quantity=-source_amount, fx_rate=1.0))
+                    DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
+                    DB.session.flush()
+
+                disposal = AssetDisposal(
+                    user_id=user_id,
+                    possession_id=p.id,
+                    quantity=data['quantity'],
+                    sale_price=sale_price,
+                    sale_price_native=sale_price_native,
+                    sale_date=data['sale_date'],
+                    dest_account_id=dest_account_id,
+                    tx_id=tx.id if tx else None,
+                    source_split_id=source_split_id,
+                    dest_split_id=dest_split_id,
+                    realized_gain=realized_gain,
+                    holding_period_days=holding_period_days,
+                )
+                DB.session.add(disposal)
+                DB.session.commit()
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+                                       Transactions, Splits, WealthSnapshot, AssetValuations, user_id, data['sale_date'])
+                return json_response(_possession_to_dict(p, existing_disposals + [disposal]), HttpCode.CREATED)
             except Exception as e:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)

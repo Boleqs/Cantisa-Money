@@ -48,7 +48,7 @@ CategoriesRoutes(app, DB, Categories, Users)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)
 SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts)
 DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings)
-AssetsRoutes(app, DB, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings)
+AssetsRoutes(app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users, Categories)
@@ -57,13 +57,16 @@ AIRoutes(app, DB, Categories, Accounts, Users)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
-WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
+WealthRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users)
 LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
+TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,
+          Transactions, Splits, Accounts, Commodities, FxRates, UserSettings,
+          AssetDisposal, AssetPossession, Assets)
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
-             BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetValuations,
-             Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)
+             BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
+             AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)
 CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
                      Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 
@@ -328,6 +331,28 @@ def assign_permissions_to_roles():
             DB.session.add(RolePermissions(role_id=standard_role_id, permission_id=perm.id))
     DB.session.commit()
 
+
+def ensure_permissions_up_to_date():
+    """Ajoute les Permissions/RolePermissions manquantes vs VAR_PERMISSIONS_LIST sans toucher à
+    l'existant. Contrairement à insert_permissions()/assign_permissions_to_roles(), tourne à
+    CHAQUE démarrage (pas seulement sur base vide) — sinon une permission ajoutée après le seed
+    initial (ex: 'Fiscalité') n'atteint jamais les installations déjà en place."""
+    admin_role = Roles.query.filter(Roles.name == "Global administrator").first()
+    standard_role = Roles.query.filter(Roles.name == "Standard user").first()
+    if not admin_role or not standard_role:
+        return
+    existing_ids = {p.id for p in Permissions.query.all()}
+    changed = False
+    for name, meta in VAR_PERMISSIONS_LIST.items():
+        if meta['id'] not in existing_ids:
+            DB.session.add(Permissions(id=meta['id'], name=name, description=meta['description']))
+            DB.session.add(RolePermissions(role_id=admin_role.id, permission_id=meta['id']))
+            if name != "Delete users":
+                DB.session.add(RolePermissions(role_id=standard_role.id, permission_id=meta['id']))
+            changed = True
+    if changed:
+        DB.session.commit()
+
 def seed_market_indices():
     """Peuple la table market_index si elle est vide."""
     if DB.session.query(MarketIndex).count() > 0:
@@ -381,14 +406,16 @@ if IS_MAIN_PROCESS:
             else:
                 create_first_admin()
 
+        ensure_permissions_up_to_date()
+
         seed_market_indices()
         # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
         # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
-        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
-        snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot)
+        backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
+        snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot)
 
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
-                     AssetPossession, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
+                     AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
                      Loans, LoanInstallments)
 
 uuid.uuid4()
