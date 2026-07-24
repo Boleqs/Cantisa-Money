@@ -4,12 +4,14 @@ import hashlib
 
 from flask import jsonify, request, make_response
 import jwt
+from marshmallow import Schema, fields, ValidationError, validate
 from flask_jwt_extended import (jwt_required, set_access_cookies, unset_jwt_cookies, get_jwt, create_access_token,
                                 get_jwt_identity, create_refresh_token, set_refresh_cookies)
 
 from backend.config import (HttpCode,
                             JsonResponseType,
                             VAR_API_ROOT_PATH as ROOT_PATH,
+                            VAR_STANDARD_USER_ROLE_ID,
                             VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS as JWT_ACCESS_TOKEN_LIFETIME,
                             VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS
                             )
@@ -17,9 +19,15 @@ from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
 
 
+class SignupSchema(Schema):
+    username = fields.String(required=True, validate=validate.Length(min=3, max=50))
+    email = fields.Email(required=True, validate=validate.Length(max=100))
+    password = fields.String(required=True, validate=validate.Length(min=8))
+
+
 
 class AuthRoutes:
-    def __init__(self, app, DB, Users, limiter=None):
+    def __init__(self, app, DB, Users, UserRoles, limiter=None):
         ROUTE_PATH = f"{ROOT_PATH}/auth"
 
         @app.route(f"{ROUTE_PATH}/me", methods=["GET"])
@@ -80,6 +88,34 @@ class AuthRoutes:
                 return json_response("login error : Bad login or password", HttpCode.NOT_FOUND)
             except Exception as err:
                 return jsonify(err)
+
+        @app.route(f"{ROUTE_PATH}/signup", methods=["POST"])
+        @(limiter.limit("5 per minute") if limiter else (lambda f: f))
+        def signup():
+            try:
+                data = SignupSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+
+            if Users.query.filter(Users.username == data['username']).first():
+                return json_response('Username already exists', HttpCode.CONFLICT)
+            if Users.query.filter(Users.email == data['email']).first():
+                return json_response('Email already exists', HttpCode.CONFLICT)
+
+            try:
+                # Le rôle est toujours "Standard user", jamais fourni par le client : cette route
+                # est publique (pas de @jwt_required), il ne faut jamais lui faire confiance pour
+                # s'auto-attribuer un rôle plus privilégié.
+                new_user = Users(username=data['username'], email=data['email'], password_hash=b'', salt=b'')
+                new_user.set_password(data['password'])
+                DB.session.add(new_user)
+                DB.session.flush()
+                DB.session.add(UserRoles(user_id=new_user.id, role_id=VAR_STANDARD_USER_ROLE_ID))
+                DB.session.commit()
+                return json_response('Account created', HttpCode.CREATED)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
 
         @app.route(f"{ROUTE_PATH}/logout", methods=["POST"])
         @jwt_required()

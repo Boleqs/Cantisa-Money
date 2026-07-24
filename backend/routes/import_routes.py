@@ -22,3 +22,4 @@ from .rt_settings import SettingsRoutes
 from .rt_backup import BackupRoutes
 from .rt_custom_reports import CustomReportsRoutes
 from .rt_loans import LoansRoutes
+from .rt_onboarding import OnboardingRoutes

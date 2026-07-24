@@ -1,7 +1,7 @@
 import uuid
 from .base import Base
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, func, PrimaryKeyConstraint, ForeignKeyConstraint
+from sqlalchemy import Column, String, DateTime, Boolean, func, PrimaryKeyConstraint, ForeignKeyConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from dataclasses import dataclass
 
@@ -19,4 +19,5 @@ class UserSettings(Base):
     date_format:str = Column(String(16), default='fr-FR', nullable=False)
     market_score_weights = Column(JSONB, nullable=True)
     market_score_thresholds = Column(JSONB, nullable=True)
+    onboarding_completed:bool = Column(Boolean, default=False, nullable=False)
     updated_at:datetime = Column(DateTime, default=func.current_timestamp(), onupdate=func.current_timestamp())

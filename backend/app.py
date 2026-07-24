@@ -15,7 +15,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 
-from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST, HttpCode
+from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST, VAR_STANDARD_USER_ROLE_ID, HttpCode
 from utils.api_responses import json_response
 from utils.logs import log
 import uuid
@@ -40,7 +40,7 @@ limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 # Routes declaration
 UsersRoutes(app, DB, Users, UserRoles, Roles, Permissions, RolePermissions)
 CommoditiesRoutes(app, DB, Users, Commodities, FxRates, UserSettings, Accounts, Transactions, Assets)
-AuthRoutes(app, DB, Users, limiter)
+AuthRoutes(app, DB, Users, UserRoles, limiter)
 AccountsRoutes(app, DB, Users, Accounts)
 TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts, Categories, Commodities, FxRates)
 BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users, FxRates, Commodities, UserSettings)
@@ -60,6 +60,7 @@ MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, WealthSnapshot, Users)
 LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
+OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
              BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetValuations,
              Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)
@@ -121,7 +122,11 @@ def init_db():
 
     # Loris = admin, Alice = standard user
     DB.session.add(UserRoles(user_id=loris.id, role_id=uuid.UUID('00000000-cafe-4bca-82bb-a0cec8e5a6ba')))
-    DB.session.add(UserRoles(user_id=alice.id, role_id=uuid.UUID('00000000-cafe-46fe-9a04-a03b4c253f1f')))
+    DB.session.add(UserRoles(user_id=alice.id, role_id=VAR_STANDARD_USER_ROLE_ID))
+    # Comptes de démo déjà entièrement configurés : onboarding_completed=True pour ne pas les
+    # faire passer par l'assistant de premier login (voir rt_onboarding.py).
+    DB.session.add(UserSettings(user_id=loris.id, currency='EUR', onboarding_completed=True))
+    DB.session.add(UserSettings(user_id=alice.id, currency='EUR', onboarding_completed=True))
     DB.session.commit()
 
     # ── Devises ───────────────────────────────────────────────────────────────
@@ -303,7 +308,7 @@ def insert_permissions():
 def insert_roles():
     roles = [
         Roles(id=uuid.UUID("00000000-cafe-4bca-82bb-a0cec8e5a6ba"), name="Global administrator", description="Default admin role with all rights"),
-        Roles(id=uuid.UUID("00000000-cafe-46fe-9a04-a03b4c253f1f"), name="Standard user", description="Default user role with only rights on its own data")
+        Roles(id=VAR_STANDARD_USER_ROLE_ID, name="Standard user", description="Default user role with only rights on its own data")
     ]
     for role in roles:
         DB.session.add(role)

@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import axios from 'axios'
-import { ensureSettingsLoaded } from '@/utils/settings.js'
+import { ensureSettingsLoaded, onboardingCompleted } from '@/utils/settings.js'
 import { ensurePermissionsLoaded } from '@/utils/permissions.js'
 
 axios.defaults.withCredentials = true
@@ -39,6 +39,12 @@ const routes = [
         name: 'Signup',
         component: () => import('../views/initialization/Signup.vue'),
         meta: { guestOnly: true }
+    },
+    {
+        path: '/onboarding',
+        name: 'Onboarding',
+        component: () => import('../views/initialization/Onboarding.vue'),
+        meta: { requiresAuth: true }
     },
     {
         path: '/error',
@@ -208,6 +214,15 @@ router.beforeEach(async (to, from, next) => {
 
         if (authStatus === true) {
             await Promise.all([ensureSettingsLoaded(), ensurePermissionsLoaded()])
+
+            // Assistant de premier login : tant qu'un utilisateur n'a pas le minimum (devise +
+            // au moins un compte), on le bloque sur /onboarding avant d'accéder au reste de l'app.
+            if (!onboardingCompleted.value && to.name !== 'Onboarding') {
+                return next('/onboarding')
+            }
+            if (onboardingCompleted.value && to.name === 'Onboarding') {
+                return next('/Dashboard')
+            }
         }
     }
 

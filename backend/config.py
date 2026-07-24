@@ -46,6 +46,9 @@ VAR_PERMISSIONS_LIST = {'Delete users': {'id': uuid.UUID('00000000-cafe-4c9d-8ab
                         'Réglages personnels': {'id': uuid.UUID('9ed54ea7-03cb-4e75-b6dd-f10c789fcf6a'),
                                                 'description': 'Préférences personnelles (devise affichée, format de date, pondération du score de marché)'},
                         }
+# Rôle assigné par défaut à tout nouvel utilisateur (inscription publique ou seed) — voir
+# insert_roles() dans app.py et le endpoint public POST /api/auth/signup dans rt_auth.py.
+VAR_STANDARD_USER_ROLE_ID = uuid.UUID('00000000-cafe-46fe-9a04-a03b4c253f1f')
 VAR_API_ROOT_PATH = '/api'
 VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS = 3600
 VAR_API_JWT_REFRESH_TOKEN_LIFETIME_IN_SECONDS = 86400

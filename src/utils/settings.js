@@ -8,6 +8,7 @@ import axios from 'axios'
 
 export const currency = ref('EUR')
 export const dateFormat = ref('fr-FR')
+export const onboardingCompleted = ref(false)
 
 let weightsCache = null
 let thresholdsCache = null
@@ -21,12 +22,33 @@ export function ensureSettingsLoaded() {
         const d = res.data?.response_data || {}
         currency.value = d.currency || 'EUR'
         dateFormat.value = d.date_format || 'fr-FR'
+        onboardingCompleted.value = !!d.onboarding_completed
         weightsCache = d.market_score_weights || null
         thresholdsCache = d.market_score_thresholds || null
       })
       .catch(() => {})
   }
   return loadPromise
+}
+
+/** Force un rechargement des paramètres (ex: juste après avoir terminé l'onboarding) — le
+ * `loadPromise` mémoïsé par ensureSettingsLoaded() est déjà résolu et ne referait pas de requête
+ * sinon. */
+export function refreshSettings() {
+  loadPromise = null
+  return ensureSettingsLoaded()
+}
+
+/** Réinitialise le cache local au logout — sans ça, un deuxième utilisateur se connectant dans le
+ * même onglet hériterait de la devise/onboardingCompleted du précédent jusqu'à un rechargement
+ * complet de la page (ensureSettingsLoaded() ne refait rien tant que loadPromise est résolu). */
+export function clearSettings() {
+  currency.value = 'EUR'
+  dateFormat.value = 'fr-FR'
+  onboardingCompleted.value = false
+  weightsCache = null
+  thresholdsCache = null
+  loadPromise = null
 }
 
 /** Envoie l'état courant au serveur et met à jour le cache local avec la réponse. */

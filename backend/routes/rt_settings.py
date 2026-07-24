@@ -15,6 +15,7 @@ DEFAULT_SETTINGS = {
     'date_format': 'fr-FR',
     'market_score_weights': None,
     'market_score_thresholds': None,
+    'onboarding_completed': False,
 }
 
 
@@ -33,6 +34,9 @@ def _settings_to_dict(s):
         'date_format': s.date_format,
         'market_score_weights': s.market_score_weights,
         'market_score_thresholds': s.market_score_thresholds,
+        # Champ en lecture seule ici : seul POST /api/onboarding/setup peut le passer à True,
+        # pour ne pas risquer de le réinitialiser via ce endpoint générique (PUT /api/settings).
+        'onboarding_completed': s.onboarding_completed,
     }
 
 
