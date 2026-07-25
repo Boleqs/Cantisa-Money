@@ -35,7 +35,23 @@ CORS(app, supports_credentials=True, resources={r"/*": {"origins": CORS_ORIGINS}
 app.config.from_object(flask_config)
 DB = SQLAlchemy(model_class=Base)
 DB.init_app(app)
-JWTManager(app)
+jwt_manager = JWTManager(app)
+
+
+@jwt_manager.user_lookup_loader
+def _load_user_from_jwt(_jwt_header, jwt_data):
+    # Sans ce callback, un token signé valide (non expiré) mais dont l'utilisateur n'existe plus
+    # en base (ex: reset de la base, bascule vers une autre base comme un Docker vierge) reste
+    # accepté par @jwt_required()/check-auth — l'app croit l'utilisateur connecté alors qu'il n'a
+    # plus aucune ligne en base, ce qui casse tout ce qui dépend de son user_id (settings, onboarding...).
+    return Users.query.filter(Users.id == jwt_data['sub']).first()
+
+
+@jwt_manager.user_lookup_error_loader
+def _user_not_found(_jwt_header, _jwt_data):
+    return json_response('User not found', HttpCode.NOT_FOUND)
+
+
 limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 # Routes declaration
 UsersRoutes(app, DB, Users, UserRoles, Roles, Permissions, RolePermissions)
