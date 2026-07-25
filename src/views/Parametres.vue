@@ -42,13 +42,42 @@
           </div>
 
           <div class="settings-card">
+            <h3 class="card-title">Couleur d'accent</h3>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Sidebar &amp; boutons principaux</span>
+                <span class="setting-desc">Remplace le bleu par défaut. Les couleurs de statut (vert/rouge gain-perte, badges) ne changent pas.</span>
+              </div>
+              <div class="accent-picker">
+                <input type="color" class="color-input" v-model="accentColor" @input="onAccentInput" />
+                <span class="accent-hex">{{ accentColor.toUpperCase() }}</span>
+              </div>
+            </div>
+            <div class="setting-row accent-presets-row">
+              <div class="accent-presets">
+                <button
+                  v-for="preset in ACCENT_PRESETS"
+                  :key="preset"
+                  type="button"
+                  class="preset-swatch"
+                  :class="{ active: accentColor.toLowerCase() === preset }"
+                  :style="{ background: preset }"
+                  :title="preset"
+                  @click="pickAccent(preset)"
+                />
+              </div>
+              <button class="btn-normalize" @click="pickAccent(DEFAULT_ACCENT)">Réinitialiser</button>
+            </div>
+          </div>
+
+          <div class="settings-card">
             <h3 class="card-title">Affichage</h3>
             <div class="setting-row">
               <div class="setting-label">
                 <span class="setting-name">Devise par défaut</span>
                 <span class="setting-desc">Symbole affiché dans les montants.</span>
               </div>
-              <select v-model="currency" class="select" @change="dirty = true">
+              <select v-model="currency" class="select" @change="dirty = true; loadRates()">
                 <option v-for="c in currencyOptions" :key="c.id" :value="c.short_name">
                   {{ c.short_name }} — {{ c.name }}
                 </option>
@@ -224,6 +253,7 @@
                   <th>Type</th>
                   <th>Décimales</th>
                   <th>Description</th>
+                  <th>Taux vers {{ currency }}</th>
                   <th>Suivi auto</th>
                   <th></th>
                 </tr>
@@ -235,6 +265,12 @@
                   <td class="muted">{{ c.type === 'Crypto' ? 'Cryptomonnaie' : 'Devise' }}</td>
                   <td class="muted">{{ c.fraction }}</td>
                   <td class="muted">{{ c.description || '—' }}</td>
+                  <td class="muted rate-cell">
+                    <span v-if="c.short_name === currency">—</span>
+                    <span v-else-if="rates[c.short_name] != null">1 {{ c.short_name }} = {{ fmtRate(rates[c.short_name]) }} {{ currency }}</span>
+                    <span v-else-if="ratesLoading.has(c.short_name)" class="muted">…</span>
+                    <span v-else class="muted">indisponible</span>
+                  </td>
                   <td class="muted">
                     <span v-if="c.track_live_rate" class="track-badge" :title="c.last_rate_updated_at ? ('Dernière mise à jour : ' + fmtDateTime(c.last_rate_updated_at)) : 'Pas encore rafraîchi'">
                       ● Suivi{{ c.short_name !== currency ? (' vs ' + currency) : '' }}
@@ -255,60 +291,6 @@
                 </tr>
               </tbody>
             </table>
-          </div>
-        </section>
-
-        <!-- ═══ SAUVEGARDE ═══ -->
-        <section v-if="activeSection === 'sauvegarde'">
-          <h2 class="section-title">Sauvegarde</h2>
-          <p class="section-desc">
-            Exportez l'intégralité de vos données (comptes, transactions, budgets, actifs…) dans un fichier JSON,
-            à conserver ou à réimporter — dans cette instance ou une autre. Les éléments déjà présents (même nom,
-            mêmes montants et dates) sont automatiquement reconnus et ne sont jamais dupliqués.
-          </p>
-
-          <div class="settings-card">
-            <h3 class="card-title">Exporter</h3>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Télécharger une sauvegarde complète</span>
-                <span class="setting-desc">Fichier JSON contenant toutes vos données actuelles.</span>
-              </div>
-              <button class="btn btn-primary" :disabled="exporting" @click="exportBackup">
-                {{ exporting ? 'Export…' : 'Télécharger' }}
-              </button>
-            </div>
-            <div v-if="exportError" class="modal-error">{{ exportError }}</div>
-          </div>
-
-          <div class="settings-card">
-            <h3 class="card-title">Réimporter</h3>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Restaurer depuis un fichier de sauvegarde</span>
-                <span class="setting-desc">Les données déjà présentes sont ignorées, seules les nouvelles sont ajoutées.</span>
-              </div>
-              <button class="btn btn-primary" :disabled="importing" @click="triggerImportPicker">
-                {{ importing ? 'Import…' : 'Choisir un fichier…' }}
-              </button>
-              <input ref="importInput" type="file" accept="application/json,.json" style="display: none" @change="onImportFileChosen" />
-            </div>
-            <div v-if="importError" class="modal-error">{{ importError }}</div>
-
-            <div v-if="importReport" class="import-report">
-              <div class="import-report-row" v-for="(v, k) in importReportEntries" :key="k">
-                <span class="import-entity">{{ entityLabel(k) }}</span>
-                <span class="import-counts">
-                  <span v-if="v.created" class="badge-created">+{{ v.created }}</span>
-                  <span v-if="v.matched" class="badge-matched">{{ v.matched }} déjà présent{{ v.matched > 1 ? 's' : '' }}</span>
-                  <span v-if="!v.created && !v.matched" class="muted">—</span>
-                </span>
-              </div>
-              <p v-if="importReport.errors?.length" class="import-errors">
-                <strong>{{ importReport.errors.length }} ligne(s) ignorée(s) :</strong>
-                <span v-for="(e, i) in importReport.errors" :key="i">{{ e }}<br /></span>
-              </p>
-            </div>
           </div>
         </section>
 
@@ -362,13 +344,13 @@ import axios from 'axios'
 import { DEFAULT_METRICS, loadWeights, loadThresholds } from '@/utils/marketScore.js'
 import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { DEFAULT_ACCENT, applyAccentColor, saveAccentColor } from '@/utils/theme.js'
 
 // ── Sections ─────────────────────────────────────────────────────────────────
 const sections = [
   { id: 'interface', label: 'Interface' },
   { id: 'marches',   label: 'Marchés' },
   { id: 'devises',   label: 'Devises' },
-  { id: 'sauvegarde', label: 'Sauvegarde' },
 ]
 const activeSection = ref('interface')
 
@@ -378,36 +360,16 @@ const saved  = ref(false)
 
 // Interface
 const KEY_COLLAPSE = 'cmm_sidebar_collapsed_on_start'
+const KEY_ACCENT = 'cmm_accent_color'
 const collapseOnStart = ref(false)
 const currency        = ref('EUR')
 const dateFormat      = ref('fr-FR')
+const accentColor     = ref(DEFAULT_ACCENT)
+const ACCENT_PRESETS = ['#2563eb', '#7c3aed', '#059669', '#dc2626', '#d97706', '#0891b2']
 
 // Marchés
 const weights    = reactive({})
 const thresholds = reactive({})
-
-// Sauvegarde
-const exporting     = ref(false)
-const exportError   = ref('')
-const importing     = ref(false)
-const importError   = ref('')
-const importReport  = ref(null)
-const importInput   = ref(null)
-
-const ENTITY_LABELS = {
-  commodities: 'Devises', accounts: 'Comptes', categories: 'Catégories', tags: 'Tags',
-  budgets: 'Budgets', budget_accounts: 'Budgets ↔ comptes', budget_categories: 'Budgets ↔ catégories',
-  budget_tags: 'Budgets ↔ tags', subscriptions: 'Abonnements', assets: 'Actifs',
-  asset_possessions: 'Possessions d\'actifs', asset_valuations: 'Valorisations d\'actifs',
-  transactions: 'Transactions', splits: 'Répartitions (splits)', tags_on_split: 'Tags sur répartitions',
-  transaction_documents: 'Justificatifs',
-}
-function entityLabel(k) { return ENTITY_LABELS[k] || k }
-const importReportEntries = computed(() => {
-  if (!importReport.value) return {}
-  const { errors, user_settings, ...entries } = importReport.value
-  return entries
-})
 
 // Devises
 const commodities        = ref([])
@@ -418,6 +380,8 @@ const commodityEditTarget = ref(null)
 const commodityModalError = ref('')
 const commodityForm = ref({ name: '', short_name: '', type: 'Currency', fraction: 2, description: '', track_live_rate: false })
 const refreshingRateIds = ref(new Set())
+const rates = ref({})
+const ratesLoading = ref(new Set())
 
 const { shaking, shake } = useModalShake()
 useEscapeClose(() => { if (showCommodityModal.value) showCommodityModal.value = false })
@@ -453,6 +417,7 @@ onMounted(() => {
   collapseOnStart.value = localStorage.getItem(KEY_COLLAPSE) === 'true'
   currency.value        = settingsCurrency.value
   dateFormat.value      = settingsDateFormat.value
+  accentColor.value     = localStorage.getItem(KEY_ACCENT) || DEFAULT_ACCENT
 
   const stored = loadWeights()
   DEFAULT_METRICS.forEach(m => { weights[m.key] = { ...stored[m.key] } })
@@ -470,11 +435,34 @@ async function reloadCommodities() {
   try {
     const res = await axios.get('/api/commodities')
     commodities.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+    await loadRates()
   } catch (e) {
     commoditiesError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
     commoditiesLoading.value = false
   }
+}
+
+// Taux de chaque devise vers la devise par défaut (point 3 du retour utilisateur du 2026-07-25) —
+// un appel par devise à l'endpoint déjà existant /api/commodities/rate (utilisé ailleurs pour la
+// prévisualisation de split inter-devises), pas de nouvel endpoint nécessaire.
+async function loadRates() {
+  const targets = commodities.value.filter(c => c.short_name !== currency.value)
+  await Promise.all(targets.map(async (c) => {
+    ratesLoading.value.add(c.short_name)
+    try {
+      const res = await axios.get('/api/commodities/rate', { params: { from_code: c.short_name, to_code: currency.value } })
+      rates.value = { ...rates.value, [c.short_name]: res.data?.response_data?.rate ?? null }
+    } catch {
+      rates.value = { ...rates.value, [c.short_name]: null }
+    } finally {
+      ratesLoading.value.delete(c.short_name)
+    }
+  }))
+}
+
+function fmtRate(v) {
+  return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(v)
 }
 
 function openCreateCommodity() {
@@ -543,54 +531,6 @@ async function deleteCommodity(c) {
   }
 }
 
-// ── Sauvegarde ────────────────────────────────────────────────────────────────
-async function exportBackup() {
-  exporting.value = true
-  exportError.value = ''
-  try {
-    const res = await axios.get('/api/backup/export', { responseType: 'blob' })
-    const url = URL.createObjectURL(res.data)
-    const a = document.createElement('a')
-    const now = new Date()
-    const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-')
-    a.href = url
-    a.download = `cantisa-backup-${stamp}.json`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    exportError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
-  } finally {
-    exporting.value = false
-  }
-}
-
-function triggerImportPicker() {
-  importError.value = ''
-  importReport.value = null
-  importInput.value?.click()
-}
-
-async function onImportFileChosen(event) {
-  const file = event.target.files?.[0]
-  event.target.value = ''
-  if (!file) return
-  importing.value = true
-  importError.value = ''
-  importReport.value = null
-  try {
-    const formData = new FormData()
-    formData.append('file', file)
-    const res = await axios.post('/api/backup/import', formData)
-    importReport.value = res.data?.response_data || null
-  } catch (e) {
-    importError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
-  } finally {
-    importing.value = false
-  }
-}
-
 // ── Actions ───────────────────────────────────────────────────────────────────
 function toggleMetric(key) {
   weights[key].enabled = !weights[key].enabled
@@ -632,10 +572,23 @@ function isPct(key) {
   return ['roe', 'roa', 'net_margin', 'gross_margin', 'operating_margin', 'dividend_yield'].includes(key)
 }
 
+// Prévisualisation immédiate (sidebar + boutons changent en direct) sans persister tant que
+// l'utilisateur n'a pas cliqué "Enregistrer" — même logique que le reste de cette page.
+function onAccentInput() {
+  applyAccentColor(accentColor.value)
+  dirty.value = true
+}
+
+function pickAccent(hex) {
+  accentColor.value = hex
+  onAccentInput()
+}
+
 async function saveAll() {
   try {
     localStorage.setItem(KEY_COLLAPSE, String(collapseOnStart.value))
   } catch {}
+  saveAccentColor(accentColor.value)
   await saveSettings({
     currency: currency.value,
     dateFormat: dateFormat.value,
@@ -879,6 +832,48 @@ async function saveAll() {
 }
 .btn-normalize:hover { background: rgba(59,130,246,0.2); }
 
+/* Couleur d'accent */
+.accent-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.color-input {
+  width: 40px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(148,163,184,0.25);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.color-input::-webkit-color-swatch-wrapper { padding: 2px; }
+.color-input::-webkit-color-swatch { border: none; border-radius: 6px; }
+.accent-hex {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+}
+.accent-presets-row {
+  align-items: center;
+}
+.accent-presets {
+  display: flex;
+  gap: 8px;
+}
+.preset-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s, border-color 0.15s;
+}
+.preset-swatch:hover { transform: scale(1.1); }
+.preset-swatch.active { border-color: #e5e7eb; }
+
 /* Scale table */
 .scale-table { display: flex; flex-direction: column; }
 .scale-header {
@@ -971,6 +966,7 @@ async function saveAll() {
   color: #cbd5e1;
 }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rate-cell { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table th {
   text-align: left; padding: 10px 12px;
   border-bottom: 1px solid rgba(148,163,184,0.15);
@@ -991,7 +987,7 @@ async function saveAll() {
   cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; color: #fff; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; color: #fff; }
 
 .btn-action {
   background: transparent;
@@ -1063,41 +1059,5 @@ async function saveAll() {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-/* Sauvegarde */
-.import-report {
-  margin-top: 4px;
-  border-top: 1px solid rgba(148,163,184,0.1);
-  padding-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.import-report-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-}
-.import-entity { color: #cbd5e1; }
-.import-counts { display: flex; gap: 8px; align-items: center; }
-.badge-created {
-  background: rgba(74,222,128,0.12);
-  color: #4ade80;
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-weight: 700;
-  font-size: 12px;
-}
-.badge-matched {
-  color: #64748b;
-  font-size: 12px;
-}
-.import-errors {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: #fca5a5;
-  line-height: 1.6;
 }
 </style>

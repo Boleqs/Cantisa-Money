@@ -125,7 +125,7 @@ async function onSubmit() {
   padding: 6px 12px; font-size: 13px; cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; }
 .icon-btn { border: none; background: transparent; color: #9ca3af; cursor: pointer; font-size: 16px; }
 .icon-btn:hover { color: #e5e7eb; }
 </style>

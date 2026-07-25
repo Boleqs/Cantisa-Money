@@ -13,6 +13,12 @@
   --color-heading: #f8fafc;
   --color-text: #e5e7eb;
 
+  /* Couleur d'accent personnalisable (Paramétrage > Interface) — ces valeurs par défaut ne
+     s'affichent qu'avant que src/utils/theme.js ne les surcharge au boot ; sert aussi de repli si
+     JS est désactivé. */
+  --color-accent: #2563eb;
+  --color-accent-2: #4f46e5;
+
   --section-gap: 160px;
 
   color-scheme: dark;

@@ -3,7 +3,7 @@
     <!-- Header -->
     <header class="page-header">
       <div class="title-block">
-        <h1>Accounts</h1>
+        <h1>Comptes</h1>
         <p class="subtitle">
           Tous les comptes de l’utilisateur connecté, groupés par type.
         </p>
@@ -65,98 +65,61 @@
             <h2>{{ group.label }}</h2>
             <span class="pill">{{ group.items.length }}</span>
           </div>
-          <button class="icon-btn" type="button" :aria-label="isCollapsed(group.key) ? 'Déplier' : 'Replier'">
-            {{ isCollapsed(group.key) ? '▸' : '▾' }}
-          </button>
+          <div class="group-header-right">
+            <div v-if="group.rollup" class="group-rollup">
+              <div class="rollup-label">{{ group.rollup.label }}</div>
+              <div class="rollup-value" :class="group.rollup.colorClass">
+                {{ fmtAmount(group.rollup.value) }} {{ group.rollup.currency }}
+              </div>
+            </div>
+            <div v-else-if="group.items.length > 1" class="group-rollup">
+              <div class="rollup-label muted-note">Devises multiples</div>
+            </div>
+            <button class="icon-btn" type="button" :aria-label="isCollapsed(group.key) ? 'Déplier' : 'Replier'">
+              {{ isCollapsed(group.key) ? '▸' : '▾' }}
+            </button>
+          </div>
         </div>
 
-        <div v-if="!isCollapsed(group.key)" class="cards">
+        <div v-if="!isCollapsed(group.key)" class="acc-list">
           <div
             v-for="acc in group.items"
             :key="acc.id"
-            class="card"
-            :class="{ 'card--child': acc._depth > 0 }"
-            :style="acc._depth > 0 ? { marginLeft: (acc._depth * 28) + 'px' } : {}"
+            class="acc-row"
+            :class="{ 'is-child': acc._depth > 0 }"
           >
-            <div class="card-top">
-              <div class="name-wrap">
-                <div class="name-row">
-                  <span v-if="acc._depth > 0" class="tree-prefix">└</span>
-                  <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc.name }}</h3>
-                  <span v-if="acc.code" class="code">#{{ acc.code }}</span>
-                </div>
-                <p v-if="acc.description" class="desc">
-                  {{ acc.description }}
-                </p>
+            <div class="acc-id">
+              <div class="acc-name-row">
+                <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc.name }}</h3>
+                <span v-if="acc.code" class="code">#{{ acc.code }}</span>
+                <span class="acc-badge currency">{{ currencyShort(acc.currency_id) }}</span>
+                <span v-if="acc.account_subtype" class="acc-badge">{{ acc.account_subtype }}</span>
+                <span v-if="hasChildren(acc.id)" class="acc-badge soft">{{ childCount(acc.id) }} sous-compte{{ childCount(acc.id) > 1 ? 's' : '' }}</span>
+                <span v-if="acc.is_hidden" class="acc-badge danger">Caché</span>
+                <span v-if="acc.is_virtual" class="acc-badge warn">Virtuel</span>
               </div>
-
-              <div class="badges">
-                <span class="badge">{{ acc.account_type }}</span>
-                <span v-if="acc.account_subtype" class="badge soft">
-                  {{ acc.account_subtype }}
-                </span>
-                <span v-if="acc.is_hidden" class="badge danger">Hidden</span>
-                <span v-if="acc.is_virtual" class="badge warn">Virtual</span>
-              </div>
-            </div>
-
-            <div class="card-grid">
-              <div class="kv">
-                <div class="k">Devise</div>
-                <div class="v">
-                  {{ currencyLabel(acc.currency_id) }}
-                </div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Total earned</div>
-                <div class="v mono">
-                  {{ fmtAmount(acc.total_earned) }} {{ currencyShort(acc.currency_id) }}
-                </div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Total spent</div>
-                <div class="v mono">
-                  {{ fmtAmount(acc.total_spent) }} {{ currencyShort(acc.currency_id) }}
-                </div>
-              </div>
-
-              <template v-if="hasChildren(acc.id)">
-                <div class="kv">
-                  <div class="k">Solde consolidé — earned</div>
-                  <div class="v mono">
-                    {{ fmtAmount(acc.consolidated_earned) }} {{ currencyShort(acc.currency_id) }}
-                  </div>
-                </div>
-
-                <div class="kv">
-                  <div class="k">Solde consolidé — spent</div>
-                  <div class="v mono">
-                    {{ fmtAmount(acc.consolidated_spent) }} {{ currencyShort(acc.currency_id) }}
-                  </div>
-                </div>
-              </template>
-
-              <div class="kv" v-if="acc.parent_id">
-                <div class="k">Parent</div>
-                <div class="v">{{ parentName(acc.parent_id) }}</div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Created</div>
-                <div class="v">{{ fmtDate(acc.created_at) }}</div>
-              </div>
-
-              <div class="kv">
-                <div class="k">Updated</div>
-                <div class="v">{{ fmtDate(acc.updated_at) }}</div>
+              <p v-if="acc.description" class="desc">{{ acc.description }}</p>
+              <div class="acc-sub" v-if="acc._figure.kind !== 'flow'">
+                <template v-if="acc._figure.positions != null">
+                  <span>{{ acc._figure.positions }} position{{ acc._figure.positions > 1 ? 's' : '' }}</span>
+                </template>
+                <template v-else>
+                  <span class="flow-pos">↑ {{ fmtAmount(acc._figure.earned) }}</span>
+                  <span class="flow-neg">↓ {{ fmtAmount(acc._figure.spent) }}</span>
+                </template>
               </div>
             </div>
 
-            <div class="card-actions">
-              <button class="btn-action" @click="openEdit(acc)">✎ Modifier</button>
-              <button class="btn-action btn-danger" @click="deleteAccount(acc)">✕ Supprimer</button>
+            <div class="acc-figure">
+              <div class="figure-label">{{ acc._figure.label }}</div>
+              <div class="figure-value" :class="acc._figure.colorClass">
+                {{ fmtAmount(acc._figure.value) }} {{ acc._figure.currency }}
+              </div>
+            </div>
+
+            <div class="row-actions">
+              <button class="btn-action" @click="openEdit(acc)" title="Modifier">✎</button>
+              <button class="btn-action btn-danger" @click="deleteAccount(acc)" title="Supprimer">✕</button>
             </div>
           </div>
         </div>
@@ -179,11 +142,13 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import axios from "axios";
 import AccountModal from "@/components/modal/AccountModal.vue";
+import { hasPermission } from "@/utils/permissions.js";
 
 const router = useRouter();
 
 const accounts = ref([]);
 const commodities = ref([]);
+const assets = ref([]);
 
 // Modal state
 const showModal = ref(false);
@@ -203,13 +168,27 @@ const collapsed = ref(new Set());
 // Order & labels for account_type
 const TYPE_ORDER = ["Current", "Assets", "Equity", "Liability", "Income", "Expense"];
 const TYPE_LABELS = {
-  Current: "Current accounts",
-  Assets: "Assets",
+  Current: "Comptes courants",
+  Assets: "Actifs",
   Equity: "Equity",
   Liability: "Crédits / Dettes",
-  Income: "Income",
-  Expense: "Expense",
+  Income: "Revenus",
+  Expense: "Dépenses",
 };
+
+// Libellé du rollup de groupe : les comptes de type Assets/Equity peuvent mélanger de vrais
+// soldes (ex. Livret A) et des comptes-titres valorisés par leurs positions (ex. Compte Titres,
+// voir accountFigure) — "Valeur cumulée" reste correct dans les deux cas contrairement à "Solde".
+const GROUP_ROLLUP_LABEL = {
+  Liability: "Capital restant dû",
+  Assets: "Valeur cumulée",
+  Equity: "Valeur cumulée",
+  Income: "Total perçu",
+  Expense: "Total dépensé",
+};
+// Groupes dont la figure n'est pas un solde signé (gain/perte) mais un simple cumul — jamais
+// coloré pos/neg, cf. accountFigure().
+const NEUTRAL_ROLLUP_GROUPS = new Set(["Income", "Expense", "Assets", "Equity"]);
 
 function normalizeText(v) {
   return (v ?? "").toString().toLowerCase().trim();
@@ -242,16 +221,121 @@ function hasChildren(accountId) {
   return parentIds.value.has(String(accountId));
 }
 
+function childCount(accountId) {
+  return accounts.value.filter((a) => String(a.parent_id) === String(accountId)).length;
+}
+
+// Un compte Assets/Equity qui détient des positions (AssetPossession) est valorisé par ces
+// positions plutôt que par son solde de flux (crédité/débité n'y représente que les mouvements
+// d'achat/vente, pas la valeur réelle) — même logique que AccountDetail.vue (point 8 du backlog).
+const assetValueByAccount = computed(() => {
+  const map = new Map();
+  for (const a of assets.value) {
+    for (const p of a.possessions || []) {
+      const key = String(p.account_id);
+      const qty = p.remaining_quantity != null ? p.remaining_quantity : p.quantity;
+      const entry = map.get(key) || { value: 0, currency: a.display_currency, positionsCount: 0 };
+      entry.value += qty * (a.converted_value_per_unit || 0);
+      entry.positionsCount += 1;
+      map.set(key, entry);
+    }
+  }
+  return map;
+});
+
+// Calcule la figure clé à afficher pour un compte : valeur des actifs détenus si applicable,
+// sinon solde (consolidé si le compte a des sous-comptes), avec un traitement dédié pour les
+// comptes de type Liability (capital restant dû, toujours affiché en positif/rouge).
+function accountFigure(acc) {
+  const assetInfo = assetValueByAccount.value.get(String(acc.id));
+  if (assetInfo && assetInfo.positionsCount > 0) {
+    return {
+      kind: "assets",
+      label: "Valeur des actifs",
+      value: assetInfo.value,
+      currency: assetInfo.currency,
+      colorClass: "neutral",
+      positions: assetInfo.positionsCount,
+    };
+  }
+
+  const hc = hasChildren(acc.id);
+  const earned = Number(hc ? acc.consolidated_earned : acc.total_earned) || 0;
+  const spent = Number(hc ? acc.consolidated_spent : acc.total_spent) || 0;
+  const solde = earned - spent;
+  const currency = currencyShort(acc.currency_id);
+
+  if (acc.account_type === "Liability") {
+    return {
+      kind: "liability",
+      label: "Capital restant dû",
+      value: Math.abs(solde),
+      currency,
+      colorClass: "neg",
+      earned,
+      spent,
+    };
+  }
+
+  // Income/Expense ne portent pas un "solde" au sens classique : par construction du trigger SQL
+  // (total_earned = somme des splits positifs, total_spent = somme des splits négatifs), un compte
+  // Income est toujours crédité en négatif (le cumul réel est dans total_spent) et un compte Expense
+  // toujours débité en positif (cumul réel dans total_earned) — soustraire les deux donnerait un
+  // nombre au signe trompeur (ex. "Solde -9 600" sur un compte de salaires). On affiche donc le
+  // cumul réel, en neutre, jamais coloré pos/neg puisque ce n'est pas un gain ou une perte.
+  if (acc.account_type === "Income") {
+    return {
+      kind: "flow",
+      label: hc ? "Total perçu (consolidé)" : "Total perçu",
+      value: spent,
+      currency,
+      colorClass: "neutral",
+      earned,
+      spent,
+    };
+  }
+
+  if (acc.account_type === "Expense") {
+    return {
+      kind: "flow",
+      label: hc ? "Total dépensé (consolidé)" : "Total dépensé",
+      value: earned,
+      currency,
+      colorClass: "neutral",
+      earned,
+      spent,
+    };
+  }
+
+  return {
+    kind: "solde",
+    label: hc ? "Solde consolidé" : "Solde",
+    value: solde,
+    currency,
+    colorClass: solde >= 0 ? "pos" : "neg",
+    earned,
+    spent,
+  };
+}
+
+// Somme des figures des comptes racines d'un groupe (jamais leurs enfants, déjà inclus dans le
+// solde consolidé du parent — sinon double-comptage). Retourne null si les comptes racines du
+// groupe ne sont pas tous dans la même devise : mieux vaut ne rien afficher qu'additionner à tort
+// des montants dans des devises différentes.
+function groupRollup(key, items) {
+  const roots = items.filter((a) => a._depth === 0);
+  if (!roots.length) return null;
+  const currencies = new Set(roots.map((a) => a._figure.currency));
+  if (currencies.size > 1) return null;
+  const value = roots.reduce((s, a) => s + a._figure.value, 0);
+  const label = GROUP_ROLLUP_LABEL[key] || "Solde cumulé";
+  const colorClass = key === "Liability" ? "neg" : NEUTRAL_ROLLUP_GROUPS.has(key) ? "neutral" : value >= 0 ? "pos" : "neg";
+  return { label, value, currency: roots[0]._figure.currency, colorClass };
+}
+
 function currencyShort(currencyId) {
   const c = commodityById(currencyId);
   return c?.short_name?.toUpperCase?.() || "—";
-}
-
-function currencyLabel(currencyId) {
-  const c = commodityById(currencyId);
-  if (!c) return String(currencyId ?? "—");
-  const short = c.short_name ? c.short_name.toUpperCase() : "";
-  return short ? `${c.name} (${short})` : c.name;
 }
 
 function isCollapsed(key) {
@@ -277,13 +361,24 @@ async function fetchAccounts() {
   accounts.value = Array.isArray(data?.response_data) ? data.response_data : [];
 }
 
+async function fetchAssets() {
+  // Valeur des positions par compte (voir accountFigure) — seulement si la permission est
+  // accordée, pour ne pas déclencher un 403 inutile pour les utilisateurs sans accès Patrimoine.
+  if (!hasPermission("Patrimoine")) {
+    assets.value = [];
+    return;
+  }
+  const { data } = await axios.get("/api/assets");
+  assets.value = Array.isArray(data?.response_data) ? data.response_data : [];
+}
+
 async function reload() {
   loading.value = true;
   error.value = "";
   try {
     // commodities avant accounts pour afficher les devises correctement
     await fetchCommodities();
-    await fetchAccounts();
+    await Promise.all([fetchAccounts(), fetchAssets()]);
   } catch (e) {
     // erreurs typiques : 401 si auth invalide, ou backend down
     const msg =
@@ -357,11 +452,6 @@ async function deleteAccount(acc) {
   }
 }
 
-function parentName(parentId) {
-  const p = accounts.value.find((a) => String(a.id) === String(parentId));
-  return p ? p.name : String(parentId);
-}
-
 onMounted(() => {
   reload();
 });
@@ -410,7 +500,7 @@ function buildTreeFlat(items) {
       normalizeText(a.name).localeCompare(normalizeText(b.name), "fr")
     );
     for (const child of children) {
-      result.push({ ...child, _depth: depth });
+      result.push({ ...child, _depth: depth, _figure: accountFigure(child) });
       traverse(String(child.id), depth + 1);
     }
   }
@@ -442,12 +532,16 @@ const groupedAccounts = computed(() => {
     return a.localeCompare(b, "fr");
   });
 
-  return keys.map((key) => ({
-    key,
-    label: TYPE_LABELS[key] || key,
+  return keys.map((key) => {
     // Chaque groupe est ordonné en arborescence parent → enfants
-    items: buildTreeFlat(map.get(key)),
-  }));
+    const items = buildTreeFlat(map.get(key));
+    return {
+      key,
+      label: TYPE_LABELS[key] || key,
+      items,
+      rollup: groupRollup(key, items),
+    };
+  });
 });
 </script>
 
@@ -584,6 +678,36 @@ const groupedAccounts = computed(() => {
   font-size: 16px;
 }
 
+.group-header-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.group-rollup {
+  text-align: right;
+}
+.rollup-label {
+  font-size: 10.5px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.rollup-label.muted-note {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+}
+.rollup-value {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.rollup-value.pos { color: #4ade80; }
+.rollup-value.neg { color: #f87171; }
+.rollup-value.neutral { color: #e5e7eb; }
+
 .pill {
   font-size: 12px;
   padding: 3px 8px;
@@ -602,51 +726,48 @@ const groupedAccounts = computed(() => {
   opacity: 0.85;
 }
 
-.cards {
-  padding: 14px;
-  display: grid;
-  gap: 12px;
+.acc-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.card {
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: rgba(2, 6, 23, 0.45);
-  border-radius: 14px;
-  padding: 14px;
+.acc-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  transition: background 0.12s;
 }
-
-.card--child {
-  border-left: 2px solid rgba(96, 165, 250, 0.35);
+.acc-row:hover {
+  background: rgba(148, 163, 184, 0.04);
 }
-
-.tree-prefix {
+.acc-row.is-child {
+  padding-left: 40px;
+  position: relative;
+}
+.acc-row.is-child::before {
+  content: "└";
+  position: absolute;
+  left: 18px;
   color: rgba(148, 163, 184, 0.35);
-  font-size: 14px;
-  flex-shrink: 0;
-  margin-right: 2px;
+  font-size: 13px;
 }
 
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.name-wrap {
-  min-width: 0;
+.acc-id {
   flex: 1;
+  min-width: 0;
 }
 
-.name-row {
+.acc-name-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: baseline;
   flex-wrap: wrap;
 }
 .name {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .account-link {
@@ -667,78 +788,80 @@ const groupedAccounts = computed(() => {
 }
 
 .desc {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: #9ca3af;
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 60ch;
 }
 
-.badges {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.badge {
-  font-size: 12px;
-  padding: 3px 8px;
+.acc-badge {
+  font-size: 10.5px;
+  padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(148, 163, 184, 0.10);
-  color: #e5e7eb;
+  background: rgba(148, 163, 184, 0.08);
+  color: #cbd5e1;
+  font-weight: 600;
 }
-.badge.soft {
-  background: rgba(148, 163, 184, 0.06);
+.acc-badge.currency {
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.25);
+  background: rgba(96, 165, 250, 0.08);
 }
-.badge.danger {
+.acc-badge.soft {
+  background: transparent;
+  color: #9ca3af;
+}
+.acc-badge.danger {
   border-color: rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.10);
   color: #fecaca;
 }
-.badge.warn {
+.acc-badge.warn {
   border-color: rgba(245, 158, 11, 0.35);
   background: rgba(245, 158, 11, 0.10);
   color: #fde68a;
 }
 
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px 14px;
-  margin-top: 12px;
-}
-@media (max-width: 900px) {
-  .card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (max-width: 560px) {
-  .card-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.kv .k {
-  color: #9ca3af;
-  font-size: 12px;
-}
-.kv .v {
+.acc-sub {
   margin-top: 4px;
-  font-size: 13px;
-  color: #e5e7eb;
-}
-.mono {
-  font-variant-numeric: tabular-nums;
-}
-
-.card-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #64748b;
+}
+.acc-sub .flow-pos { color: rgba(74, 222, 128, 0.75); }
+.acc-sub .flow-neg { color: rgba(248, 113, 113, 0.75); }
+
+.acc-figure {
+  text-align: right;
+  flex-shrink: 0;
+  min-width: 150px;
+}
+.figure-label {
+  font-size: 10.5px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.figure-value {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.figure-value.pos { color: #4ade80; }
+.figure-value.neg { color: #f87171; }
+.figure-value.neutral { color: #e5e7eb; }
+
+.row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .btn-action {
@@ -765,7 +888,7 @@ const groupedAccounts = computed(() => {
 }
 
 .btn-primary {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   border-color: transparent;
   color: #fff;
 }

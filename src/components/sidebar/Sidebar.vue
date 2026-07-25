@@ -13,7 +13,7 @@ import {
     faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
     faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
     faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
-    faUserShield, faUsers, faUserLock
+    faUserShield, faUsers, faUserLock, faDatabase, faChartArea
 } from '@fortawesome/free-solid-svg-icons';
 
 export default {
@@ -44,7 +44,7 @@ export default {
             faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
             faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
             faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
-            faUserShield, faUsers, faUserLock
+            faUserShield, faUsers, faUserLock, faDatabase, faChartArea
         }
     }
 }
@@ -79,6 +79,7 @@ export default {
             <template v-if="hasPermission('Patrimoine')">
               <SidebarSectionTitle label="Gestion financière"/>
               <SidebarLink to="/patrimoine" :icon="faSackDollar">Vue d'ensemble</SidebarLink>
+              <SidebarLink to="/patrimoine/prediction" :icon="faChartArea">Prédiction</SidebarLink>
               <SidebarGroup label="Portfolio" :icon="faChartLine" :paths="['/portfolio']">
                 <SidebarLink to="/portfolio" :icon="faLayerGroup">Liste des actifs</SidebarLink>
               </SidebarGroup>
@@ -112,9 +113,10 @@ export default {
               <SidebarLink to="/categories" :icon="faFolderTree">Catégories</SidebarLink>
               <SidebarLink to="/tags" :icon="faTag">Tags</SidebarLink>
             </SidebarGroup>
-            <SidebarGroup v-if="isAdmin" label="Administration" :icon="faUserShield" :paths="['/admin/users', '/admin/roles']">
+            <SidebarGroup v-if="isAdmin" label="Administration" :icon="faUserShield" :paths="['/admin/users', '/admin/roles', '/admin/backup']">
               <SidebarLink :icon="faUsers" to="/admin/users">Utilisateurs</SidebarLink>
               <SidebarLink :icon="faUserLock" to="/admin/roles">Rôles &amp; Permissions</SidebarLink>
+              <SidebarLink :icon="faDatabase" to="/admin/backup">Sauvegarde</SidebarLink>
             </SidebarGroup>
         </div>
 

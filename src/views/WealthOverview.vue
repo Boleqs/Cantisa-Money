@@ -13,8 +13,16 @@
 
     <div v-if="error" class="alert">{{ error }}</div>
 
-    <!-- KPI Cards -->
+    <!-- KPI Cards — toujours BRUT → NET → crédits/dettes, cf. convention d'affichage patrimoine
+         (voir aussi Dashboard.vue, Home.vue). La plus-value est une mesure de performance, pas de
+         composition du patrimoine : elle est volontairement séparée ci-dessous plutôt que noyée
+         dans la même série. -->
     <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Valeur du portefeuille</div>
+        <div class="kpi-value">{{ fmtAmount(kpis.portfolio_value) }}</div>
+        <div class="kpi-sub">Actifs financiers &amp; physiques (brut, avant crédits)</div>
+      </div>
       <div class="kpi-card kpi-card--featured">
         <div class="kpi-label">Patrimoine financier net</div>
         <div class="kpi-value" :class="financialNet >= 0 ? 'pos' : 'neg'">
@@ -25,17 +33,16 @@
         </div>
         <div class="kpi-sub" v-else>Portefeuille, aucun crédit en cours</div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Valeur du portefeuille</div>
-        <div class="kpi-value">{{ fmtAmount(kpis.portfolio_value) }}</div>
-        <div class="kpi-sub">Actifs financiers &amp; physiques (brut, avant crédits)</div>
-      </div>
       <div class="kpi-card" v-if="kpis.total_liabilities">
         <div class="kpi-label">Crédits en cours</div>
         <div class="kpi-value neg">{{ fmtAmount(kpis.total_liabilities) }}</div>
         <div class="kpi-sub">Capital restant dû — déjà déduit du patrimoine financier net</div>
       </div>
-      <div class="kpi-card">
+    </div>
+
+    <div class="gain-row">
+      <span class="gain-eyebrow">Performance</span>
+      <div class="kpi-card kpi-card--gain">
         <div class="kpi-label">Plus-value latente</div>
         <div class="kpi-value" :class="kpis.unrealized_gain >= 0 ? 'pos' : 'neg'">
           {{ fmtAmount(kpis.unrealized_gain) }}
@@ -246,6 +253,24 @@ onMounted(() => reload())
 .kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kpi-pct { font-size: 13px; font-weight: 600; margin-left: 4px; }
 .kpi-sub { font-size: 11px; color: #4b5563; margin-top: 4px; }
+
+/* Plus-value : mesure de performance, volontairement hors de la grille de composition du
+   patrimoine (brut/net/crédits) ci-dessus — cf. convention d'affichage patrimoine. */
+.gain-row { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.gain-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+.kpi-card--gain {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.05);
+  width: 100%;
+  max-width: 320px;
+}
+@media (max-width: 500px) { .kpi-card--gain { max-width: none; } }
 
 .charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }

@@ -352,7 +352,7 @@ onMounted(loadAccounts)
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:not(:disabled):hover { background: rgba(148, 163, 184, 0.1); }
 .btn-primary {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   border-color: transparent;
   color: #fff;
   padding: 10px 20px;

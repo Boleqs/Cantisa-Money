@@ -523,7 +523,7 @@ onUnmounted(() => document.removeEventListener('click', closeExportMenu))
 }
 
 .btn-primary {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   border-color: transparent;
   color: #fff;
 }

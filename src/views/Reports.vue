@@ -1431,7 +1431,7 @@ onMounted(() => reload())
   padding: 8px 14px; border-radius: 10px; cursor: pointer; font-size: 13px;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(90deg,#2563eb,#4f46e5); border-color: transparent; color:#fff; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; color:#fff; }
 
 .alert {
   border: 1px solid rgba(239,68,68,0.5);

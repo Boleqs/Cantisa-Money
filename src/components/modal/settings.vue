@@ -299,7 +299,7 @@ onMounted(() => {
   transition: opacity 0.15s, background 0.15s;
 }
 .btn-primary {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   color: #fff;
 }
 .btn-primary:hover { opacity: 0.88; }

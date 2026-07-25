@@ -22,11 +22,25 @@
           <input v-model="form.name" type="text" placeholder="Prêt immobilier, Crédit auto…" required />
         </div>
 
-        <div class="field-row" v-if="!isEdit">
-          <label class="checkbox-label">
-            <input type="checkbox" v-model="form.is_existing_loan" />
-            Ce crédit est déjà en cours (déjà débloqué avant l'usage de l'application)
-          </label>
+        <div class="mode-select" v-if="!isEdit">
+          <button
+            type="button"
+            class="mode-btn"
+            :class="{ active: !form.is_existing_loan }"
+            @click="form.is_existing_loan = false"
+          >
+            <span class="mode-title">Crédit à venir</span>
+            <span class="mode-desc">Le prêt va être (ou vient d'être) débloqué — le montant emprunté sera viré sur le compte de prélèvement.</span>
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            :class="{ active: form.is_existing_loan }"
+            @click="form.is_existing_loan = true"
+          >
+            <span class="mode-title">Déjà en cours</span>
+            <span class="mode-desc">Le prêt existait déjà avant l'usage de l'app — vous renseignez sa situation actuelle, sans virement de déblocage.</span>
+          </button>
         </div>
 
         <div class="form-grid">
@@ -88,7 +102,7 @@
               <option value="">— Sélectionner —</option>
               <option v-for="a in equityAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
             </select>
-            <p class="field-hint">Contrepartie de l'écriture d'ouverture — le compte de prélèvement n'est pas crédité dans ce mode.</p>
+            <p class="field-hint">Sert de contrepartie comptable au capital restant dû initial — le prêt existait déjà, donc l'argent n'entre pas réellement sur le compte de prélèvement.</p>
             <p v-if="!equityAccounts.length" class="field-hint">Aucun compte de type Equity — créez-en un d'abord.</p>
           </div>
           <div class="field">
@@ -310,7 +324,23 @@ async function onSubmit() {
   font-size: 13px;
 }
 
-.field-row { display: flex; }
+.mode-select { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mode-btn {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #020617;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mode-btn:hover { border-color: #374151; }
+.mode-btn.active { border-color: var(--color-accent); background: rgba(59, 130, 246, 0.08); }
+.mode-title { font-size: 13px; font-weight: 600; color: #e5e7eb; }
+.mode-desc { font-size: 11px; color: #9ca3af; line-height: 1.4; }
 
 .form-grid {
   display: grid;
@@ -358,7 +388,7 @@ async function onSubmit() {
   cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; }
 .btn:hover { opacity: 0.92; }
 
 .icon-btn { border: none; background: transparent; color: #9ca3af; cursor: pointer; font-size: 16px; }

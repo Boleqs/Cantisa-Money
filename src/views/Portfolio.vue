@@ -78,7 +78,7 @@
                 </thead>
                 <tbody>
                   <tr v-for="p in a.possessions" :key="p.id" :class="{ 'possession-closed': remainingQty(p) === 0 }">
-                    <td class="muted">{{ p.account_id }}</td>
+                    <td class="muted">{{ accountName(p.account_id) }}</td>
                     <td>{{ p.disposals?.length ? `${remainingQty(p)} / ${p.quantity}` : p.quantity }}</td>
                     <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price * conversionRate(a), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ p.purchase_date ? p.purchase_date.slice(0, 10) : '—' }}</td>
@@ -346,6 +346,10 @@ const possessionForm = ref({ account_id: '', source_account_id: null, quantity: 
 
 const investmentAccounts = computed(() => accounts.value.filter(a => ['Assets', 'Equity'].includes(a.account_type)))
 const debitableAccounts = computed(() => accounts.value.filter(a => ['Current', 'Assets', 'Equity'].includes(a.account_type)))
+
+function accountName(accountId) {
+  return accounts.value.find(a => a.id === accountId)?.name || accountId
+}
 
 const validatingSymbol = ref(false)
 const symbolValidationError = ref('')
@@ -752,7 +756,7 @@ onMounted(() => reload())
   cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; color: #fff; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; color: #fff; }
 
 .alert {
   border: 1px solid rgba(239, 68, 68, 0.5);

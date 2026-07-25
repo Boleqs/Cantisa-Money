@@ -191,7 +191,7 @@ onMounted(() => {
 }
 .tab:hover { color: #cbd5e1; }
 .tab.active {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   border-color: transparent;
   color: #fff;
 }
@@ -281,7 +281,7 @@ onMounted(() => {
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:not(:disabled):hover { background: rgba(148, 163, 184, 0.1); }
-.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; color: #fff; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; color: #fff; }
 .btn-primary:not(:disabled):hover { background: linear-gradient(90deg, #1d4ed8, #4338ca); }
 .btn-sm { padding: 6px 12px; font-size: 12px; }
 

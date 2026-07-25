@@ -9,8 +9,8 @@
           <span v-if="account.code" class="code">#{{ account.code }}</span>
           <span class="badge">{{ account.account_type }}</span>
           <span v-if="account.account_subtype" class="badge soft">{{ account.account_subtype }}</span>
-          <span v-if="account.is_hidden" class="badge danger">Hidden</span>
-          <span v-if="account.is_virtual" class="badge warn">Virtual</span>
+          <span v-if="account.is_hidden" class="badge danger">Caché</span>
+          <span v-if="account.is_virtual" class="badge warn">Virtuel</span>
         </div>
         <p v-if="account?.description" class="subtitle">{{ account.description }}</p>
       </div>
@@ -28,34 +28,69 @@
       <strong>Erreur :</strong> {{ error }}
     </div>
 
-    <!-- KPIs -->
-    <div v-if="account" class="kpi-row">
-      <div class="kpi-card">
-        <div class="kpi-label">Solde</div>
-        <div class="kpi-value" :class="solde >= 0 ? 'positive' : 'negative'">
-          {{ fmtAmount(solde) }} {{ currencyShort }}
+    <!-- Figure clé + stats latérales -->
+    <div v-if="account && accountFigure" class="hero-row">
+      <div class="hero-card">
+        <div class="hero-label">{{ accountFigure.label }}</div>
+        <div class="hero-value" :class="accountFigure.colorClass">
+          {{ fmtAssetAmount(accountFigure.value, accountFigure.currency) }}
+        </div>
+        <div v-if="accountFigure.kind !== 'flow' && accountFigure.kind !== 'assets'" class="flow-split">
+          <div class="flow-item">
+            <div class="fl">Crédité</div>
+            <div class="fv">{{ fmtAssetAmount(accountFigure.earned, accountFigure.currency) }}</div>
+          </div>
+          <div class="flow-item">
+            <div class="fl">Débité</div>
+            <div class="fv">{{ fmtAssetAmount(accountFigure.spent, accountFigure.currency) }}</div>
+          </div>
+        </div>
+        <div v-if="accountFigure.kind !== 'flow' && accountFigure.kind !== 'assets'" class="flow-bar">
+          <div class="seg-pos" :style="{ width: flowPct.pos + '%' }"></div>
+          <div class="seg-neg" :style="{ width: flowPct.neg + '%' }"></div>
         </div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Total crédité</div>
-        <div class="kpi-value positive">
-          +{{ fmtAmount(account.total_earned) }} {{ currencyShort }}
+
+      <div class="side-stats">
+        <div class="stat-card">
+          <div class="stat-label">Transactions</div>
+          <div class="stat-value">{{ txTotal }}</div>
+        </div>
+        <div v-if="isAssetAccount && accountPositions.length" class="stat-card">
+          <div class="stat-label">Positions ouvertes</div>
+          <div class="stat-value">{{ openPositionsCount }} / {{ accountPositions.length }}</div>
+        </div>
+        <div v-else-if="hasChildren" class="stat-card">
+          <div class="stat-label">Sous-comptes</div>
+          <div class="stat-value">{{ childAccountsCount }}</div>
         </div>
       </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Total débité</div>
-        <div class="kpi-value negative">
-          {{ fmtAmount(account.total_spent) }} {{ currencyShort }}
+    </div>
+
+    <!-- Actifs détenus (compte-titre) -->
+    <div v-if="isAssetAccount" class="asset-section">
+      <div class="asset-section-header">
+        <h2>Actifs détenus</h2>
+        <router-link to="/portfolio" class="link-portfolio">Gérer via Portfolio →</router-link>
+      </div>
+      <div v-if="!accountPositions.length" class="empty">Aucun actif détenu sur ce compte.</div>
+      <div v-else class="tx-list asset-list">
+        <div class="tx-list-header asset-row-grid">
+          <span>Actif</span>
+          <span class="align-right">Quantité</span>
+          <span class="align-right">Prix d'achat</span>
+          <span class="align-right">Valeur actuelle</span>
         </div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">Transactions</div>
-        <div class="kpi-value">{{ txTotal }}</div>
-      </div>
-      <div v-if="hasChildren" class="kpi-card">
-        <div class="kpi-label">Solde consolidé (avec sous-comptes)</div>
-        <div class="kpi-value" :class="soldeConsolide >= 0 ? 'positive' : 'negative'">
-          {{ fmtAmount(soldeConsolide) }} {{ currencyShort }}
+        <div
+          v-for="{ possession: p, asset: a } in accountPositions"
+          :key="p.id"
+          class="tx-row asset-row-grid"
+          :class="{ 'possession-closed': remainingQty(p) === 0 }"
+        >
+          <span class="tx-desc">{{ a.symbol }} — {{ a.name }}</span>
+          <span class="align-right">{{ p.disposals?.length ? `${remainingQty(p)} / ${p.quantity}` : p.quantity }}</span>
+          <span class="align-right muted">{{ p.purchase_price != null ? fmtAssetAmount(p.purchase_price, a.display_currency) : '—' }}</span>
+          <span class="align-right tx-amount">{{ fmtAssetAmount(remainingQty(p) * a.converted_value_per_unit, a.display_currency) }}</span>
         </div>
       </div>
     </div>
@@ -129,6 +164,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
+import { hasPermission } from '@/utils/permissions.js'
 
 const route = useRoute()
 const accountId = route.params.id
@@ -138,6 +174,7 @@ const allAccounts = ref([])
 const transactions = ref([])
 const categories = ref([])
 const commodities = ref([])
+const assets = ref([])
 
 const loading = ref(false)
 const error = ref('')
@@ -154,13 +191,18 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const [accRes, allAccRes, txRes, catRes, comRes] = await Promise.all([
+    const calls = [
       axios.get('/api/accounts', { params: { account_id: accountId } }),
       axios.get('/api/accounts'),
       axios.get('/api/transactions', { params: { account_id: accountId } }),
       axios.get('/api/categories'),
       axios.get('/api/commodities'),
-    ])
+    ]
+    // Compte-titre potentiel : on ne sait pas encore le account_type avant la réponse, donc on
+    // ne fetch les actifs que si l'utilisateur a la permission — le filtrage par type se fait
+    // ensuite à l'affichage (isAssetAccount).
+    if (hasPermission('Patrimoine')) calls.push(axios.get('/api/assets'))
+    const [accRes, allAccRes, txRes, catRes, comRes, assetsRes] = await Promise.all(calls)
     account.value = accRes.data?.response_data ?? null
     allAccounts.value = Array.isArray(allAccRes.data?.response_data) ? allAccRes.data.response_data : []
     const rd = txRes.data?.response_data
@@ -168,6 +210,7 @@ async function reload() {
     txTotal.value = rd?.total ?? transactions.value.length
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
+    assets.value = Array.isArray(assetsRes?.data?.response_data) ? assetsRes.data.response_data : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
@@ -183,18 +226,84 @@ const currencyShort = computed(() => {
   return c?.short_name?.toUpperCase() || ''
 })
 
-const solde = computed(() => {
-  if (!account.value) return 0
-  return (Number(account.value.total_earned) || 0) - (Number(account.value.total_spent) || 0)
-})
-
 const hasChildren = computed(() =>
   allAccounts.value.some(a => String(a.parent_id) === String(accountId))
 )
 
-const soldeConsolide = computed(() => {
-  if (!account.value) return 0
-  return (Number(account.value.consolidated_earned) || 0) - (Number(account.value.consolidated_spent) || 0)
+const childAccountsCount = computed(() =>
+  allAccounts.value.filter(a => String(a.parent_id) === String(accountId)).length
+)
+
+// Un compte-titre (Assets/Equity) porte des positions d'actifs (AssetPossession) plutôt que des
+// soldes classiques — cf. add_possession backend qui n'autorise ces positions que sur ces types.
+const isAssetAccount = computed(() => ['Assets', 'Equity'].includes(account.value?.account_type))
+
+function remainingQty(p) {
+  return p.remaining_quantity != null ? p.remaining_quantity : p.quantity
+}
+
+// Une position n'expose que son account_id ; on la recombine ici avec l'actif parent (symbole,
+// nom, valeur convertie dans la devise par défaut déjà calculée côté backend GET /api/assets).
+const accountPositions = computed(() => {
+  const rows = []
+  for (const a of assets.value) {
+    for (const p of a.possessions || []) {
+      if (String(p.account_id) === String(accountId)) rows.push({ possession: p, asset: a })
+    }
+  }
+  return rows
+})
+
+const accountAssetsValue = computed(() =>
+  accountPositions.value.reduce((sum, { possession, asset }) =>
+    sum + remainingQty(possession) * (asset.converted_value_per_unit || 0), 0)
+)
+
+function fmtAssetAmount(v, currency) {
+  return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0)} ${currency || ''}`.trim()
+}
+
+const openPositionsCount = computed(() =>
+  accountPositions.value.filter(({ possession }) => remainingQty(possession) > 0).length
+)
+
+// Figure clé du compte, même logique que Accounts.vue (accountFigure) : valeur des actifs pour un
+// compte-titre actif, capital restant dû pour un passif, cumul neutre pour Income/Expense (le
+// trigger SQL crédite toujours ces comptes en négatif/positif selon le sens du flux — soustraire
+// earned - spent donnerait un signe trompeur, ex. "Solde -9 600" sur un compte de salaires), solde
+// classique sinon.
+const accountFigure = computed(() => {
+  if (!account.value) return null
+  if (isAssetAccount.value && accountPositions.value.length) {
+    return {
+      kind: 'assets', label: 'Valeur des actifs', value: accountAssetsValue.value,
+      currency: accountPositions.value[0].asset.display_currency, colorClass: 'neutral',
+    }
+  }
+  const hc = hasChildren.value
+  const earned = Number(hc ? account.value.consolidated_earned : account.value.total_earned) || 0
+  const spent = Number(hc ? account.value.consolidated_spent : account.value.total_spent) || 0
+  const currency = currencyShort.value
+
+  if (account.value.account_type === 'Liability') {
+    return { kind: 'liability', label: 'Capital restant dû', value: Math.abs(earned - spent), currency, colorClass: 'neg', earned, spent }
+  }
+  if (account.value.account_type === 'Income') {
+    return { kind: 'flow', label: hc ? 'Total perçu (consolidé)' : 'Total perçu', value: spent, currency, colorClass: 'neutral', earned, spent }
+  }
+  if (account.value.account_type === 'Expense') {
+    return { kind: 'flow', label: hc ? 'Total dépensé (consolidé)' : 'Total dépensé', value: earned, currency, colorClass: 'neutral', earned, spent }
+  }
+  const solde = earned - spent
+  return { kind: hc ? 'solde-consolide' : 'solde', label: hc ? 'Solde consolidé' : 'Solde', value: solde, currency, colorClass: solde >= 0 ? 'pos' : 'neg', earned, spent }
+})
+
+const flowPct = computed(() => {
+  const f = accountFigure.value
+  if (!f || f.kind === 'flow' || f.kind === 'assets') return { pos: 50, neg: 50 }
+  const total = f.earned + f.spent
+  if (!total) return { pos: 50, neg: 50 }
+  return { pos: (f.earned / total) * 100, neg: (f.spent / total) * 100 }
 })
 
 function categoryName(id) {
@@ -371,35 +480,90 @@ async function deleteTx(tx) {
   color: #fecaca;
 }
 
-/* KPIs */
-.kpi-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+/* Figure clé + stats latérales */
+.hero-row {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
   margin-bottom: 20px;
-}
-@media (max-width: 800px) {
-  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  flex-wrap: wrap;
 }
 
-.kpi-card {
+.hero-card {
+  flex: 1 1 300px;
+  border: 1px solid rgba(148,163,184,.18);
+  border-radius: 16px;
+  background: linear-gradient(165deg, rgba(59,130,246,.10), rgba(15,23,42,.4));
+  padding: 22px 24px;
+}
+.hero-label { font-size: 12px; color: #9ca3af; font-weight: 600; }
+.hero-value {
+  font-size: 32px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+  letter-spacing: -.01em;
+  color: #e5e7eb;
+}
+.hero-value.pos { color: #86efac; }
+.hero-value.neg { color: #fca5a5; }
+.hero-value.neutral { color: #e5e7eb; }
+
+.flow-split { display: flex; gap: 20px; margin-top: 16px; }
+.flow-item { flex: 1; }
+.flow-item .fl { font-size: 10.5px; color: #9ca3af; text-transform: uppercase; letter-spacing: .05em; }
+.flow-item .fv { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 3px; color: #e5e7eb; }
+.flow-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(148,163,184,.12);
+  margin-top: 14px;
+  overflow: hidden;
+  display: flex;
+}
+.flow-bar .seg-pos { background: #4ade80; }
+.flow-bar .seg-neg { background: #f87171; }
+
+.side-stats {
+  flex: 0 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.stat-card {
   border: 1px solid rgba(148,163,184,.18);
   background: rgba(15,23,42,.55);
   border-radius: 14px;
-  padding: 16px;
+  padding: 16px 18px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
-.kpi-label {
+.stat-label { font-size: 11px; color: #9ca3af; text-transform: uppercase; letter-spacing: .05em; }
+.stat-value { font-size: 20px; font-weight: 700; margin-top: 5px; font-variant-numeric: tabular-nums; color: #e5e7eb; }
+
+/* Actifs détenus */
+.asset-section { margin-bottom: 20px; }
+.asset-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.asset-section-header h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #cbd5e1;
+}
+.link-portfolio {
   font-size: 12px;
-  color: #9ca3af;
-  margin-bottom: 6px;
+  color: #93c5fd;
+  text-decoration: none;
 }
-.kpi-value {
-  font-size: 22px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.positive { color: #86efac; }
-.negative { color: #fca5a5; }
+.link-portfolio:hover { text-decoration: underline; }
+.asset-row-grid { grid-template-columns: 1fr 120px 160px 160px; }
+.possession-closed { opacity: 0.45; }
 
 /* Filtres */
 .filters {
@@ -521,7 +685,7 @@ async function deleteTx(tx) {
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-primary {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   border-color: transparent;
   color: #fff;
 }

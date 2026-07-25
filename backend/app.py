@@ -59,6 +59,8 @@ TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users)
 LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
+ForecastRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+               Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
 TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,

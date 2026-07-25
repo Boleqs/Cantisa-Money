@@ -1,6 +1,9 @@
 import base64
 import hashlib
+import io
+import os
 import uuid
+import zipfile
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 
@@ -52,6 +55,14 @@ def _dec(v):
         return None
 
 
+def _doc_zip_path(doc_id, original_filename):
+    """Nom de fichier sûr dans l'archive : basename seul (jamais de séparateur de chemin fourni
+    par l'utilisateur) préfixé par l'id pour garantir l'unicité même si deux justificatifs
+    partagent le même nom d'origine."""
+    safe_name = os.path.basename(original_filename or 'document').strip() or 'document'
+    return f"documents/{doc_id}_{safe_name}"
+
+
 def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                       BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
@@ -80,7 +91,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
     # utilisateur — 'pending' est un état transitoire de relecture OCR en cours, jamais persistant.
     documents = TransactionDocuments.query.filter_by(user_id=user_id, status='confirmed').all()
 
-    return {
+    data = {
         'backup_format_version': BACKUP_FORMAT_VERSION,
         'app_version': APP_VERSION,
         'exported_at': _dt(datetime.now()),
@@ -146,10 +157,13 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'is_reconciled': s.is_reconciled, 'description': s.description, 'fx_rate': _n(s.fx_rate),
         } for s in splits],
         'tags_on_split': [{'split_id': _u(x.split_id), 'tag_id': _u(x.tag_id)} for x in tags_on_split],
+        # Les binaires ne sont plus embarqués en base64 ici : ils sont stockés à part dans
+        # l'archive zip (voir doc_files ci-dessous) et référencés par chemin, ce qui évite le
+        # surcoût de ~33% de base64 et permet de parcourir/extraire les fichiers directement.
         'transaction_documents': [{
             'id': _u(d.id), 'tx_id': _u(d.tx_id), 'original_filename': d.original_filename,
             'mime_type': d.mime_type, 'uploaded_at': _dt(d.uploaded_at),
-            'file_data_b64': base64.b64encode(d.file_data).decode('ascii'),
+            'file_path': _doc_zip_path(d.id, d.original_filename),
         } for d in documents],
         'user_settings': ({
             'currency': settings.currency, 'date_format': settings.date_format,
@@ -157,6 +171,9 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'market_score_thresholds': settings.market_score_thresholds,
         } if settings else None),
     }
+    doc_files = [{'path': _doc_zip_path(d.id, d.original_filename), 'bytes': d.file_data} for d in documents]
+
+    return data, doc_files
 
 
 # ── Import (matching par clé naturelle, dans l'ordre de dépendance) ─────────
@@ -603,14 +620,20 @@ class BackupRoutes:
         @jwt_required()
         def export_backup():
             user_id = get_jwt_identity()
-            data = export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets,
+            data, doc_files = export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets,
                                     BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions, Assets,
                                     AssetPossession, AssetDisposal, AssetValuations, Transactions, Splits,
                                     TagsOnSplits, UserSettings, TransactionDocuments)
-            filename = f"cantisa-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr('data.json', json_lib.dumps(data, ensure_ascii=False, indent=2))
+                for doc_file in doc_files:
+                    zf.writestr(doc_file['path'], doc_file['bytes'])
+            buffer.seek(0)
+            filename = f"cantisa-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
             return Response(
-                json_lib.dumps(data, ensure_ascii=False, indent=2),
-                mimetype='application/json',
+                buffer.getvalue(),
+                mimetype='application/zip',
                 headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
         @app.route(f"{ROUTE_PATH}/import", methods=['POST'])
@@ -620,10 +643,25 @@ class BackupRoutes:
             if not file:
                 return json_response('Aucun fichier fourni', HttpCode.BAD_REQUEST)
             apply_settings = request.form.get('apply_settings', 'false').lower() == 'true'
+            raw = file.stream.read()
             try:
-                payload = json_lib.loads(file.stream.read().decode('utf-8-sig'))
-            except (json_lib.JSONDecodeError, UnicodeDecodeError):
-                return json_response('Fichier JSON invalide', HttpCode.BAD_REQUEST)
+                if zipfile.is_zipfile(io.BytesIO(raw)):
+                    # Nouveau format (archive .zip) : data.json + fichiers de documents/ à côté,
+                    # référencés par 'file_path' — on les recharge en base64 pour retomber sur la
+                    # même forme de payload qu'attend import_user_data (inchangé depuis le format
+                    # JSON pur, pour ne pas dupliquer la logique de dédoublonnage).
+                    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                        payload = json_lib.loads(zf.read('data.json').decode('utf-8-sig'))
+                        for doc in payload.get('transaction_documents', []):
+                            doc_path = doc.pop('file_path', None)
+                            if doc_path:
+                                doc['file_data_b64'] = base64.b64encode(zf.read(doc_path)).decode('ascii')
+                else:
+                    # Ancien format (JSON pur, éventuellement avec 'file_data_b64' déjà embarqué) :
+                    # toujours accepté pour ne pas casser la réimportation de sauvegardes antérieures.
+                    payload = json_lib.loads(raw.decode('utf-8-sig'))
+            except (json_lib.JSONDecodeError, UnicodeDecodeError, KeyError, zipfile.BadZipFile):
+                return json_response('Fichier de sauvegarde invalide', HttpCode.BAD_REQUEST)
 
             user_id = get_jwt_identity()
             try:

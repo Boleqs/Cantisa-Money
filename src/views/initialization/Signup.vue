@@ -279,7 +279,7 @@ async function createAccount() {
   padding: 11px;
   border-radius: 10px;
   border: none;
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   color: #fff;
   font-size: 14px;
   font-weight: 600;

@@ -68,16 +68,12 @@
           <tr>
             <th>Nom</th>
             <th>Description</th>
-            <th></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="p in permissions" :key="p.id">
             <td class="bold">{{ p.name }}</td>
             <td class="muted">{{ p.description || '—' }}</td>
-            <td class="actions">
-              <button class="btn-action btn-danger" @click="deletePerm(p)" title="Supprimer">✕</button>
-            </td>
           </tr>
         </tbody>
       </table>
@@ -332,18 +328,6 @@ async function createPerm() {
   }
 }
 
-async function deletePerm(p) {
-  if (!confirm(`Supprimer la permission « ${p.name} » ? Elle sera retirée de tous les rôles.`)) return
-  error.value = ''
-  try {
-    await axios.delete(`/api/permissions/${p.id}`)
-    flash('Permission supprimée.')
-    await reload()
-  } catch (e) {
-    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
-  }
-}
-
 onMounted(() => reload())
 </script>
 
@@ -387,7 +371,7 @@ onMounted(() => reload())
   cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(90deg, #2563eb, #4f46e5); border-color: transparent; color: #fff; }
+.btn-primary { background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); border-color: transparent; color: #fff; }
 
 .alert {
   border: 1px solid rgba(239, 68, 68, 0.5);

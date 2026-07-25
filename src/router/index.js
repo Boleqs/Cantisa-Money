@@ -154,6 +154,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/admin/backup',
+        name: 'AdminBackup',
+        component: () => import('../views/AdminBackup.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/import',
         name: 'Import',
         component: () => import('../views/Import.vue'),
@@ -175,6 +181,12 @@ const routes = [
         path: '/patrimoine',
         name: 'WealthOverview',
         component: () => import('../views/WealthOverview.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/patrimoine/prediction',
+        name: 'WealthForecast',
+        component: () => import('../views/WealthForecast.vue'),
         meta: { requiresAuth: true }
     },
     {
