@@ -1,6 +1,6 @@
 <template>
-  <div v-if="modelValue" class="modal-backdrop" @click.self="close">
-    <div class="modal">
+  <div v-if="modelValue" class="modal-backdrop" @click.self="shake">
+    <div class="modal" :class="{ 'modal-shake': shaking }">
       <header class="modal-header">
         <div>
           <h2>{{ isEdit ? 'Modifier le crédit' : 'Nouveau crédit' }}</h2>
@@ -119,6 +119,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -177,9 +178,14 @@ const emptyForm = () => ({
 
 const form = reactive(emptyForm())
 
+// Déclenché par l'ouverture du modal (modelValue), pas par l'identité de `editTarget` : en mode
+// création, `editTarget` reste `null` d'une ouverture à l'autre donc un watch sur `editTarget`
+// seul ne se redéclenche pas et laisse la saisie précédente dans le formulaire.
 watch(
-  () => props.editTarget,
-  (l) => {
+  () => props.modelValue,
+  (open) => {
+    if (!open) return
+    const l = props.editTarget
     formError.value = ''
     const base = emptyForm()
     if (l) {
@@ -216,6 +222,9 @@ const close = () => {
   formError.value = ''
   emit('update:modelValue', false)
 }
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (props.modelValue) close() })
 
 async function onSubmit() {
   formError.value = ''

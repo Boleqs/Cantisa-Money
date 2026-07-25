@@ -24,6 +24,7 @@
         <span class="color-dot" :style="{ background: colorHex(t.color) }"></span>
         <span class="chip-name">{{ t.name }}</span>
         <span class="chip-color muted">{{ t.color }}</span>
+        <span v-if="t.tax_treatment" class="chip-tax-badge">{{ taxTreatmentLabel(t.tax_treatment) }}</span>
         <span class="chip-actions">
           <button class="btn-action" @click="openEdit(t)">✎</button>
           <button class="btn-action btn-danger" @click="deleteTag(t)">✕</button>
@@ -32,8 +33,8 @@
     </div>
 
     <!-- Modal inline -->
-    <div v-if="showModal" class="modal-backdrop" @click.self="showModal = false">
-      <div class="modal">
+    <div v-if="showModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ editTarget ? 'Modifier le tag' : 'Nouveau tag' }}</h2>
         <label>Nom *
           <input v-model="form.name" placeholder="Voyage, Loisirs…" />
@@ -44,6 +45,13 @@
           </select>
         </label>
         <div class="color-preview" :style="{ background: colorHex(form.color) }"></div>
+        <label>Ligne fiscale
+          <select v-model="form.tax_treatment">
+            <option :value="null">— Non fiscal —</option>
+            <option v-for="t in TAX_TREATMENTS" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </select>
+        </label>
+        <span class="hint">Tout split portant ce tag compte comme fiscal, quelle que soit sa catégorie.</span>
         <div class="modal-actions">
           <button class="btn" @click="showModal = false">Annuler</button>
           <button class="btn btn-primary" :disabled="!form.name.trim()" @click="save">Enregistrer</button>
@@ -56,21 +64,33 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const COLORS = ['green', 'red', 'blue', 'white', 'black', 'yellow', 'purple']
 const COLOR_MAP = {
   green: '#22c55e', red: '#ef4444', blue: '#3b82f6',
   white: '#f1f5f9', black: '#1e293b', yellow: '#eab308', purple: '#a855f7',
 }
+// Tenu synchronisé avec TAX_TREATMENT_VALUES dans rt_tags.py.
+const TAX_TREATMENTS = [
+  { value: 'taxable_income', label: 'Revenu imposable' },
+  { value: 'deductible', label: 'Charge déductible' },
+  { value: 'real_estate_income', label: 'Revenu foncier' },
+  { value: 'real_estate_expense', label: 'Charge foncière' },
+]
 
 const tags = ref([])
 const loading = ref(false)
 const error = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
-const form = ref({ name: '', color: 'green' })
+const form = ref({ name: '', color: 'green', tax_treatment: null })
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (showModal.value) showModal.value = false })
 
 function colorHex(c) { return COLOR_MAP[c] || '#6b7280' }
+function taxTreatmentLabel(v) { return TAX_TREATMENTS.find(t => t.value === v)?.label || v }
 
 async function reload() {
   loading.value = true
@@ -87,13 +107,13 @@ async function reload() {
 
 function openCreate() {
   editTarget.value = null
-  form.value = { name: '', color: 'green' }
+  form.value = { name: '', color: 'green', tax_treatment: null }
   showModal.value = true
 }
 
 function openEdit(t) {
   editTarget.value = t
-  form.value = { name: t.name, color: t.color }
+  form.value = { name: t.name, color: t.color, tax_treatment: t.tax_treatment || null }
   showModal.value = true
 }
 
@@ -104,11 +124,13 @@ async function save() {
         tag_id: editTarget.value.id,
         name: form.value.name,
         color: form.value.color,
+        tax_treatment: form.value.tax_treatment || null,
       })
     } else {
       await axios.post('/api/tags', {
         name: form.value.name,
         color: form.value.color,
+        tax_treatment: form.value.tax_treatment || null,
       })
     }
     showModal.value = false
@@ -200,6 +222,14 @@ onMounted(() => reload())
 }
 .chip-name { font-weight: 500; flex: 1; }
 .chip-color { font-size: 12px; }
+.chip-tax-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(96,165,250,0.4);
+  background: rgba(96,165,250,0.1);
+  color: #93c5fd;
+}
 .muted { color: #9ca3af; }
 .chip-actions { display: flex; gap: 6px; }
 
@@ -250,6 +280,10 @@ onMounted(() => reload())
   padding: 8px 10px;
   color: #e5e7eb;
   font-size: 14px;
+}
+.hint {
+  font-size: 11px;
+  color: #6b7280;
 }
 .color-preview {
   width: 32px;

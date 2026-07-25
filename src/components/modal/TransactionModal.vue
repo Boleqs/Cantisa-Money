@@ -1,6 +1,6 @@
 <template>
-  <div v-if="modelValue" class="modal-backdrop" @click.self="close">
-    <div class="modal">
+  <div v-if="modelValue" class="modal-backdrop" @click.self="shake">
+    <div class="modal" :class="{ 'modal-shake': shaking }">
       <header class="modal-header">
         <div>
           <h2>{{ isEdit ? 'Modifier la transaction' : 'Nouvelle transaction' }}</h2>
@@ -61,19 +61,32 @@
 
           <div class="field field-full">
             <label>Tags</label>
-            <div v-if="form.splits[0]?.id" class="tag-picker">
-              <span v-if="!allTags.length" class="hint">Aucun tag créé — gérez-les depuis la page Tags.</span>
-              <button
-                v-for="t in allTags"
-                :key="t.id"
-                type="button"
-                class="tag-chip"
-                :class="{ on: primarySplitTagIds.has(t.id) }"
-                :style="{ '--tag-color': colorHex(t.color) }"
-                :disabled="togglingTag === t.id"
-                @click="toggleTag(t.id)"
-              >{{ t.name }}</button>
-            </div>
+            <template v-if="taggableSplits.length">
+              <div v-if="taggableSplits.length > 1" class="split-picker">
+                <span class="split-picker-hint">Sur le split :</span>
+                <button
+                  v-for="s in taggableSplits"
+                  :key="s.id"
+                  type="button"
+                  class="split-chip"
+                  :class="{ on: selectedTagSplitId === s.id }"
+                  @click="selectedTagSplitId = s.id"
+                >{{ splitLabel(s) }}</button>
+              </div>
+              <div class="tag-picker">
+                <span v-if="!allTags.length" class="hint">Aucun tag créé — gérez-les depuis la page Tags.</span>
+                <button
+                  v-for="t in allTags"
+                  :key="t.id"
+                  type="button"
+                  class="tag-chip"
+                  :class="{ on: currentSplitTagIds.has(t.id) }"
+                  :style="{ '--tag-color': colorHex(t.color) }"
+                  :disabled="togglingTag === t.id"
+                  @click="toggleTag(t.id)"
+                >{{ t.name }}</button>
+              </div>
+            </template>
             <span v-else class="hint">Enregistrez la transaction pour pouvoir lui attribuer des tags.</span>
           </div>
         </div>
@@ -220,6 +233,7 @@
 import { computed, reactive, watch, ref, nextTick } from 'vue'
 import axios from 'axios'
 import ReceiptOcrReview from '@/components/ReceiptOcrReview.vue'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -393,9 +407,21 @@ async function removeDocument(doc) {
 
 // ── Tags ─────────────────────────────────────────────────────────────────
 // Un split n'existe (et n'a un id réel) qu'une fois la transaction enregistrée : les tags ne
-// peuvent donc être attribués qu'en modification, sur le split "principal" (le 1er, cf. seed).
-const primarySplitTagIds = ref(new Set())
+// peuvent donc être attribués qu'en modification. Un tag qualifie un split précis (compte +
+// montant), pas la transaction entière — l'utilisateur choisit sur quel split il s'applique via
+// le sélecteur au-dessus des chips de tags.
+const splitTagIds = ref(new Map()) // split_id -> Set(tag_id)
+const selectedTagSplitId = ref(null)
 const togglingTag = ref(null)
+
+const taggableSplits = computed(() => form.splits.filter(s => s.id))
+const currentSplitTagIds = computed(() => splitTagIds.value.get(selectedTagSplitId.value) || new Set())
+
+function splitLabel(s) {
+  const acc = accounts.value.find(a => a.id === s.account_id)
+  const qty = Number(s.quantity) || 0
+  return `${acc ? acc.name : '—'} (${qty >= 0 ? '+' : ''}${qty.toFixed(2)})`
+}
 
 const TAG_COLOR_HEX = {
   green: '#22c55e', red: '#ef4444', blue: '#3b82f6',
@@ -406,18 +432,20 @@ function colorHex(color) {
 }
 
 async function toggleTag(tagId) {
-  const splitId = form.splits[0]?.id
+  const splitId = selectedTagSplitId.value
   if (!splitId || togglingTag.value) return
   togglingTag.value = tagId
   try {
-    if (primarySplitTagIds.value.has(tagId)) {
+    const current = new Set(splitTagIds.value.get(splitId) || [])
+    if (current.has(tagId)) {
       await axios.delete('/api/tags/on-split', { params: { split_id: splitId, tag_id: tagId } })
-      primarySplitTagIds.value.delete(tagId)
+      current.delete(tagId)
     } else {
       await axios.post('/api/tags/on-split', { split_id: splitId, tag_id: tagId })
-      primarySplitTagIds.value.add(tagId)
+      current.add(tagId)
     }
-    primarySplitTagIds.value = new Set(primarySplitTagIds.value)
+    splitTagIds.value.set(splitId, current)
+    splitTagIds.value = new Map(splitTagIds.value)
   } catch (e) {
     console.error('Erreur mise à jour du tag', e)
   } finally {
@@ -521,9 +549,14 @@ watch(
   autoBalanceSecondSplit
 )
 
+// Déclenché par l'ouverture du modal (modelValue), pas par l'identité de `transaction` : en mode
+// création, `transaction` reste `null` d'une ouverture à l'autre donc un watch sur `transaction`
+// seul ne se redéclenche pas et laisse la saisie précédente dans le formulaire.
 watch(
-  () => props.transaction,
-  (tx) => {
+  () => props.modelValue,
+  (open) => {
+    if (!open) return
+    const tx = props.transaction
     suppressAutoBalance.value = true
     const base = emptyForm()
     if (tx) {
@@ -538,7 +571,8 @@ watch(
         : [{ account_id: '', quantity: 0, description: '' }, { account_id: '', quantity: 0, description: '' }]
     }
     Object.assign(form, base)
-    primarySplitTagIds.value = new Set(tx?.splits?.[0]?.tag_ids || [])
+    splitTagIds.value = new Map((tx?.splits || []).filter(s => s.id).map(s => [s.id, new Set(s.tag_ids || [])]))
+    selectedTagSplitId.value = base.splits.find(s => s.id)?.id || null
     loadDocuments(tx?.id)
     showOcrPanel.value = false
 
@@ -611,6 +645,9 @@ const close = () => {
   emit('update:modelValue', false)
   emit('cancel')
 }
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (props.modelValue) close() })
 
 const onSubmit = () => {
   if (!canSubmit.value) return
@@ -755,6 +792,39 @@ const onSubmit = () => {
 .hint {
   font-size: 12px;
   color: #6b7280;
+}
+
+.split-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.split-picker-hint {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.split-chip {
+  background: transparent;
+  border: 1px solid #374151;
+  color: #9ca3af;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.split-chip:hover {
+  border-color: #6b7280;
+  color: #cbd5e1;
+}
+.split-chip.on {
+  background: #2563eb;
+  border-color: transparent;
+  color: #fff;
 }
 
 .tag-picker {

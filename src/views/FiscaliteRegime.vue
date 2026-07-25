@@ -43,8 +43,8 @@
     </div>
 
     <!-- Modal inline -->
-    <div v-if="showModal" class="modal-backdrop" @click.self="showModal = false">
-      <div class="modal">
+    <div v-if="showModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ editTarget ? 'Modifier le régime' : 'Nouveau régime' }}</h2>
 
         <label>Nom *
@@ -141,6 +141,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const regimes = ref([])
 const loading = ref(false)
@@ -149,6 +150,9 @@ const error = ref('')
 const formError = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (showModal.value) showModal.value = false })
 
 function emptyForm() {
   return {

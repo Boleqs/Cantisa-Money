@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta
-from marshmallow import Schema, fields, ValidationError
+from marshmallow import Schema, fields, ValidationError, validate
 import hashlib
 
 from flask import jsonify, request, make_response
@@ -20,6 +20,8 @@ from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 ACCOUNTS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
+# Tenu synchronisé avec TAX_TREATMENTS dans rt_tax.py.
+TAX_TREATMENT_VALUES = ('taxable_income', 'deductible', 'real_estate_income', 'real_estate_expense')
 
 
 class AddAccountSchema(Schema):
@@ -32,6 +34,7 @@ class AddAccountSchema(Schema):
     is_virtual = fields.Boolean()
     is_hidden = fields.Boolean()
     code = fields.String()
+    tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
 
 class UpdateAccountSchema(Schema):
@@ -45,6 +48,7 @@ class UpdateAccountSchema(Schema):
     is_virtual = fields.Boolean()
     is_hidden = fields.Boolean()
     code = fields.String()
+    tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
 
 class GetAccountSchema(Schema):
@@ -98,6 +102,7 @@ class AccountsRoutes:
                     is_virtual=data.get("is_virtual", False),
                     is_hidden=data.get("is_hidden", False),
                     code=data.get("code"),
+                    tax_treatment=data.get("tax_treatment"),
                 )
                 DB.session.add(account)
                 DB.session.commit()
@@ -166,6 +171,7 @@ class AccountsRoutes:
             account.is_virtual = data.get('is_virtual', account.is_virtual)
             account.is_hidden = data.get('is_hidden', account.is_hidden)
             account.code = data.get('code', account.code)
+            account.tax_treatment = data.get('tax_treatment')
             DB.session.commit()
             return json_response(account, HttpCode.OK)
 

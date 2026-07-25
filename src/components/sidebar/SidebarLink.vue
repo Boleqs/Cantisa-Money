@@ -6,21 +6,20 @@ import { collapsed } from './state';
 export default {
     props: {
         to: { type: String, required: true },
-        iconFile: { type: String, required: false }
+        icon: { type: [Object, Array], required: false }
     },
     setup(props) {
         const route = useRoute();
         const isActive = computed(() => route.path === props.to);
-        const iconSrc = computed(() => new URL(`../icons/${props.iconFile}`, import.meta.url).href);
 
-        return { isActive, collapsed, iconSrc };
+        return { isActive, collapsed };
     }
 }
 </script>
 
 <template>
     <router-link :to="to" class="link" :class="{ active: isActive}">
-        <img v-if="iconFile" class="icon" :src="iconSrc" alt="icon" />
+        <font-awesome-icon v-if="icon" class="icon" :icon="icon" fixed-width />
         <transition name="fade">
             <span v-if="!collapsed">
                 <slot />
@@ -72,7 +71,8 @@ export default {
 
 .link .icon {
     flex-shrink: 0;
-    width: 25px;
+    width: 18px;
+    height: 18px;
     margin-right: 10px;
 }
 </style>

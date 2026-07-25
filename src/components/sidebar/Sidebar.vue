@@ -7,6 +7,14 @@ import { collapsed, toggleSidebar, sidebarWidth } from './state';
 import Settings from '../modal/settings.vue';
 import MyAccount from '../modal/MyAccount.vue';
 import { hasPermission } from '@/utils/permissions.js';
+import {
+    faHouse, faGaugeHigh, faBuildingColumns, faListUl, faRightLeft, faFileImport,
+    faCheckDouble, faArrowsRotate, faHandHoldingDollar, faFileInvoiceDollar, faChartPie,
+    faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
+    faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
+    faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
+    faUserShield, faUsers, faUserLock
+} from '@fortawesome/free-solid-svg-icons';
 
 export default {
     props: {},
@@ -29,7 +37,15 @@ export default {
     },
     setup() {
         const isAdmin = computed(() => hasPermission('Delete users'))
-        return { collapsed, toggleSidebar, sidebarWidth, hasPermission, isAdmin }
+        return {
+            collapsed, toggleSidebar, sidebarWidth, hasPermission, isAdmin,
+            faHouse, faGaugeHigh, faBuildingColumns, faListUl, faRightLeft, faFileImport,
+            faCheckDouble, faArrowsRotate, faHandHoldingDollar, faFileInvoiceDollar, faChartPie,
+            faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
+            faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
+            faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
+            faUserShield, faUsers, faUserLock
+        }
     }
 }
 
@@ -43,62 +59,62 @@ export default {
 
         <!-- Zone scrollable des liens -->
         <div class="sidebar-nav">
-            <SidebarLink to="/" iconFile="Accueil.png">Accueil</SidebarLink>
+            <SidebarLink to="/" :icon="faHouse">Accueil</SidebarLink>
 
             <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification') || hasPermission('Crédits')">
               <SidebarSectionTitle label="Gestion bancaire"/>
-              <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard">Dashboard</SidebarLink>
-              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :paths="['/accounts', '/transactions', '/import']">
-                <SidebarLink to="/accounts">Liste des comptes</SidebarLink>
-                <SidebarLink to="/transactions">Transactions</SidebarLink>
-                <SidebarLink to="/import">Importer</SidebarLink>
+              <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard" :icon="faGaugeHigh">Dashboard</SidebarLink>
+              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :icon="faBuildingColumns" :paths="['/accounts', '/transactions', '/import']">
+                <SidebarLink to="/accounts" :icon="faListUl">Liste des comptes</SidebarLink>
+                <SidebarLink to="/transactions" :icon="faRightLeft">Transactions</SidebarLink>
+                <SidebarLink to="/import" :icon="faFileImport">Importer</SidebarLink>
               </SidebarGroup>
-              <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile">Rapprochement</SidebarLink>
-              <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions">Abonnements</SidebarLink>
-              <SidebarLink v-if="hasPermission('Crédits')" to="/credits">Crédits</SidebarLink>
-              <SidebarLink to="/invoices">Factures</SidebarLink>
-              <SidebarLink v-if="hasPermission('Planification')" to="/budgets">Budgets</SidebarLink>
+              <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile" :icon="faCheckDouble">Rapprochement</SidebarLink>
+              <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions" :icon="faArrowsRotate">Abonnements</SidebarLink>
+              <SidebarLink v-if="hasPermission('Crédits')" to="/credits" :icon="faHandHoldingDollar">Crédits</SidebarLink>
+              <SidebarLink to="/invoices" :icon="faFileInvoiceDollar">Factures</SidebarLink>
+              <SidebarLink v-if="hasPermission('Planification')" to="/budgets" :icon="faChartPie">Budgets</SidebarLink>
             </template>
 
             <template v-if="hasPermission('Patrimoine')">
               <SidebarSectionTitle label="Gestion financière"/>
-              <SidebarLink to="/patrimoine">Vue d'ensemble</SidebarLink>
-              <SidebarGroup label="Portfolio" :paths="['/portfolio']">
-                <SidebarLink to="/portfolio">Liste des actifs</SidebarLink>
+              <SidebarLink to="/patrimoine" :icon="faSackDollar">Vue d'ensemble</SidebarLink>
+              <SidebarGroup label="Portfolio" :icon="faChartLine" :paths="['/portfolio']">
+                <SidebarLink to="/portfolio" :icon="faLayerGroup">Liste des actifs</SidebarLink>
               </SidebarGroup>
-              <SidebarGroup label="Marchés" :paths="['/markets/analyse', '/markets/watchlist', '/markets/scan']">
-                <SidebarLink to="/markets/analyse">Analyse fondamentale</SidebarLink>
-                <SidebarLink to="/markets/watchlist">Watchlist</SidebarLink>
-                <SidebarLink to="/markets/scan">Scanner</SidebarLink>
+              <SidebarGroup label="Marchés" :icon="faChartColumn" :paths="['/markets/analyse', '/markets/watchlist', '/markets/scan']">
+                <SidebarLink to="/markets/analyse" :icon="faMagnifyingGlassChart">Analyse fondamentale</SidebarLink>
+                <SidebarLink to="/markets/watchlist" :icon="faEye">Watchlist</SidebarLink>
+                <SidebarLink to="/markets/scan" :icon="faSatelliteDish">Scanner</SidebarLink>
               </SidebarGroup>
             </template>
 
             <template v-if="hasPermission('Fiscalité')">
               <SidebarSectionTitle label="Gestion Fiscale"/>
-              <SidebarLink to="/fiscalite">Vue d'ensemble</SidebarLink>
-              <SidebarLink to="/fiscalite/simulateur">Simulateur d'impôt</SidebarLink>
-              <SidebarLink to="/fiscalite/regime">Régime fiscal</SidebarLink>
-              <SidebarLink to="/fiscalite/foyer">Foyer fiscal</SidebarLink>
-              <SidebarLink to="/fiscalite/dossier">Dossier fiscal</SidebarLink>
+              <SidebarLink to="/fiscalite" :icon="faScaleBalanced">Vue d'ensemble</SidebarLink>
+              <SidebarLink to="/fiscalite/simulateur" :icon="faCalculator">Simulateur d'impôt</SidebarLink>
+              <SidebarLink to="/fiscalite/regime" :icon="faFileContract">Régime fiscal</SidebarLink>
+              <SidebarLink to="/fiscalite/foyer" :icon="faPeopleRoof">Foyer fiscal</SidebarLink>
+              <SidebarLink to="/fiscalite/dossier" :icon="faFolderOpen">Dossier fiscal</SidebarLink>
             </template>
 
             <template v-if="hasPermission('Pilotage')">
               <SidebarSectionTitle label="Reporting"/>
-              <SidebarLink to="/reports">Rapports prédéfinis</SidebarLink>
+              <SidebarLink to="/reports" :icon="faChartBar">Rapports prédéfinis</SidebarLink>
             </template>
 
             <template v-if="hasPermission('Réglages personnels')">
               <SidebarSectionTitle label="Paramètres"/>
-              <SidebarLink to="/parametres">Paramétrage</SidebarLink>
+              <SidebarLink to="/parametres" :icon="faGear">Paramétrage</SidebarLink>
             </template>
 
-            <SidebarGroup v-if="hasPermission('Comptabilité')" label="Référentiels" :paths="['/categories', '/tags']">
-              <SidebarLink to="/categories">Catégories</SidebarLink>
-              <SidebarLink to="/tags">Tags</SidebarLink>
+            <SidebarGroup v-if="hasPermission('Comptabilité')" label="Référentiels" :icon="faBook" :paths="['/categories', '/tags']">
+              <SidebarLink to="/categories" :icon="faFolderTree">Catégories</SidebarLink>
+              <SidebarLink to="/tags" :icon="faTag">Tags</SidebarLink>
             </SidebarGroup>
-            <SidebarGroup v-if="isAdmin" label="Administration" :paths="['/admin/users', '/admin/roles']">
-              <SidebarLink icon-file="Users.png" to="/admin/users">Utilisateurs</SidebarLink>
-              <SidebarLink to="/admin/roles">Rôles &amp; Permissions</SidebarLink>
+            <SidebarGroup v-if="isAdmin" label="Administration" :icon="faUserShield" :paths="['/admin/users', '/admin/roles']">
+              <SidebarLink :icon="faUsers" to="/admin/users">Utilisateurs</SidebarLink>
+              <SidebarLink :icon="faUserLock" to="/admin/roles">Rôles &amp; Permissions</SidebarLink>
             </SidebarGroup>
         </div>
 

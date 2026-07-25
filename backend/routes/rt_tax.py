@@ -2,7 +2,7 @@ from datetime import date
 
 from flask import request
 from marshmallow import Schema, fields, ValidationError, validate, EXCLUDE
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
@@ -215,7 +215,7 @@ def _regime_to_dict(r):
 class TaxRoutes:
     def __init__(self, app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,
                  Transactions, Splits, Accounts, Commodities, FxRates, UserSettings,
-                 AssetDisposal, AssetPossession, Assets):
+                 AssetDisposal, AssetPossession, Assets, Tags, TagsOnSplits):
         ROUTE_PATH = f"{ROOT_PATH}/tax"
 
         def _target_currency(user_id):
@@ -250,21 +250,40 @@ class TaxRoutes:
             return regime
 
         def _sum_by_tax_treatment(user_id, year, target_currency, treatments, sign):
-            rows = DB.session.query(Commodities.short_name, func.sum(Splits.quantity)) \
+            """Un montant compte comme 'fiscal' si SA catégorie, LE COMPTE porteur (le côté
+            patrimonial du split) ou l'un des tags posés sur le split est marqué avec l'un des
+            `treatments` — 3 sources indépendantes, voir [[backlog_2026_07_25_ui_ux_batch]] point 5.
+            outerjoin + .distinct() sur (split, montant, devise) : un split qui matche par plusieurs
+            sources à la fois (ex: catégorie ET tag) ne doit être compté qu'une seule fois, alors que
+            le outerjoin sur TagsOnSplits/Tags peut dupliquer la ligne (un split multi-tags)."""
+            matching = DB.session.query(
+                Splits.id.label('split_id'),
+                Splits.quantity.label('quantity'),
+                Commodities.short_name.label('code'),
+            ) \
                 .join(Transactions, Splits.tx_id == Transactions.id) \
-                .join(Categories, Transactions.category_id == Categories.id) \
                 .join(Accounts, Splits.account_id == Accounts.id) \
                 .join(Commodities, Accounts.currency_id == Commodities.id) \
+                .outerjoin(Categories, Transactions.category_id == Categories.id) \
+                .outerjoin(TagsOnSplits, TagsOnSplits.split_id == Splits.id) \
+                .outerjoin(Tags, Tags.id == TagsOnSplits.tag_id) \
                 .filter(
                     Transactions.user_id == user_id,
-                    Categories.tax_treatment.in_(treatments),
                     Transactions.post_date >= date(year, 1, 1),
                     Transactions.post_date <= date(year, 12, 31),
                     Splits.quantity * sign > 0,
                     Accounts.account_type.in_(WEALTH_TYPES),
                     Accounts.is_virtual == False,
                     Accounts.is_hidden == False,
-                ).group_by(Commodities.short_name).all()
+                    or_(
+                        Categories.tax_treatment.in_(treatments),
+                        Accounts.tax_treatment.in_(treatments),
+                        Tags.tax_treatment.in_(treatments),
+                    ),
+                ).distinct().subquery()
+
+            rows = DB.session.query(matching.c.code, func.sum(matching.c.quantity)) \
+                .group_by(matching.c.code).all()
             return abs(sum(float(t) * _rate_to(code, target_currency) for code, t in rows))
 
         def _compute_capital_gains(user_id, year, target_currency, regime_config):

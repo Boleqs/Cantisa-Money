@@ -63,7 +63,7 @@ SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
 TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,
           Transactions, Splits, Accounts, Commodities, FxRates, UserSettings,
-          AssetDisposal, AssetPossession, Assets)
+          AssetDisposal, AssetPossession, Assets, Tags, TagsOnSplits)
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
              BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
              AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)

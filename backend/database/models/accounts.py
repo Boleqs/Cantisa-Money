@@ -41,5 +41,7 @@ class Accounts(Base):
     is_virtual:bool = Column(Boolean, default=False, nullable=False)
     is_hidden:bool = Column(Boolean, default=False, nullable=False)
     code:str = Column(String(64), nullable=True)
+    # 'taxable_income' | 'deductible' | 'real_estate_income' | 'real_estate_expense' | None (non fiscal)
+    tax_treatment:str = Column(String(32), nullable=True)
     created_at:datetime = Column(DateTime, default=datetime.now())
     updated_at:datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

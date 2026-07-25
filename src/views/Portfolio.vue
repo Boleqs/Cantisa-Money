@@ -110,8 +110,8 @@
     </table>
 
     <!-- Modal asset -->
-    <div v-if="showModal" class="modal-backdrop" @click.self="showModal = false">
-      <div class="modal">
+    <div v-if="showModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ editTarget ? 'Modifier l\'actif' : 'Nouvel actif' }}</h2>
         <label>Symbole *
           <input v-model="form.symbol" placeholder="AAPL, AMZN…" @blur="validateSymbol" />
@@ -162,8 +162,8 @@
     </div>
 
     <!-- Modal possession -->
-    <div v-if="showPossessionModal" class="modal-backdrop" @click.self="showPossessionModal = false">
-      <div class="modal">
+    <div v-if="showPossessionModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ possessionEditTarget ? 'Modifier la position' : 'Ajouter une position' }} — {{ possessionTarget?.name }}</h2>
         <label>Compte *
           <select v-model="possessionForm.account_id" :disabled="!!possessionEditTarget">
@@ -201,8 +201,8 @@
     </div>
 
     <!-- Modal vente -->
-    <div v-if="showSellModal" class="modal-backdrop" @click.self="showSellModal = false">
-      <div class="modal">
+    <div v-if="showSellModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Vendre — {{ sellAssetTarget?.name }}</h2>
         <p class="hint-text">Position restante : {{ remainingQty(sellTarget) }} unité{{ remainingQty(sellTarget) > 1 ? 's' : '' }}.</p>
         <label>Quantité vendue *
@@ -232,8 +232,8 @@
     </div>
 
     <!-- Modal history -->
-    <div v-if="showHistoryModal" class="modal-backdrop" @click.self="closeHistory">
-      <div class="modal modal-history">
+    <div v-if="showHistoryModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal modal-history" :class="{ 'modal-shake': shaking }">
         <h2>Historique — {{ historyTarget?.name }}</h2>
 
         <div v-if="historyLoading" class="empty">Chargement…</div>
@@ -290,6 +290,7 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import LineGraph from '../components/graphs/LineGraph.vue'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const assets = ref([])
 const commodities = ref([])
@@ -316,6 +317,14 @@ const historyError = ref('')
 const valuations = ref([])
 const valuationForm = ref({ valuation_date: null, value_per_unit: null })
 const valuationEditTarget = ref(null)
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => {
+  if (showModal.value) showModal.value = false
+  else if (showPossessionModal.value) showPossessionModal.value = false
+  else if (showSellModal.value) showSellModal.value = false
+  else if (showHistoryModal.value) closeHistory()
+})
 
 // Mémoïsés pour ne pas recréer le graphique Chart.js (via le watch de LineGraph) à chaque
 // re-render du parent (ex: chargement de `valuations`) — un simple `.map()` inline dans le

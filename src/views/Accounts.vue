@@ -322,6 +322,7 @@ async function handleSave(form) {
         is_virtual: form.is_virtual,
         is_hidden: form.is_hidden,
         code: form.code || undefined,
+        tax_treatment: form.tax_treatment || null,
       });
     } else {
       await axios.patch("/api/accounts", {
@@ -335,6 +336,7 @@ async function handleSave(form) {
         is_virtual: form.is_virtual,
         is_hidden: form.is_hidden,
         code: form.code || undefined,
+        tax_treatment: form.tax_treatment || null,
       });
     }
     await reload();

@@ -84,8 +84,8 @@
     </section>
 
     <!-- Modal : Créer un rôle -->
-    <div v-if="showCreateRoleModal" class="modal-backdrop" @click.self="showCreateRoleModal = false">
-      <div class="modal">
+    <div v-if="showCreateRoleModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Nouveau rôle</h2>
         <label>Nom *
           <input v-model="roleForm.name" placeholder="ex: Comptable" autocomplete="off" />
@@ -102,8 +102,8 @@
     </div>
 
     <!-- Modal : Modifier un rôle -->
-    <div v-if="showEditRoleModal" class="modal-backdrop" @click.self="showEditRoleModal = false">
-      <div class="modal">
+    <div v-if="showEditRoleModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Modifier — <em>{{ editTarget?.name }}</em></h2>
         <label>Nom *
           <input v-model="roleForm.name" autocomplete="off" />
@@ -120,8 +120,8 @@
     </div>
 
     <!-- Modal : Gérer les permissions d'un rôle -->
-    <div v-if="showPermsModal" class="modal-backdrop" @click.self="showPermsModal = false">
-      <div class="modal modal-wide">
+    <div v-if="showPermsModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal modal-wide" :class="{ 'modal-shake': shaking }">
         <h2>Permissions — <em>{{ permsTarget?.name }}</em></h2>
         <p class="modal-hint">Cochez les permissions à attribuer à ce rôle.</p>
         <div class="perm-list">
@@ -147,8 +147,8 @@
     </div>
 
     <!-- Modal : Créer une permission -->
-    <div v-if="showCreatePermModal" class="modal-backdrop" @click.self="showCreatePermModal = false">
-      <div class="modal">
+    <div v-if="showCreatePermModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Nouvelle permission</h2>
         <label>Nom *
           <input v-model="permForm.name" placeholder="ex: Manage budgets" autocomplete="off" />
@@ -169,6 +169,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const roles = ref([])
 const permissions = ref([])
@@ -189,6 +190,14 @@ const savingPerm = ref(null)
 
 const roleForm = ref({ name: '', description: '' })
 const permForm = ref({ name: '', description: '' })
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => {
+  if (showCreateRoleModal.value) showCreateRoleModal.value = false
+  else if (showEditRoleModal.value) showEditRoleModal.value = false
+  else if (showPermsModal.value) showPermsModal.value = false
+  else if (showCreatePermModal.value) showCreatePermModal.value = false
+})
 
 function flash(msg) {
   success.value = msg

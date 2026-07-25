@@ -60,8 +60,8 @@
     </table>
 
     <!-- Modal inline -->
-    <div v-if="showModal" class="modal-backdrop" @click.self="showModal = false">
-      <div class="modal">
+    <div v-if="showModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ editTarget ? 'Modifier' : 'Nouvel abonnement' }}</h2>
         <label>Nom *
           <input v-model="form.name" placeholder="Netflix, Loyer…" />
@@ -142,6 +142,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const MONTH_NAMES = [
   'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -162,6 +163,9 @@ const form = ref({
   schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
   from_account_id: '', to_account_id: '', category_id: '', is_forecast_only: false,
 })
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (showModal.value) showModal.value = false })
 
 const scheduleValid = computed(() => {
   if (form.value.schedule_type === 'monthly') return form.value.day_of_month >= 1 && form.value.day_of_month <= 31

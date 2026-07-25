@@ -316,8 +316,8 @@
     </div>
 
     <!-- Modal : Créer / modifier une devise -->
-    <div v-if="showCommodityModal" class="modal-backdrop" @click.self="showCommodityModal = false">
-      <div class="modal">
+    <div v-if="showCommodityModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ commodityEditTarget ? 'Modifier la devise' : 'Nouvelle devise' }}</h2>
         <label>Nom *
           <input v-model="commodityForm.name" placeholder="ex: Livre Sterling" autocomplete="off" />
@@ -361,6 +361,7 @@ import { ref, computed, reactive, onMounted } from 'vue'
 import axios from 'axios'
 import { DEFAULT_METRICS, loadWeights, loadThresholds } from '@/utils/marketScore.js'
 import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 // ── Sections ─────────────────────────────────────────────────────────────────
 const sections = [
@@ -417,6 +418,9 @@ const commodityEditTarget = ref(null)
 const commodityModalError = ref('')
 const commodityForm = ref({ name: '', short_name: '', type: 'Currency', fraction: 2, description: '', track_live_rate: false })
 const refreshingRateIds = ref(new Set())
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (showCommodityModal.value) showCommodityModal.value = false })
 
 // Options de devise dérivées des devises que l'utilisateur a lui-même créées (onglet "Devises"),
 // pas une liste figée — sinon une devise ajoutée ici (ex: JPY) ne serait jamais sélectionnable

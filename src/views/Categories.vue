@@ -44,8 +44,8 @@
     </table>
 
     <!-- Modal inline -->
-    <div v-if="showModal" class="modal-backdrop" @click.self="showModal = false">
-      <div class="modal">
+    <div v-if="showModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>{{ editTarget ? 'Modifier' : 'Nouvelle catégorie' }}</h2>
         <label>Nom *
           <input v-model="form.name" placeholder="Alimentation…" />
@@ -71,6 +71,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const categories = ref([])
 const loading = ref(false)
@@ -78,6 +79,9 @@ const error = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
 const form = ref({ name: '', description: '', tax_treatment: null })
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (showModal.value) showModal.value = false })
 
 const TAX_TREATMENTS = [
   { value: 'taxable_income', label: 'Revenu imposable' },

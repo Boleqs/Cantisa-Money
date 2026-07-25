@@ -1,6 +1,6 @@
 <template>
-  <div v-if="modelValue" class="modal-backdrop" @click.self="close">
-    <div class="modal">
+  <div v-if="modelValue" class="modal-backdrop" @click.self="shake">
+    <div class="modal" :class="{ 'modal-shake': shaking }">
       <header class="modal-header">
         <div>
           <h2>{{ isEdit ? 'Modifier le compte' : 'Nouveau compte' }}</h2>
@@ -69,6 +69,15 @@
           </div>
           <div class="field" v-else></div>
 
+          <div class="field">
+            <label>Ligne fiscale</label>
+            <select v-model="form.tax_treatment">
+              <option :value="null">— Non fiscal —</option>
+              <option v-for="t in TAX_TREATMENTS" :key="t.value" :value="t.value">{{ t.label }}</option>
+            </select>
+            <span class="hint">Tout mouvement sur ce compte compte comme fiscal, quelle que soit sa catégorie.</span>
+          </div>
+
           <div class="field field-full toggles">
             <label>
               <input type="checkbox" v-model="form.is_hidden" />
@@ -94,6 +103,7 @@
 
 <script setup>
 import { computed, reactive, watch } from 'vue'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -108,6 +118,14 @@ const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
 const isEdit = computed(() => props.mode === 'edit')
 const isEquity = computed(() => form.account_type === 'Equity')
 
+// Tenu synchronisé avec TAX_TREATMENT_VALUES dans rt_accounts.py.
+const TAX_TREATMENTS = [
+  { value: 'taxable_income', label: 'Revenu imposable' },
+  { value: 'deductible', label: 'Charge déductible' },
+  { value: 'real_estate_income', label: 'Revenu foncier' },
+  { value: 'real_estate_expense', label: 'Charge foncière' },
+]
+
 const emptyForm = () => ({
   id: null,
   name: '',
@@ -119,14 +137,19 @@ const emptyForm = () => ({
   is_hidden: false,
   is_virtual: false,
   code: '',
+  tax_treatment: null,
 })
 
 const form = reactive(emptyForm())
 
+// Déclenché par l'ouverture du modal (modelValue), pas par l'identité de `account` : en mode
+// création, `account` reste `null` d'une ouverture à l'autre donc un watch sur `account` seul ne
+// se redéclenche pas et laisse la saisie précédente dans le formulaire.
 watch(
-  () => props.account,
-  (acc) => {
-    Object.assign(form, emptyForm(), acc ? { ...acc } : {})
+  () => props.modelValue,
+  (open) => {
+    if (!open) return
+    Object.assign(form, emptyForm(), props.account ? { ...props.account } : {})
   },
   { immediate: true }
 )
@@ -158,6 +181,9 @@ const close = () => {
   emit('update:modelValue', false)
   emit('cancel')
 }
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (props.modelValue) close() })
 
 const onSubmit = () => {
   if (!form.name.trim()) return

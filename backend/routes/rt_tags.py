@@ -9,17 +9,21 @@ from backend.utils.restricted_by_permission import restricted_by_permission
 TAGS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 VALID_COLORS = ('green', 'red', 'blue', 'white', 'black', 'yellow', 'purple')
+# Tenu synchronisé avec TAX_TREATMENTS dans rt_tax.py.
+TAX_TREATMENT_VALUES = ('taxable_income', 'deductible', 'real_estate_income', 'real_estate_expense')
 
 
 class AddTagSchema(Schema):
     name = fields.String(required=True)
     color = fields.String(load_default='green', validate=validate.OneOf(VALID_COLORS))
+    tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
 
 class UpdateTagSchema(Schema):
     tag_id = fields.UUID(required=True)
     name = fields.String(required=True)
     color = fields.String(load_default='green', validate=validate.OneOf(VALID_COLORS))
+    tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
 
 class GetTagSchema(Schema):
@@ -46,6 +50,7 @@ def _tag_to_dict(t):
         'user_id': str(t.user_id),
         'name': t.name,
         'color': t.color,
+        'tax_treatment': t.tax_treatment,
         'created_at': t.created_at.isoformat() if t.created_at else None,
     }
 
@@ -96,6 +101,7 @@ class TagsRoutes:
                     user_id=get_jwt_identity(),
                     name=data['name'],
                     color=data.get('color', 'green'),
+                    tax_treatment=data.get('tax_treatment'),
                 )
                 DB.session.add(t)
                 DB.session.commit()
@@ -122,6 +128,7 @@ class TagsRoutes:
             try:
                 t.name = data['name']
                 t.color = data.get('color', 'green')
+                t.tax_treatment = data.get('tax_treatment')
                 DB.session.commit()
                 return json_response(_tag_to_dict(t), HttpCode.OK)
             except Exception as error:

@@ -1,6 +1,6 @@
 <template>
-  <div v-if="modelValue" class="modal-backdrop" @click.self="close">
-    <div class="modal">
+  <div v-if="modelValue" class="modal-backdrop" @click.self="shake">
+    <div class="modal" :class="{ 'modal-shake': shaking }">
       <header class="modal-header">
         <div>
           <h2>Réviser le taux</h2>
@@ -46,6 +46,7 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -71,6 +72,9 @@ watch(() => props.modelValue, (open) => {
 })
 
 const close = () => emit('update:modelValue', false)
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => { if (props.modelValue) close() })
 
 async function onSubmit() {
   formError.value = ''

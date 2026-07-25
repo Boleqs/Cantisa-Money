@@ -23,4 +23,6 @@ class Tags(Base):
     user_id:uuid = Column(UUID(as_uuid=True))
     name:str = Column(String(100), nullable=False)
     color:str = Column(String(64), nullable=False, default='green')
+    # 'taxable_income' | 'deductible' | 'real_estate_income' | 'real_estate_expense' | None (non fiscal)
+    tax_treatment:str = Column(String(32), nullable=True)
     created_at:datetime = Column(DateTime, nullable=False, default=datetime.now())

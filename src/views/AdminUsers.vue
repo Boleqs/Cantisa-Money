@@ -49,8 +49,8 @@
     </table>
 
     <!-- Modal : Créer un utilisateur -->
-    <div v-if="showCreateModal" class="modal-backdrop" @click.self="showCreateModal = false">
-      <div class="modal">
+    <div v-if="showCreateModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Nouvel utilisateur</h2>
         <label>Nom d'utilisateur *
           <input v-model="createForm.username" placeholder="john_doe" autocomplete="off" />
@@ -80,8 +80,8 @@
     </div>
 
     <!-- Modal : Changer de rôle -->
-    <div v-if="showRoleModal" class="modal-backdrop" @click.self="showRoleModal = false">
-      <div class="modal">
+    <div v-if="showRoleModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Changer de rôle — <em>{{ roleTarget?.username }}</em></h2>
         <label>Nouveau rôle *
           <select v-model="roleForm.role_id">
@@ -98,8 +98,8 @@
     </div>
 
     <!-- Modal : Réinitialiser le mot de passe -->
-    <div v-if="showPasswordModal" class="modal-backdrop" @click.self="showPasswordModal = false">
-      <div class="modal">
+    <div v-if="showPasswordModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Réinitialiser le MDP — <em>{{ passwordTarget?.username }}</em></h2>
         <label>Nouveau mot de passe *
           <input v-model="passwordForm.password" type="password" placeholder="••••••••" autocomplete="new-password" />
@@ -117,6 +117,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const users = ref([])
 const roles = ref([])
@@ -134,6 +135,13 @@ const modalError = ref('')
 const createForm = ref({ username: '', email: '', password: '', role_id: '' })
 const roleForm = ref({ role_id: '' })
 const passwordForm = ref({ password: '' })
+
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => {
+  if (showCreateModal.value) showCreateModal.value = false
+  else if (showRoleModal.value) showRoleModal.value = false
+  else if (showPasswordModal.value) showPasswordModal.value = false
+})
 
 function fmtDate(v) {
   if (!v) return '—'

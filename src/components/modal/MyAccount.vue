@@ -1,6 +1,6 @@
 <template>
-  <div class="overlay" @click.self="$emit('close')">
-    <div class="modal">
+  <div class="overlay" @click.self="shake">
+    <div class="modal" :class="{ 'modal-shake': shaking }">
       <!-- Header -->
       <div class="modal-header">
         <h2 class="modal-title">Mon compte</h2>
@@ -57,8 +57,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
-defineEmits(['close'])
+const emit = defineEmits(['close'])
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => emit('close'))
 
 const user = ref(null)
 const newPassword = ref('')

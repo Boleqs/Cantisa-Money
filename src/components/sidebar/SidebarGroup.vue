@@ -1,5 +1,5 @@
 <script>
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { collapsed } from './state'
 
@@ -7,7 +7,7 @@ export default {
   name: 'SidebarGroup',
   props: {
     label: { type: String, required: true },
-    iconFile: { type: String, default: null },
+    icon: { type: [Object, Array], default: null },
     paths: { type: Array, default: () => [] },
   },
   setup (props) {
@@ -25,16 +25,10 @@ export default {
       isOpen.value = !isOpen.value
     }
 
-    const iconSrc = computed(() => {
-      if (!props.iconFile) return null
-      return new URL(`../icons/${props.iconFile}`, import.meta.url).href
-    })
-
     return {
       collapsed,
       isOpen,
-      toggleOpen,
-      iconSrc
+      toggleOpen
     }
   }
 }
@@ -45,7 +39,7 @@ export default {
     <!-- Barre de titre / séparateur -->
     <div class="sidebar-group-header" @click="toggleOpen">
       <div class="left">
-        <img v-if="iconSrc" :src="iconSrc" class="icon" alt="" />
+        <font-awesome-icon v-if="icon" class="icon" :icon="icon" fixed-width />
         <span v-if="!collapsed" class="label">{{ label }}</span>
       </div>
       <span v-if="!collapsed" class="chevron">
@@ -99,7 +93,8 @@ export default {
 
 .icon {
   flex-shrink: 0;
-  width: 25px;
+  width: 18px;
+  height: 18px;
   margin-right: 5px;
 }
 

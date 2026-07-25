@@ -1,6 +1,6 @@
 <template>
-  <div class="overlay" @click.self="$emit('close')">
-    <div class="modal">
+  <div class="overlay" @click.self="shake">
+    <div class="modal" :class="{ 'modal-shake': shaking }">
       <!-- Header -->
       <div class="modal-header">
         <h2 class="modal-title">Paramètres</h2>
@@ -85,8 +85,11 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { collapsed, toggleSidebar } from '@/components/sidebar/state.js'
 import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
+import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
-defineEmits(['close'])
+const emit = defineEmits(['close'])
+const { shaking, shake } = useModalShake()
+useEscapeClose(() => emit('close'))
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
 const KEY_COLLAPSE  = 'cmm_sidebar_collapsed_on_start'
