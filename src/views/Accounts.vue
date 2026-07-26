@@ -5,7 +5,7 @@
       <div class="title-block">
         <h1>Comptes</h1>
         <p class="subtitle">
-          Tous les comptes de l’utilisateur connecté, groupés par type.
+          Tous les comptes de l’utilisateur connecté, groupés {{ groupBy === "parent" ? "par compte parent" : "par type" }}.
         </p>
       </div>
 
@@ -19,6 +19,14 @@
             placeholder="Rechercher un compte (nom, description, code)…"
           />
         </div>
+
+        <label class="toggle group-by-toggle">
+          <span>Organiser par</span>
+          <select v-model="groupBy" class="group-by-select">
+            <option value="type">Type</option>
+            <option value="parent">Compte parent</option>
+          </select>
+        </label>
 
         <label class="toggle">
           <input type="checkbox" v-model="showHidden" />
@@ -63,6 +71,7 @@
         <div class="group-header" @click="toggleGroup(group.key)">
           <div class="group-title">
             <h2>{{ group.label }}</h2>
+            <span v-if="group.typeLabel" class="acc-badge soft">{{ group.typeLabel }}</span>
             <span class="pill">{{ group.items.length }}</span>
           </div>
           <div class="group-header-right">
@@ -90,12 +99,20 @@
           >
             <div class="acc-id">
               <div class="acc-name-row">
+                <button
+                  v-if="hasChildren(acc.id)"
+                  class="icon-btn tree-toggle"
+                  type="button"
+                  :aria-label="isParentCollapsed(acc.id) ? 'Déplier les sous-comptes' : 'Replier les sous-comptes'"
+                  @click="toggleParent(acc.id)"
+                >{{ isParentCollapsed(acc.id) ? '▸' : '▾' }}</button>
                 <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc.name }}</h3>
                 <span v-if="acc.code" class="code">#{{ acc.code }}</span>
                 <span class="acc-badge currency">{{ currencyShort(acc.currency_id) }}</span>
                 <span v-if="acc.account_subtype" class="acc-badge">{{ acc.account_subtype }}</span>
                 <span v-if="hasChildren(acc.id)" class="acc-badge soft">{{ childCount(acc.id) }} sous-compte{{ childCount(acc.id) > 1 ? 's' : '' }}</span>
                 <span v-if="acc.is_hidden" class="acc-badge danger">Caché</span>
+                <span v-if="acc.is_closed" class="acc-badge danger">Clôturé</span>
                 <span v-if="acc.is_virtual" class="acc-badge warn">Virtuel</span>
               </div>
               <p v-if="acc.description" class="desc">{{ acc.description }}</p>
@@ -119,6 +136,8 @@
 
             <div class="row-actions">
               <button class="btn-action" @click="openEdit(acc)" title="Modifier">✎</button>
+              <button v-if="acc.is_closed" class="btn-action" @click="reopenAccount(acc)" title="Réouvrir">🔓</button>
+              <button v-else class="btn-action" @click="startClosing(acc)" title="Clôturer">🔒</button>
               <button class="btn-action btn-danger" @click="deleteAccount(acc)" title="Supprimer">✕</button>
             </div>
           </div>
@@ -135,6 +154,29 @@
     :parent-accounts="accounts"
     @save="handleSave"
   />
+
+  <!-- Clôture d'un compte non soldé : demande un compte de contrepartie pour la transaction
+       d'équilibrage finale (le backend renvoie needs_balancing + le solde si aucun n'est fourni). -->
+  <div v-if="closingAccount" class="modal-backdrop" @click.self="cancelClosing">
+    <div class="close-modal">
+      <h3>Clôturer « {{ closingAccount.name }} »</h3>
+      <p class="hint">
+        Ce compte n'est pas soldé (solde : {{ fmtAmount(closingAccount.balance) }} {{ currencyShort(closingAccount.currencyId) }}).
+        Choisissez un compte de contrepartie pour la transaction d'équilibrage finale qui le ramènera à zéro.
+      </p>
+      <select v-model="closingTargetId" class="group-by-select close-select">
+        <option value="">Compte de contrepartie…</option>
+        <option v-for="a in balancingCandidates" :key="a.id" :value="a.id">{{ a.name }}</option>
+      </select>
+      <p v-if="closingError" class="alert">{{ closingError }}</p>
+      <div class="close-modal-actions">
+        <button class="btn btn-sm" :disabled="closingBusy" @click="cancelClosing">Annuler</button>
+        <button class="btn btn-primary" :disabled="!closingTargetId || closingBusy" @click="confirmBalancingClose">
+          {{ closingBusy ? "…" : "Créer la transaction et clôturer" }}
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -160,10 +202,15 @@ const error = ref("");
 
 const search = ref("");
 const showHidden = ref(false);
-const showVirtual = ref(false);
+// Les comptes virtuels (ex. enveloppes budgétaires) sont utiles au quotidien, contrairement aux
+// comptes cachés (archivés) — affichés par défaut, à la différence de showHidden.
+const showVirtual = ref(true);
+const groupBy = ref("type");
 
-// Group collapse state
+// Group collapse state (au niveau du groupe : type ou compte racine selon groupBy)
 const collapsed = ref(new Set());
+// Repli/dépli d'un compte parent précis, indépendant du groupe qui le contient
+const collapsedParents = ref(new Set());
 
 // Order & labels for account_type
 const TYPE_ORDER = ["Current", "Assets", "Equity", "Liability", "Income", "Expense"];
@@ -322,14 +369,17 @@ function accountFigure(acc) {
 // solde consolidé du parent — sinon double-comptage). Retourne null si les comptes racines du
 // groupe ne sont pas tous dans la même devise : mieux vaut ne rien afficher qu'additionner à tort
 // des montants dans des devises différentes.
-function groupRollup(key, items) {
+// `labelKey` sert à choisir le libellé/la couleur (le type de compte : "Liability", "Income"...) ;
+// en mode "par compte parent" ce n'est pas le même que l'identifiant unique du groupe (l'id du
+// compte racine), d'où la séparation des deux paramètres.
+function groupRollup(labelKey, items) {
   const roots = items.filter((a) => a._depth === 0);
   if (!roots.length) return null;
   const currencies = new Set(roots.map((a) => a._figure.currency));
   if (currencies.size > 1) return null;
   const value = roots.reduce((s, a) => s + a._figure.value, 0);
-  const label = GROUP_ROLLUP_LABEL[key] || "Solde cumulé";
-  const colorClass = key === "Liability" ? "neg" : NEUTRAL_ROLLUP_GROUPS.has(key) ? "neutral" : value >= 0 ? "pos" : "neg";
+  const label = GROUP_ROLLUP_LABEL[labelKey] || "Solde cumulé";
+  const colorClass = labelKey === "Liability" ? "neg" : NEUTRAL_ROLLUP_GROUPS.has(labelKey) ? "neutral" : value >= 0 ? "pos" : "neg";
   return { label, value, currency: roots[0]._figure.currency, colorClass };
 }
 
@@ -347,6 +397,18 @@ function toggleGroup(key) {
   if (next.has(key)) next.delete(key);
   else next.add(key);
   collapsed.value = next;
+}
+
+function isParentCollapsed(accountId) {
+  return collapsedParents.value.has(String(accountId));
+}
+
+function toggleParent(accountId) {
+  const next = new Set(collapsedParents.value);
+  const key = String(accountId);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsedParents.value = next;
 }
 
 async function fetchCommodities() {
@@ -452,6 +514,86 @@ async function deleteAccount(acc) {
   }
 }
 
+// ── clôture de compte ─────────────────────────────────────────────────────────
+// closingAccount porte soit le compte brut (avant tentative), soit { ...acc, balance,
+// currencyId } une fois que le backend a répondu needs_balancing avec le solde à résorber.
+const closingAccount = ref(null);
+const closingTargetId = ref("");
+const closingBusy = ref(false);
+const closingError = ref("");
+
+const balancingCandidates = computed(() =>
+  accounts.value.filter((a) => a.id !== closingAccount.value?.id && !a.is_closed)
+);
+
+async function startClosing(acc) {
+  closingError.value = "";
+  closingTargetId.value = "";
+  closingBusy.value = true;
+  try {
+    await axios.post("/api/accounts/close", { account_id: acc.id });
+    closingBusy.value = false;
+    await reload();
+  } catch (e) {
+    closingBusy.value = false;
+    const rd = e?.response?.data?.response_data;
+    if (e?.response?.status === 409 && rd?.needs_balancing) {
+      closingAccount.value = { ...acc, balance: rd.balance, currencyId: rd.currency_id };
+    } else {
+      error.value = rd || e?.message || "Erreur lors de la clôture";
+    }
+  }
+}
+
+function cancelClosing() {
+  closingAccount.value = null;
+  closingTargetId.value = "";
+  closingError.value = "";
+}
+
+async function confirmBalancingClose() {
+  if (!closingTargetId.value || !closingAccount.value) return;
+  closingBusy.value = true;
+  closingError.value = "";
+  try {
+    await axios.post("/api/accounts/close", {
+      account_id: closingAccount.value.id,
+      balancing_account_id: closingTargetId.value,
+    });
+    closingAccount.value = null;
+    closingTargetId.value = "";
+    await reload();
+  } catch (e) {
+    closingError.value =
+      e?.response?.data?.response_data || e?.message || "Erreur lors de la clôture";
+  } finally {
+    closingBusy.value = false;
+  }
+}
+
+async function reopenAccount(acc) {
+  if (!confirm(`Réouvrir le compte « ${acc.name} » ?`)) return;
+  try {
+    await axios.patch("/api/accounts", {
+      account_id: acc.id,
+      name: acc.name,
+      description: acc.description,
+      currency_id: acc.currency_id,
+      parent_id: acc.parent_id || undefined,
+      account_type: acc.account_type,
+      account_subtype: acc.account_subtype || undefined,
+      is_virtual: acc.is_virtual,
+      is_hidden: false,
+      is_closed: false,
+      code: acc.code || undefined,
+      tax_treatment: acc.tax_treatment || null,
+    });
+    await reload();
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || "Erreur inconnue";
+  }
+}
+
 onMounted(() => {
   reload();
 });
@@ -501,15 +643,48 @@ function buildTreeFlat(items) {
     );
     for (const child of children) {
       result.push({ ...child, _depth: depth, _figure: accountFigure(child) });
-      traverse(String(child.id), depth + 1);
+      // Un parent replié (collapsedParents) reste affiché lui-même, seuls ses
+      // descendants sont masqués — on n'explore donc pas ses enfants dans ce cas.
+      if (!collapsedParents.value.has(String(child.id))) {
+        traverse(String(child.id), depth + 1);
+      }
     }
   }
   traverse(null, 0);
   return result;
 }
 
-// Grouping by account_type + ordering
+// Regroupe un ensemble déjà mis en arborescence (buildTreeFlat) en un groupe par compte racine
+// (parent_id vide, ou parent hors de l'ensemble filtré) : chaque racine et tous ses descendants
+// visibles forment un groupe, quel que soit leur account_type.
+function splitByRootAccount(items) {
+  const flat = buildTreeFlat(items);
+  const groups = [];
+  let current = null;
+  for (const acc of flat) {
+    if (acc._depth === 0) {
+      current = { key: String(acc.id), label: acc.name, labelKey: acc.account_type, items: [] };
+      groups.push(current);
+    }
+    current.items.push(acc);
+  }
+  return groups;
+}
+
+// Grouping selon groupBy : par type de compte (défaut) ou par compte parent racine
 const groupedAccounts = computed(() => {
+  if (groupBy.value === "parent") {
+    return splitByRootAccount(filteredAccounts.value)
+      .sort((a, b) => normalizeText(a.label).localeCompare(normalizeText(b.label), "fr"))
+      .map((g) => ({
+        key: g.key,
+        label: g.label,
+        typeLabel: TYPE_LABELS[g.labelKey] || g.labelKey,
+        items: g.items,
+        rollup: groupRollup(g.labelKey, g.items),
+      }));
+  }
+
   // Regrouper par type
   const map = new Map();
   for (const acc of filteredAccounts.value) {
@@ -616,6 +791,20 @@ const groupedAccounts = computed(() => {
   accent-color: #60a5fa;
 }
 
+.group-by-toggle {
+  gap: 8px;
+}
+
+.group-by-select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  font-size: 13px;
+  outline: none;
+}
+
 .btn {
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: rgba(15, 23, 42, 0.7);
@@ -636,6 +825,49 @@ const groupedAccounts = computed(() => {
   border-radius: 12px;
   margin-bottom: 16px;
   color: #fecaca;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.close-modal {
+  width: 440px;
+  max-width: 92vw;
+  background: #020617;
+  border-radius: 16px;
+  border: 1px solid #1f2937;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  padding: 20px;
+}
+
+.close-modal h3 {
+  margin: 0 0 10px;
+}
+
+.close-modal .hint {
+  color: #94a3b8;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.close-select {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.close-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .skeleton,
@@ -768,6 +1000,13 @@ const groupedAccounts = computed(() => {
 .name {
   margin: 0;
   font-size: 15px;
+}
+
+.tree-toggle {
+  font-size: 12px;
+  padding: 0 2px;
+  align-self: center;
+  flex-shrink: 0;
 }
 
 .account-link {

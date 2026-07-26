@@ -181,8 +181,8 @@ def _apply_tx_filters(query, params, DB, Transactions, Splits, TagsOnSplits):
     return query
 
 
-HEADERS = ['Date', 'Description', 'Catégorie', 'Compte', 'Montant', 'Pointé']
-KEYS    = ['date', 'description', 'categorie', 'compte', 'montant', 'pointe']
+HEADERS = ['Date', 'Description', 'Catégorie', 'Compte', 'Contrepartie', 'Montant', 'Pointé']
+KEYS    = ['date', 'description', 'categorie', 'compte', 'contrepartie', 'montant', 'pointe']
 
 
 def _export_csv(rows):
@@ -195,6 +195,23 @@ def _export_csv(rows):
     resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
     resp.headers['Content-Disposition'] = 'attachment; filename="transactions.csv"'
     return resp
+
+
+# Police coeur fpdf2 (Helvetica) limitée au latin-1 : les caractères hors de cette plage
+# (€, tirets/guillemets typographiques, emoji...) font planter pdf.cell() avec une
+# FPDFUnicodeEncodingException. On les translittère quand un équivalent existe, sinon on
+# les remplace, plutôt que d'embarquer une police TTF Unicode pour ce besoin simple.
+_PDF_CHAR_MAP = {
+    '€': 'EUR', '’': "'", '‘': "'", '“': '"', '”': '"',
+    '–': '-', '—': '-', '…': '...',
+}
+
+
+def _pdf_safe(text):
+    text = str(text)
+    for src, dst in _PDF_CHAR_MAP.items():
+        text = text.replace(src, dst)
+    return text.encode('latin-1', errors='replace').decode('latin-1')
 
 
 def _export_pdf(rows, tx_count):
@@ -213,7 +230,7 @@ def _export_pdf(rows, tx_count):
     pdf.ln(3)
 
     # Column widths (landscape A4 = 277mm usable)
-    col_w = [24, 80, 36, 60, 26, 18]
+    col_w = [22, 62, 32, 44, 44, 24, 16]
 
     # Header row
     pdf.set_fill_color(30, 41, 59)
@@ -230,10 +247,10 @@ def _export_pdf(rows, tx_count):
         pdf.set_fill_color(245, 247, 250) if fill else pdf.set_fill_color(255, 255, 255)
         pdf.set_font('Helvetica', '', 7)
         montant = f"{r['montant']:.2f}".replace('.', ',')
-        values = [r['date'], r['description'][:55], r['categorie'][:22],
-                  r['compte'][:38], montant, r['pointe']]
+        values = [r['date'], r['description'][:50], r['categorie'][:18],
+                  r['compte'][:26], r['contrepartie'][:26], montant, r['pointe']]
         for i, v in enumerate(values):
-            pdf.cell(col_w[i], 6, str(v), border=1, fill=True)
+            pdf.cell(col_w[i], 6, _pdf_safe(v), border=1, fill=True)
         pdf.ln()
         fill = not fill
 
@@ -432,10 +449,15 @@ class TransactionsRoutes:
         def export_transactions():
             user_id = get_jwt_identity()
             fmt = request.args.get('format', 'csv').lower()
+            # 'format' n'est pas un champ du schéma de filtres : le laisser dans les args fait
+            # échouer la validation (Unknown field) et retombait silencieusement sur params = {},
+            # c'est-à-dire un export non filtré malgré des filtres actifs côté client.
+            filter_args = request.args.to_dict()
+            filter_args.pop('format', None)
             try:
-                params = GetTransactionsSchema().load(request.args)
-            except ValidationError:
-                params = {}
+                params = GetTransactionsSchema().load(filter_args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
 
             query = Transactions.query.filter(Transactions.user_id == user_id)
             query = _apply_tx_filters(query, params, DB, Transactions, Splits, TagsOnSplits)
@@ -448,22 +470,60 @@ class TransactionsRoutes:
             if Categories:
                 cat_map = {str(c.id): c.name for c in Categories.query.filter_by(user_id=user_id).all()}
 
-            # Flatten: one row per split
+            # Une ligne par transaction (pas par split) : en comptabilité en partie double, une
+            # transaction simple a 2 splits (compte source débité / compte destination crédité,
+            # cf. TransactionModal.vue) — les aplatir en 2 lignes ferait apparaître le même
+            # virement/paiement deux fois dans l'export. On retient le split "source" (négatif)
+            # comme montant/compte principal et on liste la contrepartie à part.
             rows = []
             for tx in txs:
                 splits = Splits.query.filter(Splits.tx_id == tx.id).all()
+                if not splits:
+                    continue
                 cat_name = cat_map.get(str(tx.category_id), '') if tx.category_id else ''
                 date_str = tx.post_date.strftime('%d/%m/%Y') if tx.post_date else ''
                 cleared = 'Oui' if tx.is_cleared else 'Non'
-                for sp in splits:
-                    rows.append({
-                        'date': date_str,
-                        'description': tx.description or '',
-                        'categorie': cat_name,
-                        'compte': acc_map.get(str(sp.account_id), str(sp.account_id)),
-                        'montant': float(sp.quantity),
-                        'pointe': cleared,
-                    })
+
+                # Filtré par compte : on affiche le montant/compte du point de vue de ce compte
+                # précis (même logique que AccountDetail.vue), pas toujours le split "source".
+                filtered_split = None
+                if params.get('account_id'):
+                    filtered_split = next(
+                        (s for s in splits if str(s.account_id) == str(params['account_id'])), None)
+
+                if filtered_split:
+                    others = [s for s in splits if s is not filtered_split]
+                    montant = float(filtered_split.quantity)
+                    compte = acc_map.get(str(filtered_split.account_id), str(filtered_split.account_id))
+                    contrepartie = ', '.join(
+                        acc_map.get(str(s.account_id), str(s.account_id)) for s in others
+                    ) or '—'
+                elif len(splits) == 2:
+                    source = next((s for s in splits if s.quantity < 0), splits[0])
+                    dest = next(s for s in splits if s is not source)
+                    montant = float(source.quantity)
+                    compte = acc_map.get(str(source.account_id), str(source.account_id))
+                    contrepartie = acc_map.get(str(dest.account_id), str(dest.account_id))
+                else:
+                    # Splits manuels/multi-comptes (mode avancé) : pas de source/destination unique
+                    # -> 1er split (même convention que _tx_to_dict) comme compte principal, le
+                    # reste listé comme contrepartie.
+                    primary, others = splits[0], splits[1:]
+                    montant = float(primary.quantity)
+                    compte = acc_map.get(str(primary.account_id), str(primary.account_id))
+                    contrepartie = ', '.join(
+                        acc_map.get(str(s.account_id), str(s.account_id)) for s in others
+                    ) or '—'
+
+                rows.append({
+                    'date': date_str,
+                    'description': tx.description or '',
+                    'categorie': cat_name,
+                    'compte': compte,
+                    'contrepartie': contrepartie,
+                    'montant': montant,
+                    'pointe': cleared,
+                })
 
             if fmt == 'csv':
                 return _export_csv(rows)

@@ -1,6 +1,7 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from marshmallow import Schema, fields, ValidationError, validate
+from sqlalchemy import func as sql_func
 import hashlib
 
 from flask import jsonify, request, make_response
@@ -17,9 +18,11 @@ from backend.config import (HttpCode,
                             )
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
+from backend.utils.market_price import get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 ACCOUNTS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
+BALANCE_TOLERANCE = 0.01
 # Tenu synchronisé avec TAX_TREATMENTS dans rt_tax.py.
 TAX_TREATMENT_VALUES = ('taxable_income', 'deductible', 'real_estate_income', 'real_estate_expense')
 
@@ -47,6 +50,7 @@ class UpdateAccountSchema(Schema):
     account_subtype = fields.String()
     is_virtual = fields.Boolean()
     is_hidden = fields.Boolean()
+    is_closed = fields.Boolean()
     code = fields.String()
     tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
 
@@ -59,8 +63,15 @@ class DeleteAccountSchema(Schema):
     account_id = fields.UUID(required=True)
 
 
+class CloseAccountSchema(Schema):
+    account_id = fields.UUID(required=True)
+    # Compte de contrepartie pour la transaction d'équilibrage finale, requis seulement si
+    # le compte à clôturer n'est pas déjà à zéro.
+    balancing_account_id = fields.UUID(load_default=None)
+
+
 class AccountsRoutes:
-    def __init__(self, app, DB, Users, Accounts):
+    def __init__(self, app, DB, Users, Accounts, Splits=None, Transactions=None, Commodities=None, FxRates=None):
         ROUTE_PATH = f"{ROOT_PATH}/accounts"
 
         @app.route(f"{ROUTE_PATH}", methods=["POST"])
@@ -170,6 +181,13 @@ class AccountsRoutes:
             account.account_subtype = data.get('account_subtype', account.account_subtype)
             account.is_virtual = data.get('is_virtual', account.is_virtual)
             account.is_hidden = data.get('is_hidden', account.is_hidden)
+            # Réouverture d'un compte clôturé (close_account ci-dessous) : pas de ré-équilibrage à
+            # faire dans l'autre sens, on repasse juste le flag (et closed_at) — l'historique des
+            # transactions, lui, reste tel quel.
+            new_is_closed = data.get('is_closed', account.is_closed)
+            if new_is_closed != account.is_closed:
+                account.is_closed = new_is_closed
+                account.closed_at = datetime.now() if new_is_closed else None
             account.code = data.get('code', account.code)
             account.tax_treatment = data.get('tax_treatment')
             DB.session.commit()
@@ -210,9 +228,103 @@ class AccountsRoutes:
                     Accounts.id == data.get('account_id')).first()
                 if not account_to_delete:
                     return json_response("Account doesn't exist", HttpCode.NOT_FOUND)
+                # splits.account_id est en ON DELETE CASCADE (pas SET NULL) : supprimer un compte
+                # qui a des splits supprimerait ces lignes sans toucher aux transactions qui les
+                # portent, laissant des transactions orphelines avec des splits déséquilibrés (bug
+                # constaté en prod sur la suppression d'un prêt soldé, cf. delete_loan()). On bloque
+                # donc la suppression tant que le compte a des mouvements, plutôt que de la laisser
+                # corrompre silencieusement l'historique.
+                if Splits is not None and Splits.query.filter(Splits.account_id == account_to_delete.id).first():
+                    return json_response(
+                        "Impossible de supprimer un compte qui a des transactions — "
+                        "supprimez ou déplacez d'abord ses transactions",
+                        HttpCode.CONFLICT)
                 DB.session.delete(account_to_delete)
                 DB.session.commit()
                 return json_response('Account has been deleted', HttpCode.OK)
             except Exception as error:
+                DB.session.rollback()
+                return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/close", methods=["POST"])
+        @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
+        def close_account():
+            try:
+                data = CloseAccountSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+
+            user_id = get_jwt_identity()
+            account = Accounts.query.filter(
+                Accounts.user_id == user_id, Accounts.id == data['account_id']).first()
+            if not account:
+                return json_response('Compte introuvable', HttpCode.NOT_FOUND)
+            if account.is_closed:
+                return json_response('Ce compte est déjà clôturé', HttpCode.BAD_REQUEST)
+
+            balance = float(
+                DB.session.query(sql_func.coalesce(sql_func.sum(Splits.quantity), 0))
+                .filter(Splits.account_id == account.id).scalar() or 0
+            )
+
+            try:
+                if abs(balance) > BALANCE_TOLERANCE:
+                    balancing_id = data.get('balancing_account_id')
+                    if not balancing_id:
+                        # Compte non soldé et pas de contrepartie fournie : on renvoie le solde pour
+                        # que le frontend propose de créer la transaction d'équilibrage plutôt que
+                        # d'échouer sèchement.
+                        return json_response({
+                            'needs_balancing': True,
+                            'balance': round(balance, 2),
+                            'currency_id': str(account.currency_id),
+                        }, HttpCode.CONFLICT)
+
+                    balancing_account = Accounts.query.filter(
+                        Accounts.user_id == user_id, Accounts.id == balancing_id).first()
+                    if not balancing_account:
+                        return json_response('Compte de contrepartie introuvable', HttpCode.NOT_FOUND)
+                    if str(balancing_account.id) == str(account.id):
+                        return json_response(
+                            'Le compte de contrepartie doit être différent du compte à clôturer',
+                            HttpCode.BAD_REQUEST)
+
+                    # Transaction d'équilibrage : le compte à clôturer reçoit -balance (le ramène à
+                    # zéro), la contrepartie reçoit l'équivalent converti dans sa propre devise —
+                    # même convention que _resolve_split_fx_rates dans rt_transactions.py (quantity
+                    # dans la devise du compte du split, fx_rate = taux vers la devise de la tx).
+                    today = date.today()
+                    account_commodity = Commodities.query.filter_by(id=account.currency_id).first() if Commodities else None
+                    balancing_commodity = Commodities.query.filter_by(id=balancing_account.currency_id).first() if Commodities else None
+                    account_code = account_commodity.short_name if account_commodity else None
+                    balancing_code = balancing_commodity.short_name if balancing_commodity else None
+
+                    fx_rate_balancing = 1.0
+                    if account_code and balancing_code and account_code != balancing_code and FxRates:
+                        fx_rate_balancing = get_fx_rate(balancing_code, account_code, FxRates, on_date=today) or 1.0
+
+                    post_dt = datetime.combine(today, datetime.min.time())
+                    tx = Transactions(
+                        user_id=user_id, currency_id=account.currency_id,
+                        post_date=post_dt, effective_date=post_dt,
+                        description=f"Clôture du compte — {account.name}", is_cleared=True,
+                    )
+                    DB.session.add(tx)
+                    DB.session.flush()
+                    DB.session.add(Splits(tx_id=tx.id, account_id=account.id, quantity=-balance))
+                    DB.session.add(Splits(
+                        tx_id=tx.id, account_id=balancing_account.id,
+                        quantity=round(balance / fx_rate_balancing, 2),
+                        fx_rate=fx_rate_balancing,
+                    ))
+
+                account.is_closed = True
+                account.is_hidden = True
+                account.closed_at = datetime.now()
+                DB.session.commit()
+                return json_response(account, HttpCode.OK)
+            except Exception as error:
+                DB.session.rollback()
                 return json_response(str(error), HttpCode.SERVER_ERROR)
 

@@ -64,6 +64,13 @@
           <input type="number" v-model.number="filters.amount_max" class="filter-input" min="0" step="0.01" placeholder="∞" @input="onAmountInput" />
         </div>
         <div class="filter-group">
+          <label class="filter-label">Compte</label>
+          <select v-model="filters.account_id" class="filter-input" @change="onFilterChange">
+            <option value="">— Tous —</option>
+            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+          </select>
+        </div>
+        <div class="filter-group">
           <label class="filter-label">Catégorie</label>
           <select v-model="filters.category_id" class="filter-input" @change="onFilterChange">
             <option value="">— Toutes —</option>
@@ -188,7 +195,7 @@ const exportMenuOpen = ref(false)
 const filtersOpen = ref(false)
 
 // Advanced filters
-const filters = ref({ date_from: '', date_to: '', amount_min: '', amount_max: '', category_id: '', tag_id: '' })
+const filters = ref({ date_from: '', date_to: '', amount_min: '', amount_max: '', category_id: '', tag_id: '', account_id: '' })
 const categories = ref([])
 const tags = ref([])
 
@@ -249,6 +256,7 @@ function buildParams() {
   if (filters.value.amount_max !== '') params.amount_max = filters.value.amount_max
   if (filters.value.category_id)    params.category_id = filters.value.category_id
   if (filters.value.tag_id)         params.tag_id      = filters.value.tag_id
+  if (filters.value.account_id)     params.account_id  = filters.value.account_id
   return params
 }
 
@@ -319,7 +327,7 @@ function onAmountInput() {
 }
 
 function resetFilters() {
-  filters.value = { date_from: '', date_to: '', amount_min: '', amount_max: '', category_id: '', tag_id: '' }
+  filters.value = { date_from: '', date_to: '', amount_min: '', amount_max: '', category_id: '', tag_id: '', account_id: '' }
   page.value = 1
   reloadTx()
 }

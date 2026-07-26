@@ -11,6 +11,11 @@ from backend.utils.market_price import get_fx_rate, get_fx_rate_series
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
+# Un mouvement n'est un vrai revenu/dépense que si la transaction touche effectivement un compte
+# Income ou Expense — ne pas déduire cela par exclusion de WEALTH_TYPES : un virement entre un
+# compte de valeur et un compte Liability (remboursement de crédit...) n'a aucune jambe Income ou
+# Expense mais serait quand même exclu de wealth_ids, donc à tort classé comme "flux réel".
+INCOME_EXPENSE_TYPES = ('Income', 'Expense')
 DASHBOARD_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
 
 
@@ -70,6 +75,8 @@ class DashboardRoutes:
             current_ids = [a.id for a in all_accounts if a.account_type == 'Current']
             # wealth_ids : comptes représentatifs de la valeur réelle (Current + Assets + Equity)
             wealth_ids = [a.id for a in all_accounts if a.account_type in WEALTH_TYPES]
+            ie_ids = [a.id for a in all_accounts if a.account_type in INCOME_EXPENSE_TYPES]
+            real_flow_tx = DB.session.query(Splits.tx_id).filter(Splits.account_id.in_(ie_ids)).distinct()
 
             # ── KPIs ──────────────────────────────────────────────────────────
             current_balance = sum(
@@ -84,11 +91,6 @@ class DashboardRoutes:
             monthly_income = 0.0
             monthly_expenses = 0.0
             if wealth_ids:
-                # Exclut les virements internes entre comptes de valeur (Current/Assets/Equity)
-                non_transfer_tx = DB.session.query(Splits.tx_id).filter(
-                    ~Splits.account_id.in_(wealth_ids)
-                ).distinct()
-
                 income_rows = DB.session.query(
                     Commodities.short_name, func.coalesce(func.sum(Splits.quantity), 0)
                 ).join(Transactions, Splits.tx_id == Transactions.id
@@ -99,7 +101,7 @@ class DashboardRoutes:
                     Splits.account_id.in_(wealth_ids),
                     Transactions.post_date >= month_start,
                     Splits.quantity > 0,
-                    Transactions.id.in_(non_transfer_tx)
+                    Transactions.id.in_(real_flow_tx)
                 ).group_by(Commodities.short_name).all()
                 monthly_income = sum(float(total) * rate_to_target(code) for code, total in income_rows)
 
@@ -113,7 +115,7 @@ class DashboardRoutes:
                     Splits.account_id.in_(wealth_ids),
                     Transactions.post_date >= month_start,
                     Splits.quantity < 0,
-                    Transactions.id.in_(non_transfer_tx)
+                    Transactions.id.in_(real_flow_tx)
                 ).group_by(Commodities.short_name).all()
                 monthly_expenses = abs(sum(float(total) * rate_to_target(code) for code, total in expenses_rows))
 
@@ -202,6 +204,7 @@ class DashboardRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
+                Transactions.id.in_(real_flow_tx),
             ).group_by(Categories.name, Commodities.short_name).all()
 
             cat_totals = {}
@@ -221,6 +224,7 @@ class DashboardRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
+                Transactions.id.in_(real_flow_tx),
             ).group_by(Commodities.short_name).all()
             uncategorized = sum(float(total) * rate_to_target(code) for code, total in uncategorized_rows)
 

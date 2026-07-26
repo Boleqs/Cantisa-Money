@@ -14,8 +14,14 @@ from backend.utils.recurrence import next_occurrence, parse_weekdays
 # flux réels (revenus/dépenses par mois/catégorie/tag/compte), pas un patrimoine net — y inclure les
 # comptes de crédit ferait apparaître le remboursement de capital comme un "revenu" (côté Liability,
 # quantity>0) et le déblocage comme une "dépense sans catégorie" (quantity<0), ce qui fausserait ces
-# rapports. Voir NET_WORTH_TYPES dans rt_dashboard.py pour l'équivalent qui, lui, inclut Liability.
+# rapports.
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
+# Un mouvement n'est un vrai revenu/dépense que si la transaction touche effectivement un compte
+# Income ou Expense. Ne PAS déduire cela par exclusion de WEALTH_TYPES (`~Splits.account_id.in_
+# (wealth_ids)`) : un virement entre un compte de valeur et un compte Liability (remboursement de
+# crédit, paiement carte...) n'a de jambe ni Income ni Expense mais serait quand même exclu de
+# wealth_ids, donc à tort classé comme "flux réel" — c'est le bug historique de ce fichier.
+INCOME_EXPENSE_TYPES = ('Income', 'Expense')
 REPORTS_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
 PLANIFICATION_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
 
@@ -68,6 +74,7 @@ class ReportsRoutes:
             ).all()
             # Seuls les comptes de valeur réelle (Current + Assets + Equity)
             wealth_ids = [a.id for a in all_accounts if a.account_type in WEALTH_TYPES]
+            ie_ids = [a.id for a in all_accounts if a.account_type in INCOME_EXPENSE_TYPES]
 
             result = []
             for y, m in months:
@@ -80,9 +87,10 @@ class ReportsRoutes:
                 income = 0.0
                 expenses = 0.0
                 if wealth_ids:
-                    # Exclut les virements internes entre comptes de valeur
+                    # Exclut les virements internes (entre comptes de valeur et/ou Liability) :
+                    # seules les transactions ayant une contrepartie Income/Expense sont de vrais flux.
                     non_transfer_tx = DB.session.query(Splits.tx_id).filter(
-                        ~Splits.account_id.in_(wealth_ids)
+                        Splits.account_id.in_(ie_ids)
                     ).distinct()
 
                     income_rows = DB.session.query(
@@ -142,6 +150,14 @@ class ReportsRoutes:
             except ValueError:
                 return json_response('Invalid date format (YYYY-MM-DD expected)', HttpCode.BAD_REQUEST)
 
+            # Exclut les virements internes (ex : remboursement de crédit) : seules les
+            # transactions ayant une contrepartie Income/Expense sont de vrais flux.
+            ie_ids = [a.id for a in Accounts.query.filter(
+                Accounts.user_id == user_id,
+                Accounts.account_type.in_(INCOME_EXPENSE_TYPES),
+            ).all()]
+            real_flow_tx = DB.session.query(Splits.tx_id).filter(Splits.account_id.in_(ie_ids)).distinct()
+
             # Uniquement les splits sur comptes de valeur → évite les contreparties Income/Expense
             cat_rows = DB.session.query(
                 Categories.name,
@@ -159,6 +175,7 @@ class ReportsRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
+                Transactions.id.in_(real_flow_tx),
             ).group_by(Categories.name, Commodities.short_name).all()
 
             cat_totals = {}
@@ -179,6 +196,7 @@ class ReportsRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
+                Transactions.id.in_(real_flow_tx),
             ).group_by(Commodities.short_name).all()
             uncategorized = sum(float(total) * _rate_to(code, target_currency) for code, total in uncategorized_rows)
 
@@ -295,6 +313,14 @@ class ReportsRoutes:
             except ValueError:
                 return json_response('Invalid date format (YYYY-MM-DD expected)', HttpCode.BAD_REQUEST)
 
+            # Exclut les virements internes (ex : remboursement de crédit) : seules les
+            # transactions ayant une contrepartie Income/Expense sont de vrais flux.
+            ie_ids = [a.id for a in Accounts.query.filter(
+                Accounts.user_id == user_id,
+                Accounts.account_type.in_(INCOME_EXPENSE_TYPES),
+            ).all()]
+            real_flow_tx = DB.session.query(Splits.tx_id).filter(Splits.account_id.in_(ie_ids)).distinct()
+
             # Un split peut porter plusieurs tags : les totaux par tag peuvent donc se chevaucher
             # (une même dépense comptée sous plusieurs tags) — contrairement à "Par catégorie" où
             # chaque transaction n'a qu'une seule catégorie.
@@ -316,6 +342,7 @@ class ReportsRoutes:
                 Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
+                Transactions.id.in_(real_flow_tx),
             ).group_by(Tags.name, Commodities.short_name).all()
 
             tag_totals = {}

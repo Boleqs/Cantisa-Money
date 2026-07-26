@@ -16,6 +16,10 @@
     </div>
 
     <div v-if="error" class="alert">{{ error }}</div>
+    <div v-if="restoredFileName" class="info-banner">
+      Import repris automatiquement après une interruption (fichier : {{ restoredFileName }}).
+      <button class="btn btn-sm" style="margin-left:10px" @click="reset">Abandonner et recommencer</button>
+    </div>
 
     <!-- ── Step 0 : Charger le fichier ───────────────────────── -->
     <section v-if="step === 0" class="card">
@@ -286,6 +290,39 @@
           <span v-if="aiLoading">🤖 Analyse…</span>
           <span v-else>🤖 Catégoriser avec l'IA</span>
         </button>
+
+        <span class="controls-sep"></span>
+
+        <div class="bulk-cat-group">
+          <template v-if="bulkAddingCategory">
+            <input
+              v-model="bulkNewCategoryName"
+              class="cat-select"
+              placeholder="Nom de la catégorie…"
+              autofocus
+              @keyup.enter="createBulkCategory"
+              @keyup.esc="bulkAddingCategory = false"
+            />
+            <button
+              class="btn btn-sm"
+              :disabled="!bulkNewCategoryName?.trim() || bulkCreatingCategory"
+              @click="createBulkCategory"
+            >✓</button>
+            <button class="btn btn-sm" @click="bulkAddingCategory = false">✕</button>
+          </template>
+          <template v-else>
+            <select v-model="bulkCategoryId" class="cat-select">
+              <option :value="null">Catégorie…</option>
+              <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+            </select>
+            <button class="btn btn-sm" title="Nouvelle catégorie" @click="bulkAddingCategory = true; bulkNewCategoryName = ''">+</button>
+            <button
+              class="btn btn-sm btn-primary"
+              :disabled="!bulkCategoryId || selectedCount === 0"
+              @click="applyBulkCategory"
+            >Appliquer à {{ selectedCount }} sélectionnée(s)</button>
+          </template>
+        </div>
       </div>
 
       <div v-if="aiError" class="alert">{{ aiError }}</div>
@@ -317,10 +354,35 @@
               </td>
               <td class="cat-cell">
                 <span v-if="tx.aiSuggested && tx.category_id" class="ai-dot" title="Suggéré par l'IA">🤖</span>
-                <select v-model="tx.category_id" class="cat-select" @change="tx.aiSuggested = false">
-                  <option :value="null">—</option>
-                  <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                </select>
+                <template v-if="tx.addingCategory">
+                  <input
+                    v-model="tx.newCategoryName"
+                    class="cat-select"
+                    placeholder="Nom de la catégorie…"
+                    autofocus
+                    @keyup.enter="createCategoryForTx(tx)"
+                    @keyup.esc="tx.addingCategory = false"
+                  />
+                  <button
+                    class="btn btn-sm"
+                    style="padding:2px 6px;font-size:11px"
+                    :disabled="!tx.newCategoryName?.trim() || tx.creatingCategory"
+                    @click="createCategoryForTx(tx)"
+                  >✓</button>
+                  <button class="btn btn-sm" style="padding:2px 6px;font-size:11px" @click="tx.addingCategory = false">✕</button>
+                </template>
+                <template v-else>
+                  <select v-model="tx.category_id" class="cat-select" @change="tx.aiSuggested = false">
+                    <option :value="null">—</option>
+                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                  </select>
+                  <button
+                    class="btn btn-sm"
+                    style="padding:2px 6px;font-size:11px"
+                    title="Nouvelle catégorie"
+                    @click="tx.addingCategory = true; tx.newCategoryName = ''"
+                  >+</button>
+                </template>
               </td>
               <td class="opp-cell">
                 <span v-if="tx.aiSuggested && tx.opposing_account_id" class="ai-dot" title="Suggéré par l'IA">🤖</span>
@@ -391,11 +453,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
+
+const STORAGE_KEY = 'cantisa_import_wizard_v1'
 
 const steps = ['Fichier', 'Configuration', 'Révision', 'Résultat']
 const step = ref(0)
@@ -407,6 +471,8 @@ const error = ref('')
 const parsing = ref(false)
 const importing = ref(false)
 const detectedFormat = ref('csv')
+const restoredFileName = ref('')
+let restoring = false
 
 const accounts = ref([])
 const commodities = ref([])
@@ -421,6 +487,11 @@ const result = ref({ created: 0, skipped: 0 })
 const categories = ref([])
 const aiLoading = ref(false)
 const aiError = ref('')
+
+const bulkCategoryId = ref(null)
+const bulkAddingCategory = ref(false)
+const bulkNewCategoryName = ref('')
+const bulkCreatingCategory = ref(false)
 
 const config = ref({
   delimiter: ';',
@@ -544,6 +615,9 @@ async function parse() {
       newAccountSuggestion: null,
       aiSuggested: false,
       creatingAccount: false,
+      addingCategory: false,
+      newCategoryName: '',
+      creatingCategory: false,
     }))
     parseErrors.value = res.errors
 
@@ -558,6 +632,17 @@ async function parse() {
     }))
     showAccountsFound.value = accountsFound.value.length > 0
 
+    // Le parsing QIF peut créer de nouvelles catégories à la volée côté serveur (voir
+    // resolve_category dans rt_import.py) : sans ce refetch, elles n'apparaissent pas
+    // dans le select "Catégorie" tant que la page n'est pas rechargée.
+    try {
+      const catRes = await axios.get('/api/categories')
+      categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : categories.value
+    } catch (e) {
+      // Non bloquant : la liste de catégories reste simplement celle chargée au montage.
+    }
+
+    restoredFileName.value = ''
     step.value = 2
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || "Erreur lors de l'analyse"
@@ -579,6 +664,8 @@ async function confirm() {
     })
     result.value = data.response_data
     step.value = 3
+    sessionStorage.removeItem(STORAGE_KEY)
+    restoredFileName.value = ''
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || "Erreur lors de l'import"
   } finally {
@@ -618,6 +705,68 @@ async function categorizeWithAI() {
     aiError.value = e?.response?.data?.response_data || e?.message || "Erreur lors de la catégorisation IA"
   } finally {
     aiLoading.value = false
+  }
+}
+
+async function createCategoryForTx(tx) {
+  const name = (tx.newCategoryName || '').trim()
+  if (!name) return
+  tx.creatingCategory = true
+  try {
+    const existing = categories.value.find(c => c.name.toLowerCase() === name.toLowerCase())
+    if (existing) {
+      tx.category_id = existing.id
+    } else {
+      const { data } = await axios.post('/api/categories', { name })
+      const created = data?.response_data
+      if (created) {
+        categories.value.push(created)
+        tx.category_id = created.id
+      }
+    }
+    tx.addingCategory = false
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la création de la catégorie'
+  } finally {
+    tx.creatingCategory = false
+  }
+}
+
+function applyBulkCategory() {
+  if (!bulkCategoryId.value) return
+  transactions.value.forEach(t => {
+    if (!t.selected) return
+    t.category_id = bulkCategoryId.value
+    t.aiSuggested = false
+  })
+}
+
+async function createBulkCategory() {
+  const name = (bulkNewCategoryName.value || '').trim()
+  if (!name) return
+  bulkCreatingCategory.value = true
+  try {
+    const existing = categories.value.find(c => c.name.toLowerCase() === name.toLowerCase())
+    let catId
+    if (existing) {
+      catId = existing.id
+    } else {
+      const { data } = await axios.post('/api/categories', { name })
+      const created = data?.response_data
+      if (created) {
+        categories.value.push(created)
+        catId = created.id
+      }
+    }
+    if (catId) {
+      bulkCategoryId.value = catId
+      applyBulkCategory()
+    }
+    bulkAddingCategory.value = false
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la création de la catégorie'
+  } finally {
+    bulkCreatingCategory.value = false
   }
 }
 
@@ -673,7 +822,60 @@ function reset() {
   error.value = ''
   result.value = { created: 0, skipped: 0 }
   if (fileInput.value) fileInput.value.value = ''
+  restoredFileName.value = ''
+  sessionStorage.removeItem(STORAGE_KEY)
 }
+
+// Persiste l'état de l'assistant (config + transactions révisées) dès l'étape 2 : une transaction
+// analysée en QIF/CSV n'a plus besoin du fichier d'origine, donc un refresh accidentel à l'étape
+// "Réviser" peut être restauré sans perte, au lieu de repartir de zéro (le fichier brut, lui,
+// n'est pas sérialisable et n'est donc jamais restauré).
+function persistState() {
+  if (restoring) return
+  if (step.value < 2) {
+    sessionStorage.removeItem(STORAGE_KEY)
+    return
+  }
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+      step: step.value,
+      detectedFormat: detectedFormat.value,
+      config: config.value,
+      transactions: transactions.value,
+      parseErrors: parseErrors.value,
+      accountsFound: accountsFound.value,
+      showAccountsFound: showAccountsFound.value,
+      fileName: file.value?.name || restoredFileName.value || '',
+    }))
+  } catch (e) {
+    // sessionStorage indisponible ou quota dépassé : pas de persistance, tant pis.
+  }
+}
+
+function restoreState() {
+  let saved
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    saved = JSON.parse(raw)
+  } catch (e) {
+    return
+  }
+  if (!saved || saved.step < 2 || !saved.transactions?.length) return
+
+  restoring = true
+  detectedFormat.value = saved.detectedFormat || 'csv'
+  config.value = { ...config.value, ...saved.config }
+  transactions.value = saved.transactions
+  parseErrors.value = saved.parseErrors || []
+  accountsFound.value = saved.accountsFound || []
+  showAccountsFound.value = saved.showAccountsFound ?? true
+  restoredFileName.value = saved.fileName || 'fichier précédent'
+  step.value = saved.step
+  restoring = false
+}
+
+watch([step, config, transactions, accountsFound, parseErrors], persistState, { deep: true })
 
 async function loadReferentials() {
   try {
@@ -695,6 +897,7 @@ async function loadReferentials() {
 
 onMounted(() => {
   loadReferentials()
+  restoreState()
 })
 </script>
 
@@ -1004,7 +1207,9 @@ onMounted(() => {
 .stat.danger .stat-val { color: #fca5a5; }
 
 /* Review controls */
-.review-controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.review-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.controls-sep { width: 1px; align-self: stretch; background: rgba(148, 163, 184, 0.2); margin: 0 2px; }
+.bulk-cat-group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
 .row-dup td { color: #9ca3af; }
 .row-deselected td { opacity: 0.45; }

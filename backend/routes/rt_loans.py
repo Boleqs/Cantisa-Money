@@ -419,6 +419,17 @@ class LoansRoutes:
                     "utilisez le remboursement anticipé total",
                     HttpCode.CONFLICT)
 
+            # Un prêt clôturé par remboursement anticipé total (payoff_loan) n'a plus d'échéance
+            # is_paid=True — payoff_loan les supprime au lieu de les marquer payées — donc le garde-
+            # fou ci-dessus ne suffit pas à le détecter. Sans ce contrôle, la suppression du compte
+            # de passif plus bas fait disparaître (ON DELETE CASCADE) le split de remboursement sans
+            # toucher à la transaction elle-même, qui reste orpheline avec un seul split déséquilibré.
+            if loan.is_closed:
+                return json_response(
+                    "Impossible de supprimer un prêt déjà remboursé (remboursement anticipé total) — "
+                    "sa transaction de remboursement doit être conservée",
+                    HttpCode.CONFLICT)
+
             try:
                 liability_account_id = loan.liability_account_id
                 opening_tx_id = loan.opening_transaction_id
@@ -431,6 +442,17 @@ class LoansRoutes:
                         DB.session.flush()
                 liability_account = Accounts.query.filter_by(id=liability_account_id).first()
                 if liability_account:
+                    # Filet de sécurité : si un split existe encore sur ce compte au-delà de la
+                    # transaction d'ouverture déjà supprimée ci-dessus (ex. écriture manuelle
+                    # ajoutée par l'utilisateur en mode avancé), ne pas le supprimer — la cascade
+                    # orphelinerait la transaction qui le porte (même bug que celui corrigé sur
+                    # delete_account()).
+                    if Splits.query.filter(Splits.account_id == liability_account.id).first():
+                        DB.session.rollback()
+                        return json_response(
+                            "Impossible de supprimer ce prêt : son compte de passif a encore des "
+                            "transactions liées",
+                            HttpCode.CONFLICT)
                     DB.session.delete(liability_account)
                 DB.session.commit()
                 return json_response('Prêt supprimé', HttpCode.OK)

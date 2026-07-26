@@ -40,6 +40,8 @@ class Accounts(Base):
     consolidated_earned:int = Column(Numeric, default=0, nullable=False)
     is_virtual:bool = Column(Boolean, default=False, nullable=False)
     is_hidden:bool = Column(Boolean, default=False, nullable=False)
+    is_closed:bool = Column(Boolean, default=False, nullable=False)
+    closed_at:datetime = Column(DateTime, nullable=True)
     code:str = Column(String(64), nullable=True)
     # 'taxable_income' | 'deductible' | 'real_estate_income' | 'real_estate_expense' | None (non fiscal)
     tax_treatment:str = Column(String(32), nullable=True)
