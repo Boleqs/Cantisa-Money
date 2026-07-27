@@ -19,6 +19,26 @@
   --color-accent: #2563eb;
   --color-accent-2: #4f46e5;
 
+  /* Couleurs sémantiques (succès/danger/warning) — jusqu'ici chaque écran redéfinissait ses
+     propres teintes en dur (ex. Accounts.vue et Budgets.vue avaient deux verts et deux rouges
+     différents pour "positif/négatif"), constaté lors de l'audit UX du 2026-07-27. À utiliser à la
+     place de couleurs en dur pour tout nouveau composant de statut/feedback (toast, badge, montant
+     signé...). */
+  --color-success: #22c55e;
+  --color-success-soft: rgba(34, 197, 94, 0.12);
+  --color-success-border: rgba(34, 197, 94, 0.3);
+  --color-success-text: #86efac;
+
+  --color-danger: #ef4444;
+  --color-danger-soft: rgba(239, 68, 68, 0.12);
+  --color-danger-border: rgba(239, 68, 68, 0.35);
+  --color-danger-text: #fca5a5;
+
+  --color-warning: #f59e0b;
+  --color-warning-soft: rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.3);
+  --color-warning-text: #fde68a;
+
   --section-gap: 160px;
 
   color-scheme: dark;

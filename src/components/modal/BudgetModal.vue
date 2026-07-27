@@ -30,6 +30,19 @@
             <label>Montant alloué *</label>
             <input v-model.number="form.amount_allocated" type="number" step="0.01" min="0" required />
           </div>
+
+          <div class="field field-full">
+            <label>Reconduction automatique</label>
+            <select v-model="form.renew_period">
+              <option :value="null">Aucune — budget ponctuel</option>
+              <option value="monthly">Mensuelle</option>
+              <option value="quarterly">Trimestrielle</option>
+              <option value="yearly">Annuelle</option>
+            </select>
+            <p class="section-hint" style="margin:2px 0 0">
+              Un nouveau budget identique (même montant, mêmes comptes/catégories/tags) sera créé automatiquement à la fin de chaque période.
+            </p>
+          </div>
         </div>
 
         <!-- Comptes associés -->
@@ -137,6 +150,7 @@ const emptyForm = () => ({
   account_ids: [],
   category_ids: [],
   tag_ids: [],
+  renew_period: null,
 })
 
 const form = reactive(emptyForm())
@@ -159,6 +173,7 @@ watch(
       base.account_ids = Array.isArray(b.account_ids) ? [...b.account_ids] : []
       base.category_ids = Array.isArray(b.category_ids) ? [...b.category_ids] : []
       base.tag_ids = Array.isArray(b.tag_ids) ? [...b.tag_ids] : []
+      base.renew_period = b.renew_period ?? null
     }
     Object.assign(form, base)
   },
@@ -171,7 +186,7 @@ const close = () => {
 }
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (props.modelValue) close() })
+useEscapeClose(() => { if (props.modelValue) close() }, shake, () => props.modelValue)
 
 const onSubmit = () => {
   emit('save', { ...form })
@@ -244,7 +259,8 @@ const onSubmit = () => {
   color: #9ca3af;
 }
 
-.field input {
+.field input,
+.field select {
   background: #020617;
   border-radius: 8px;
   border: 1px solid #1f2937;
@@ -253,7 +269,8 @@ const onSubmit = () => {
   font-size: 13px;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: none;
   border-color: #2563eb;
 }

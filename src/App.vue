@@ -3,6 +3,8 @@ import Sidebar from './components/sidebar/Sidebar.vue'
 import { sidebarWidth } from './components/sidebar/state'
 import Topbar from "@/components/topbar/Topbar.vue";
 import TopRightDisplay from "@/components/TopRightDisplay.vue";
+import ToastContainer from "@/components/ToastContainer.vue";
+import ConfirmDialog from "@/components/modal/ConfirmDialog.vue";
 import {ref, useTemplateRef} from "vue";
 
 const topRightDisplayRef = useTemplateRef("showDiv")
@@ -37,6 +39,8 @@ async function FullPage (payload) {
     </div>
   </div>
   <div v-else><router-view @msg-event="showEvent"/></div>
+  <ToastContainer />
+  <ConfirmDialog />
 </template>
 
 <style>

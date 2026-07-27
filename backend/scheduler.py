@@ -178,6 +178,56 @@ def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, C
         DB.session.commit()
 
 
+def renew_due_budgets(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, FxRates, Commodities, UserSettings):
+    """Reconduit automatiquement les budgets dont la période est terminée et qui ont un
+    renew_period défini : crée le budget de la période suivante (mêmes comptes/catégories/tags,
+    même montant alloué), en décalant start_date/end_date d'une période calendaire (mois civil,
+    pas juste +30 jours, pour ne pas dériver). `renewed` protège contre une double reconduction si
+    le job tourne plusieurs fois avant que la nouvelle période ne soit à son tour dépassée. Appelé
+    par le scheduler."""
+    from dateutil.relativedelta import relativedelta
+    from backend.routes.rt_budgets import _recompute_budget_spent
+
+    deltas = {
+        'monthly': relativedelta(months=1),
+        'quarterly': relativedelta(months=3),
+        'yearly': relativedelta(years=1),
+    }
+    with app.app_context():
+        now = datetime.now()
+        due = Budgets.query.filter(
+            Budgets.renew_period.isnot(None),
+            Budgets.renewed == False,
+            Budgets.end_date < now,
+        ).all()
+        for old in due:
+            delta = deltas.get(old.renew_period)
+            if not delta:
+                continue
+            new_budget = Budgets(
+                user_id=old.user_id,
+                name=old.name,
+                amount_allocated=old.amount_allocated,
+                amount_spent=0,
+                renew_period=old.renew_period,
+                renewed=False,
+                start_date=old.start_date + delta,
+                end_date=old.end_date + delta,
+            )
+            DB.session.add(new_budget)
+            DB.session.flush()
+            for ba in BudgetAccounts.query.filter_by(budget_id=old.id).all():
+                DB.session.add(BudgetAccounts(budget_id=new_budget.id, account_id=ba.account_id))
+            for bc in BudgetCategories.query.filter_by(budget_id=old.id).all():
+                DB.session.add(BudgetCategories(budget_id=new_budget.id, category_id=bc.category_id))
+            for bt in BudgetTags.query.filter_by(budget_id=old.id).all():
+                DB.session.add(BudgetTags(budget_id=new_budget.id, tag_id=bt.tag_id))
+            DB.session.flush()
+            _recompute_budget_spent(DB, new_budget.id, Budgets, FxRates, Commodities, UserSettings)
+            old.renewed = True
+        DB.session.commit()
+
+
 def cleanup_pending_documents(app, DB, TransactionDocuments):
     """Supprime les tickets/factures uploadés jamais confirmés après 24h (flux OCR abandonné en
     cours de route). Appelé par le scheduler."""
@@ -200,7 +250,7 @@ def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Asse
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
                      AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
-                     Loans, LoanInstallments):
+                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=cleanup_pending_documents,
@@ -256,6 +306,14 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
         trigger='interval',
         hours=24,
         id='wealth_snapshot_job',
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=renew_due_budgets,
+        args=[app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, FxRates, Commodities, UserSettings],
+        trigger='interval',
+        hours=1,
+        id='budget_renewal_job',
         replace_existing=True,
     )
     scheduler.start()

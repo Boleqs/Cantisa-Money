@@ -6,6 +6,15 @@
         <p class="subtitle">Suivez vos dépenses par rapport à vos budgets alloués.</p>
       </div>
       <div class="header-actions">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="search"
+            class="search-input"
+            type="text"
+            placeholder="Rechercher un budget (nom, compte, catégorie, tag)…"
+          />
+        </div>
         <button class="btn" :disabled="loading" @click="reload">
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
@@ -20,9 +29,10 @@
 
     <div v-if="loading && !budgets.length" class="empty">Chargement des budgets…</div>
     <div v-else-if="!loading && !budgets.length" class="empty">Aucun budget configuré.</div>
+    <div v-else-if="!filteredBudgets.length" class="empty">Aucun budget ne correspond à « {{ search }} ».</div>
 
     <div v-else class="grid">
-      <div v-for="b in budgets" :key="b.id" class="card">
+      <div v-for="b in filteredBudgets" :key="b.id" class="card">
         <!-- En-tête -->
         <div class="card-header">
           <div class="period">
@@ -33,6 +43,9 @@
               class="status-badge warn"
               title="Conversion de devise incomplète — total possiblement sous-estimé"
             >⚠️ Devise incomplète</span>
+            <span v-if="b.renew_period" class="status-badge renew" :title="`Un nouveau budget identique sera créé automatiquement à la fin de la période`">
+              🔁 {{ renewLabel(b.renew_period) }}
+            </span>
           </div>
           <div class="date-range">{{ fmtDate(b.start_date) }} → {{ fmtDate(b.end_date) }}</div>
         </div>
@@ -97,15 +110,39 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { currency } from '@/utils/settings.js'
 import BudgetModal from '@/components/modal/BudgetModal.vue'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const budgets = ref([])
 const accounts = ref([])
 const categories = ref([])
 const tags = ref([])
+const search = ref('')
+
+function normalizeText(v) {
+  return (v ?? '').toString().toLowerCase().trim()
+}
+
+// Recherche côté client (pas de pagination serveur sur cet écran, contrairement à Transactions) :
+// nom du budget, mais aussi les comptes/catégories/tags qui lui sont associés — un budget "Loisirs"
+// lié au tag "sorties" doit ressortir en tapant "sorties", pas seulement en tapant "Loisirs".
+const filteredBudgets = computed(() => {
+  const q = normalizeText(search.value)
+  if (!q) return budgets.value
+  return budgets.value.filter((b) => {
+    if (normalizeText(b.name).includes(q)) return true
+    if ((b.account_ids || []).some((id) => normalizeText(accountName(id)).includes(q))) return true
+    if ((b.category_ids || []).some((id) => normalizeText(categoryName(id)).includes(q))) return true
+    if ((b.tag_ids || []).some((id) => normalizeText(tagName(id)).includes(q))) return true
+    return false
+  })
+})
 
 const showModal = ref(false)
 const modalMode = ref('create')
@@ -151,6 +188,11 @@ function statusLabel(b) {
   const start = new Date(b.start_date)
   if (start > now) return 'À venir'
   return 'En cours'
+}
+
+const RENEW_LABELS = { monthly: 'Mensuel', quarterly: 'Trimestriel', yearly: 'Annuel' }
+function renewLabel(period) {
+  return RENEW_LABELS[period] || period
 }
 
 function accountName(id) {
@@ -216,6 +258,7 @@ async function handleSave(form) {
         account_ids: form.account_ids,
         category_ids: form.category_ids,
         tag_ids: form.tag_ids,
+        renew_period: form.renew_period,
       })
     } else {
       await axios.patch('/api/budgets', {
@@ -227,19 +270,28 @@ async function handleSave(form) {
         account_ids: form.account_ids,
         category_ids: form.category_ids,
         tag_ids: form.tag_ids,
+        renew_period: form.renew_period,
       })
     }
     await reload()
+    toast.success(modalMode.value === 'create' ? `Budget « ${form.name} » créé.` : `Budget « ${form.name} » mis à jour.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
 }
 
 async function deleteBudget(b) {
-  if (!confirm(`Supprimer le budget « ${b.name} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer le budget',
+    message: `Supprimer le budget « ${b.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/budgets', { params: { budget_id: b.id } })
     await reload()
+    toast.success(`Budget « ${b.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -269,7 +321,20 @@ onMounted(() => reload())
 .title-block h1 { margin: 0; font-size: 28px; }
 .subtitle { margin: 6px 0 0; color: #9ca3af; font-size: 14px; }
 
-.header-actions { display: flex; gap: 10px; align-items: center; }
+.header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.search-wrapper { position: relative; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.7; }
+.search-input {
+  padding: 10px 10px 10px 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  outline: none;
+  width: 280px;
+  max-width: 70vw;
+}
 
 .btn {
   border: 1px solid rgba(148, 163, 184, 0.25);
@@ -327,10 +392,11 @@ onMounted(() => reload())
   padding: 2px 8px;
   border-radius: 999px;
 }
-.status-badge.active  { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.3); color: #86efac; }
-.status-badge.warn    { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); color: #fde68a; }
-.status-badge.danger  { background: rgba(239,68,68,0.1);  border: 1px solid rgba(239,68,68,0.3);  color: #fca5a5; }
+.status-badge.active  { background: var(--color-success-soft); border: 1px solid var(--color-success-border); color: var(--color-success-text); }
+.status-badge.warn    { background: var(--color-warning-soft); border: 1px solid var(--color-warning-border); color: var(--color-warning-text); }
+.status-badge.danger  { background: var(--color-danger-soft);  border: 1px solid var(--color-danger-border);  color: var(--color-danger-text); }
 .status-badge.closed  { background: rgba(148,163,184,0.1); border: 1px solid rgba(148,163,184,0.2); color: #9ca3af; }
+.status-badge.renew   { background: rgba(96,165,250,0.1);  border: 1px solid rgba(96,165,250,0.3);  color: #93c5fd; }
 
 /* Progress */
 .progress-block { display: flex; flex-direction: column; gap: 6px; }
@@ -358,8 +424,8 @@ onMounted(() => reload())
 .pct-label { font-size: 12px; color: #9ca3af; text-align: right; }
 
 /* Remaining */
-.remaining { font-size: 13px; color: #86efac; }
-.remaining.negative { color: #fca5a5; }
+.remaining { font-size: 13px; color: var(--color-success-text); }
+.remaining.negative { color: var(--color-danger-text); }
 
 /* Accounts */
 .accounts-section { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -395,6 +461,6 @@ onMounted(() => reload())
   cursor: pointer;
 }
 .btn-action:hover { background: rgba(148, 163, 184, 0.1); }
-.btn-danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
-.btn-danger:hover { background: rgba(239,68,68,0.1); }
+.btn-danger { border-color: var(--color-danger-border); color: var(--color-danger-text); }
+.btn-danger:hover { background: var(--color-danger-soft); }
 </style>

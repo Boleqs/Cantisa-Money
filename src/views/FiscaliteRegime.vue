@@ -142,6 +142,10 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const regimes = ref([])
 const loading = ref(false)
@@ -152,7 +156,7 @@ const showModal = ref(false)
 const editTarget = ref(null)
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (showModal.value) showModal.value = false })
+useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
 
 function emptyForm() {
   return {
@@ -282,10 +286,17 @@ async function save() {
 }
 
 async function deleteRegime(r) {
-  if (!confirm(`Supprimer le régime « ${r.name} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer le régime',
+    message: `Supprimer le régime « ${r.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/tax/regimes', { params: { regime_id: r.id } })
     await reload()
+    toast.success(`Régime « ${r.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

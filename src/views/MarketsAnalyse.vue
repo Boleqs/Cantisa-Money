@@ -28,7 +28,7 @@
       </p>
     </div>
 
-    <div v-if="error" class="error-banner">{{ error }}</div>
+    <div v-if="error" class="alert">{{ error }}</div>
 
     <!-- Résultats -->
     <div v-if="results.length" class="results-section">
@@ -40,7 +40,7 @@
           {{ exporting ? 'Génération…' : '⬇ Exporter en PDF' }}
         </button>
       </div>
-      <div v-if="exportError" class="error-banner">{{ exportError }}</div>
+      <div v-if="exportError" class="alert">{{ exportError }}</div>
 
       <!-- Fiches individuelles -->
       <div class="cards-grid">
@@ -404,12 +404,12 @@ function bestClass(row, stock) {
 .btn-search:disabled { opacity: 0.5; cursor: not-allowed; }
 .search-hint { margin: 10px 0 0; color: #6b7280; font-size: 12px; }
 
-.error-banner {
-  background: rgba(239,68,68,0.15);
-  border: 1px solid rgba(239,68,68,0.4);
+.alert {
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
   border-radius: 8px;
   padding: 10px 16px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   font-size: 13px;
   margin-bottom: 20px;
 }

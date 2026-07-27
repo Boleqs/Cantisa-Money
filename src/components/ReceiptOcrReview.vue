@@ -126,6 +126,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { confirmDialog } from '@/utils/confirmDialog'
 
 const props = defineProps({
   existingTxId: { type: String, default: null },
@@ -232,7 +233,12 @@ async function parse() {
 
 async function doConfirm() {
   if (props.existingTxId && props.existingSplitsCount > 0) {
-    const ok = confirm(`Cette transaction a déjà ${props.existingSplitsCount} ligne(s) — les remplacer par celles du ticket ?`)
+    const ok = await confirmDialog({
+      title: 'Remplacer les lignes existantes',
+      message: `Cette transaction a déjà ${props.existingSplitsCount} ligne(s) — les remplacer par celles du ticket ?`,
+      confirmLabel: 'Remplacer',
+      danger: true,
+    })
     if (!ok) return
   }
   confirming.value = true

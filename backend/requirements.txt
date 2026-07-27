@@ -11,6 +11,7 @@ pyjwt
 marshmallow
 anthropic
 APScheduler
+python-dateutil
 fpdf2
 yfinance
 pytickersymbols

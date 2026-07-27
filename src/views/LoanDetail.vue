@@ -139,6 +139,10 @@ import { useRoute } from 'vue-router'
 import axios from 'axios'
 import LineGraph from '../components/graphs/LineGraph.vue'
 import LoanRateRevisionModal from '../components/modal/LoanRateRevisionModal.vue'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const route = useRoute()
 const loanId = computed(() => route.params.id)
@@ -196,11 +200,18 @@ async function executeInstallment(i) {
 }
 
 async function payoff() {
-  if (!confirm(`Solder intégralement le crédit « ${loan.value.name} » maintenant ?`)) return
+  const ok = await confirmDialog({
+    title: 'Solder le crédit',
+    message: `Solder intégralement le crédit « ${loan.value.name} » maintenant ?`,
+    confirmLabel: 'Solder',
+    danger: true,
+  })
+  if (!ok) return
   error.value = ''
   try {
     await axios.post('/api/loans/payoff', { loan_id: loanId.value })
     await reload()
+    toast.success(`Crédit « ${loan.value.name} » soldé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

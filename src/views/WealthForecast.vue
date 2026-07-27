@@ -74,6 +74,41 @@
       <button class="btn btn-primary apply-btn" :disabled="loading" @click="reload">Appliquer</button>
     </div>
 
+    <!-- Objectifs de vie -->
+    <div class="card">
+      <div class="card-title-row">
+        <div class="card-title">Objectifs de vie</div>
+        <button class="btn btn-sm" type="button" @click="openCreateGoal">+ Nouvel objectif</button>
+      </div>
+      <p class="section-hint">
+        Chaque objectif retire son montant de la trésorerie projetée (voir courbes ci-dessous) — un objectif est marqué
+        « à risque » si la trésorerie passerait sous zéro à ce moment-là dans la simulation.
+      </p>
+
+      <div v-if="goalsError" class="alert">{{ goalsError }}</div>
+      <div v-if="!goals.length" class="empty goals-empty">Aucun objectif défini — la projection ci-dessous reste une simple hypothèse de croissance.</div>
+
+      <ul v-else class="goal-list">
+        <li v-for="g in goals" :key="g.id" class="goal-row">
+          <div class="goal-main">
+            <span class="goal-name">{{ g.name }}</span>
+            <span class="goal-badge">{{ g.goal_type === 'recurring' ? 'Récurrent' : 'Ponctuel' }}</span>
+            <span v-if="goalStatus(g.id)" :class="['goal-badge', 'status-' + goalStatus(g.id)]">
+              {{ goalStatusLabel(goalStatus(g.id)) }}
+            </span>
+          </div>
+          <div class="goal-detail">
+            {{ fmtAmount(g.target_amount) }}{{ g.goal_type === 'recurring' ? ' / mois' : '' }}
+            — {{ fmtDate(g.target_date) }}<template v-if="g.goal_type === 'recurring'"> → {{ g.end_date ? fmtDate(g.end_date) : "fin de l'horizon" }}</template>
+          </div>
+          <div class="goal-actions">
+            <button class="btn-action" @click="openEditGoal(g)">✎</button>
+            <button class="btn-action btn-danger" @click="deleteGoal(g)">✕</button>
+          </div>
+        </li>
+      </ul>
+    </div>
+
     <div v-if="loading && !result" class="empty">Calcul de la projection…</div>
 
     <template v-else-if="result">
@@ -118,6 +153,13 @@
       </p>
     </template>
   </div>
+
+  <GoalModal
+    v-model="showGoalModal"
+    :mode="goalModalMode"
+    :goal="selectedGoal"
+    @save="handleGoalSave"
+  />
 </template>
 
 <script setup>
@@ -125,6 +167,11 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { currency } from '@/utils/settings.js'
 import LineGraph from '../components/graphs/LineGraph.vue'
+import GoalModal from '../components/modal/GoalModal.vue'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const HORIZONS = [
   { months: 12, label: '1 an' },
@@ -144,6 +191,90 @@ const manualNetFlow = ref(0)
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
+
+// ── objectifs de vie ─────────────────────────────────────────────────────────
+const goals = ref([])
+const goalsError = ref('')
+const showGoalModal = ref(false)
+const goalModalMode = ref('create')
+const selectedGoal = ref(null)
+
+async function loadGoals() {
+  goalsError.value = ''
+  try {
+    const { data } = await axios.get('/api/goals')
+    goals.value = Array.isArray(data?.response_data) ? data.response_data : []
+  } catch (e) {
+    goalsError.value = e?.response?.data?.response_data || e?.message || 'Erreur lors du chargement des objectifs'
+  }
+}
+
+function openCreateGoal() {
+  selectedGoal.value = null
+  goalModalMode.value = 'create'
+  showGoalModal.value = true
+}
+
+function openEditGoal(g) {
+  selectedGoal.value = { ...g }
+  goalModalMode.value = 'edit'
+  showGoalModal.value = true
+}
+
+async function handleGoalSave(form) {
+  goalsError.value = ''
+  try {
+    const payload = {
+      name: form.name,
+      goal_type: form.goal_type,
+      target_amount: form.target_amount,
+      target_date: form.target_date,
+      end_date: form.goal_type === 'recurring' ? (form.end_date || null) : null,
+    }
+    if (goalModalMode.value === 'create') {
+      await axios.post('/api/goals', payload)
+    } else {
+      await axios.patch('/api/goals', { goal_id: form.id, ...payload })
+    }
+    await loadGoals()
+    await reload()
+    toast.success(goalModalMode.value === 'create' ? `Objectif « ${form.name} » créé.` : `Objectif « ${form.name} » mis à jour.`)
+  } catch (e) {
+    goalsError.value = e?.response?.data?.response_data || e?.message || "Erreur lors de l'enregistrement de l'objectif"
+  }
+}
+
+async function deleteGoal(g) {
+  const ok = await confirmDialog({
+    title: "Supprimer l'objectif",
+    message: `Supprimer l'objectif « ${g.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await axios.delete('/api/goals', { params: { goal_id: g.id } })
+    await loadGoals()
+    await reload()
+    toast.success(`Objectif « ${g.name} » supprimé.`)
+  } catch (e) {
+    goalsError.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la suppression'
+  }
+}
+
+function goalStatus(goalId) {
+  return result.value?.goals_result?.find(gr => gr.id === goalId)?.status || null
+}
+
+const GOAL_STATUS_LABELS = { feasible: '✓ Atteignable', at_risk: '⚠ À risque', out_of_range: 'Hors horizon' }
+function goalStatusLabel(status) {
+  return GOAL_STATUS_LABELS[status] || status
+}
+
+function fmtDate(v) {
+  if (!v) return '—'
+  return new Date(v).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
 
 function fmtAmount(v) {
   const n = Number(v ?? 0)
@@ -171,7 +302,10 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  reload()
+  loadGoals()
+})
 
 const startPoint = computed(() => result.value?.points?.[0] ?? null)
 const endPoint = computed(() => {
@@ -211,6 +345,13 @@ const chartSeries = computed(() => {
   ]
   if (pts.length && pts[0].liabilities > 0) {
     series.push({ label: 'Crédits restants', values: pts.map(p => p.liabilities), color: '#f87171' })
+  }
+  // Deux courbes de trésorerie plutôt qu'une seule dès qu'un objectif est défini : la différence
+  // visuelle entre "hypothèse" et "avec objectifs" est le point de tout le Lifetime Planner —
+  // sans les deux courbes côte à côte, le creux causé par un objectif passerait inaperçu.
+  if (goals.value.length && pts.some(p => p.bank_cash_with_goals != null)) {
+    series.push({ label: 'Trésorerie (hypothèse)', values: pts.map(p => p.bank_cash), color: '#38bdf8' })
+    series.push({ label: 'Trésorerie (avec objectifs)', values: pts.map(p => p.bank_cash_with_goals ?? p.bank_cash), color: '#fbbf24' })
   }
   return series
 })
@@ -260,6 +401,59 @@ const chartSeries = computed(() => {
   padding: 18px 20px;
 }
 .card-title { font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 14px; }
+
+.card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.card-title-row .card-title { margin-bottom: 0; }
+
+.btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
+
+.section-hint { margin: 0 0 14px; font-size: 12px; color: #6b7280; line-height: 1.6; max-width: 80ch; }
+
+.goals-empty { margin: 0; }
+
+.goal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.goal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid rgba(148,163,184,0.15);
+  border-radius: 10px;
+  background: rgba(2,6,23,0.4);
+}
+
+.goal-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1 1 220px; }
+.goal-name { font-size: 14px; font-weight: 600; color: #e5e7eb; }
+
+.goal-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.25);
+  color: #9ca3af;
+}
+.goal-badge.status-feasible   { border-color: rgba(34,197,94,0.35);  background: rgba(34,197,94,0.1);  color: #86efac; }
+.goal-badge.status-at_risk    { border-color: rgba(239,68,68,0.35);  background: rgba(239,68,68,0.1);  color: #fca5a5; }
+.goal-badge.status-out_of_range { border-color: rgba(148,163,184,0.2); color: #9ca3af; }
+
+.goal-detail { font-size: 12.5px; color: #9ca3af; flex: 1 1 260px; font-variant-numeric: tabular-nums; }
+
+.goal-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-action {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  padding: 4px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-action:hover { background: rgba(148, 163, 184, 0.1); }
+.btn-action.btn-danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+.btn-action.btn-danger:hover { background: rgba(239,68,68,0.1); }
 
 .hyp-grid {
   display: grid;

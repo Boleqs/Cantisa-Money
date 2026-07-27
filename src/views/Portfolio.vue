@@ -6,6 +6,15 @@
         <p class="subtitle">Gérez vos actifs financiers et patrimoines.</p>
       </div>
       <div class="header-actions">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="search"
+            class="search-input"
+            type="text"
+            placeholder="Rechercher un actif (symbole, nom, secteur)…"
+          />
+        </div>
         <button class="btn" :disabled="loading" @click="reload">
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
@@ -27,6 +36,7 @@
 
     <div v-if="loading && !assets.length" class="empty">Chargement…</div>
     <div v-else-if="!loading && !assets.length" class="empty">Aucun actif enregistré.</div>
+    <div v-else-if="!filteredAssets.length" class="empty">Aucun actif ne correspond à « {{ search }} ».</div>
 
     <table v-else class="table">
       <thead>
@@ -44,7 +54,7 @@
         </tr>
       </thead>
       <tbody>
-        <template v-for="a in assets" :key="a.id">
+        <template v-for="a in filteredAssets" :key="a.id">
           <tr class="asset-row" @click="toggleExpand(a.id)">
             <td class="symbol">{{ a.symbol }}</td>
             <td>{{ a.name }}</td>
@@ -291,12 +301,33 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import LineGraph from '../components/graphs/LineGraph.vue'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const assets = ref([])
 const commodities = ref([])
 const accounts = ref([])
 const loading = ref(false)
 const error = ref('')
+const search = ref('')
+
+function normalizeText(v) {
+  return (v ?? '').toString().toLowerCase().trim()
+}
+
+// Filtre la table (pas les cartes de synthèse par type juste au-dessus, qui restent une vue
+// d'ensemble globale) — symbole, nom ou secteur.
+const filteredAssets = computed(() => {
+  const q = normalizeText(search.value)
+  if (!q) return assets.value
+  return assets.value.filter((a) =>
+    normalizeText(a.symbol).includes(q) ||
+    normalizeText(a.name).includes(q) ||
+    normalizeText(a.sector).includes(q)
+  )
+})
 const showModal = ref(false)
 const showPossessionModal = ref(false)
 const editTarget = ref(null)
@@ -319,12 +350,16 @@ const valuationForm = ref({ valuation_date: null, value_per_unit: null })
 const valuationEditTarget = ref(null)
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => {
-  if (showModal.value) showModal.value = false
-  else if (showPossessionModal.value) showPossessionModal.value = false
-  else if (showSellModal.value) showSellModal.value = false
-  else if (showHistoryModal.value) closeHistory()
-})
+useEscapeClose(
+  () => {
+    if (showModal.value) showModal.value = false
+    else if (showPossessionModal.value) showPossessionModal.value = false
+    else if (showSellModal.value) showSellModal.value = false
+    else if (showHistoryModal.value) closeHistory()
+  },
+  shake,
+  () => showModal.value || showPossessionModal.value || showSellModal.value
+)
 
 // Mémoïsés pour ne pas recréer le graphique Chart.js (via le watch de LineGraph) à chaque
 // re-render du parent (ex: chargement de `valuations`) — un simple `.map()` inline dans le
@@ -515,10 +550,17 @@ async function saveAsset() {
 }
 
 async function deleteAsset(a) {
-  if (!confirm(`Supprimer l'actif « ${a.name} » et toutes ses positions ?`)) return
+  const ok = await confirmDialog({
+    title: "Supprimer l'actif",
+    message: `Supprimer l'actif « ${a.name} » et toutes ses positions ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/assets', { params: { asset_id: a.id } })
     await reload()
+    toast.success(`Actif « ${a.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -551,10 +593,17 @@ async function savePossession() {
 }
 
 async function deletePossession(p, a) {
-  if (!confirm(`Supprimer cette position (${p.quantity} unités) ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer la position',
+    message: `Supprimer cette position (${p.quantity} unités) ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/assets/possessions', { params: { possession_id: p.id } })
     await reload()
+    toast.success('Position supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -710,7 +759,13 @@ async function saveValuation() {
 }
 
 async function deleteValuation(v) {
-  if (!confirm(`Supprimer la valorisation du ${v.valuation_date} ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer la valorisation',
+    message: `Supprimer la valorisation du ${v.valuation_date} ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/assets/valuations', { params: { valuation_id: v.id } })
     await loadValuations()
@@ -719,6 +774,7 @@ async function deleteValuation(v) {
     if (historyTarget.value) {
       historyTarget.value = assets.value.find(x => x.id === historyTarget.value.id) || historyTarget.value
     }
+    toast.success('Valorisation supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -745,7 +801,20 @@ onMounted(() => reload())
 }
 .title-block h1 { margin: 0; font-size: 28px; }
 .subtitle { margin: 6px 0 0; color: #9ca3af; font-size: 14px; }
-.header-actions { display: flex; gap: 10px; align-items: center; }
+.header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.search-wrapper { position: relative; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.7; }
+.search-input {
+  padding: 10px 10px 10px 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  outline: none;
+  width: 280px;
+  max-width: 70vw;
+}
 
 .btn {
   border: 1px solid rgba(148, 163, 184, 0.25);

@@ -4,7 +4,7 @@
 
       <div class="brand">
         <span class="brand-logo">CMM</span>
-        <span class="brand-version">v0.11.00</span>
+        <span v-if="appVersion" class="brand-version">{{ appVersion }}</span>
       </div>
 
       <h1 class="card-title">Connexion</h1>
@@ -66,7 +66,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useRouter } from 'vue-router'
 
@@ -77,7 +77,17 @@ const password    = ref('')
 const loading     = ref(false)
 const error       = ref('')
 const showPassword = ref(false)
+const appVersion  = ref('')
 const router      = useRouter()
+
+onMounted(async () => {
+  try {
+    const { data } = await axios.get('/api/version')
+    appVersion.value = data?.response_data || ''
+  } catch (e) {
+    // Non bloquant : l'écran de connexion reste utilisable sans le numéro de version affiché.
+  }
+})
 
 async function login() {
   loading.value = true

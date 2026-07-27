@@ -22,9 +22,26 @@
       <form class="modal-body" @submit.prevent="onSubmit">
         <!-- Champs principaux -->
         <div class="form-grid">
-          <div class="field field-full">
+          <div class="field field-full quickfill-field">
             <label>Description</label>
-            <input v-model="form.description" placeholder="Libellé de la transaction…" />
+            <input
+              v-model="form.description"
+              placeholder="Libellé de la transaction…"
+              autocomplete="off"
+              @focus="onDescriptionFocus"
+              @blur="onDescriptionBlur"
+            />
+            <ul v-if="showQuickfill && quickfillSuggestions.length" class="quickfill-list">
+              <li
+                v-for="(s, i) in quickfillSuggestions"
+                :key="i"
+                class="quickfill-item"
+                @mousedown.prevent="applyQuickfill(s)"
+              >
+                <span class="quickfill-desc">{{ s.description }}</span>
+                <span v-if="s.amount != null" class="quickfill-amount">{{ s.amount.toLocaleString('fr-FR') }}</span>
+              </li>
+            </ul>
           </div>
 
           <div class="field">
@@ -325,6 +342,51 @@ const simple = reactive({
   to_account_id: '',
 })
 
+// ── Quick Fill : suggère une transaction passée à partir du début de la description tapée,
+// pour pré-remplir catégorie/compte/montant sans ressaisir une dépense récurrente (loyer,
+// abonnement non modélisé en tant que tel, etc.). Uniquement en création — éditer une transaction
+// existante ne doit pas proposer de "remplacer" ses valeurs par celles d'une autre. ──
+const quickfillSuggestions = ref([])
+const showQuickfill = ref(false)
+let quickfillTimer = null
+
+async function fetchQuickfill(q) {
+  try {
+    const { data } = await axios.get('/api/transactions/quickfill', { params: { q } })
+    quickfillSuggestions.value = Array.isArray(data?.response_data) ? data.response_data : []
+  } catch (e) {
+    quickfillSuggestions.value = []
+  }
+}
+
+watch(() => form.description, (val) => {
+  clearTimeout(quickfillTimer)
+  if (isEdit.value || !val || val.trim().length < 2) {
+    quickfillSuggestions.value = []
+    return
+  }
+  quickfillTimer = setTimeout(() => fetchQuickfill(val.trim()), 250)
+})
+
+function onDescriptionFocus() {
+  if (!isEdit.value) showQuickfill.value = true
+}
+
+function onDescriptionBlur() {
+  showQuickfill.value = false
+}
+
+function applyQuickfill(s) {
+  form.description = s.description
+  form.category_id = s.category_id || ''
+  if (!advancedMode.value && s.amount != null && s.from_account_id && s.to_account_id) {
+    simple.amount = s.amount
+    simple.from_account_id = s.from_account_id
+    simple.to_account_id = s.to_account_id
+  }
+  showQuickfill.value = false
+}
+
 // ── Conversion inter-devises (aperçu du taux appliqué côté serveur) ────────
 // La transaction n'a plus de devise choisie manuellement : elle est dérivée du compte source
 // (1er split en mode avancé, compte débité en mode simple), comme le fait déjà le backend.
@@ -571,6 +633,8 @@ watch(
         : [{ account_id: '', quantity: 0, description: '' }, { account_id: '', quantity: 0, description: '' }]
     }
     Object.assign(form, base)
+    quickfillSuggestions.value = []
+    showQuickfill.value = false
     splitTagIds.value = new Map((tx?.splits || []).filter(s => s.id).map(s => [s.id, new Set(s.tag_ids || [])]))
     selectedTagSplitId.value = base.splits.find(s => s.id)?.id || null
     loadDocuments(tx?.id)
@@ -647,7 +711,7 @@ const close = () => {
 }
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (props.modelValue) close() })
+useEscapeClose(() => { if (props.modelValue) close() }, shake, () => props.modelValue)
 
 const onSubmit = () => {
   if (!canSubmit.value) return
@@ -782,6 +846,48 @@ const onSubmit = () => {
 .field select:focus {
   outline: none;
   border-color: #2563eb;
+}
+
+.quickfill-field { position: relative; }
+
+.quickfill-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.quickfill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.quickfill-item:hover { background: rgba(96, 165, 250, 0.1); }
+
+.quickfill-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.quickfill-amount {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
 }
 
 .field input:disabled {

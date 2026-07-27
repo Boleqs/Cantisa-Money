@@ -63,6 +63,10 @@ class DeleteTransactionSchema(Schema):
     transaction_id = fields.UUID(required=True)
 
 
+class QuickFillSchema(Schema):
+    q = fields.String(required=True, validate=validate.Length(min=1))
+
+
 def _parse_date(s):
     if not s:
         return None
@@ -442,6 +446,56 @@ class TransactionsRoutes:
             except Exception as error:
                 DB.session.rollback()
                 return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/quickfill", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, TRANSACTIONS_PERM)
+        def quickfill_transactions():
+            """Saisie rapide façon 'Quick Fill' : à partir d'un préfixe de description déjà tapé,
+            propose les transactions passées correspondantes (la plus récente par libellé distinct)
+            pour pré-remplir catégorie/compte/montant sans ressaisir une transaction récurrente."""
+            try:
+                data = QuickFillSchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+
+            user_id = get_jwt_identity()
+            q = data['q'].strip()
+            if not q:
+                return json_response([], HttpCode.OK)
+
+            txs = (Transactions.query
+                   .filter(Transactions.user_id == user_id, Transactions.description.ilike(f'{q}%'))
+                   .order_by(Transactions.post_date.desc())
+                   .limit(50).all())
+
+            seen = set()
+            suggestions = []
+            for tx in txs:
+                if not tx.description:
+                    continue
+                key = tx.description.strip().lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                splits = Splits.query.filter(Splits.tx_id == tx.id).order_by(Splits.quantity).all()
+                suggestion = {
+                    'description': tx.description,
+                    'category_id': str(tx.category_id) if tx.category_id else None,
+                }
+                # Même convention que l'export (source = split négatif) : seules les transactions
+                # simples à 2 splits peuvent être reconstruites en "montant + compte source/destination"
+                # pour le mode simple du formulaire — les splits multiples ne sont pas pré-remplissables.
+                if len(splits) == 2:
+                    source = next((s for s in splits if s.quantity < 0), splits[0])
+                    dest = next(s for s in splits if s is not source)
+                    suggestion['from_account_id'] = str(source.account_id)
+                    suggestion['to_account_id'] = str(dest.account_id)
+                    suggestion['amount'] = abs(float(source.quantity))
+                suggestions.append(suggestion)
+                if len(suggestions) >= 8:
+                    break
+            return json_response(suggestions, HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
         @jwt_required()

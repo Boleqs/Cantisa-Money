@@ -165,6 +165,10 @@ import { useRoute } from 'vue-router'
 import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
 import { hasPermission } from '@/utils/permissions.js'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const route = useRoute()
 const accountId = route.params.id
@@ -382,10 +386,17 @@ async function handleSave(form) {
 }
 
 async function deleteTx(tx) {
-  if (!confirm(`Supprimer la transaction « ${tx.description || 'sans libellé'} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer la transaction',
+    message: `Supprimer la transaction « ${tx.description || 'sans libellé'} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/transactions', { params: { transaction_id: tx.id } })
     await reload()
+    toast.success('Transaction supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

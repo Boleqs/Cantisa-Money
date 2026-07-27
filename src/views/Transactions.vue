@@ -149,14 +149,14 @@
     <div v-if="pages > 1 || total > 0" class="pagination">
       <span class="pagination-info">{{ total }} transaction(s) — page {{ page }} / {{ pages }}</span>
       <div class="pagination-controls">
-        <button class="btn-page" :disabled="page <= 1" @click="goToPage(1)">«</button>
-        <button class="btn-page" :disabled="page <= 1" @click="goToPage(page - 1)">‹</button>
+        <button class="btn-page" title="Première page" aria-label="Première page" :disabled="page <= 1" @click="goToPage(1)">«</button>
+        <button class="btn-page" title="Page précédente" aria-label="Page précédente" :disabled="page <= 1" @click="goToPage(page - 1)">‹</button>
         <template v-for="p in pageRange" :key="p">
-          <button v-if="p !== '…'" class="btn-page" :class="{ active: p === page }" @click="goToPage(p)">{{ p }}</button>
-          <span v-else class="page-ellipsis">…</span>
+          <button v-if="p !== '…'" class="btn-page" :class="{ active: p === page }" :aria-label="`Page ${p}`" :aria-current="p === page ? 'page' : undefined" @click="goToPage(p)">{{ p }}</button>
+          <span v-else class="page-ellipsis" aria-hidden="true">…</span>
         </template>
-        <button class="btn-page" :disabled="page >= pages" @click="goToPage(page + 1)">›</button>
-        <button class="btn-page" :disabled="page >= pages" @click="goToPage(pages)">»</button>
+        <button class="btn-page" title="Page suivante" aria-label="Page suivante" :disabled="page >= pages" @click="goToPage(page + 1)">›</button>
+        <button class="btn-page" title="Dernière page" aria-label="Dernière page" :disabled="page >= pages" @click="goToPage(pages)">»</button>
       </div>
     </div>
   </div>
@@ -175,6 +175,10 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const route = useRoute()
 const router = useRouter()
@@ -412,10 +416,17 @@ async function handleSave(form) {
 }
 
 async function deleteTransaction(tx) {
-  if (!confirm(`Supprimer la transaction « ${tx.description || tx.id} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer la transaction',
+    message: `Supprimer la transaction « ${tx.description || tx.id} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/transactions', { params: { transaction_id: tx.id } })
     await reloadTx()
+    toast.success('Transaction supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -855,5 +866,20 @@ onUnmounted(() => document.removeEventListener('click', closeExportMenu))
   color: #6b7280;
   padding: 0 4px;
   font-size: 13px;
+}
+
+/* Écran étroit (tablette/mobile) : audit UX du 2026-07-27 — aucun breakpoint jusqu'ici sur l'un
+   des deux écrans les plus utilisés au quotidien. Le padding généreux et la recherche en largeur
+   fixe étaient les premiers points de débordement réel, même si flex-wrap limitait déjà les dégâts
+   ailleurs (cartes, filtres, pagination). */
+@media (max-width: 640px) {
+  .page { padding: 14px; }
+  .page-header { align-items: stretch; }
+  .header-actions { width: 100%; }
+  .search-wrapper { flex: 1 1 100%; }
+  .search-input { width: 100%; max-width: none; }
+  .card-top { flex-wrap: wrap; }
+  .badges { justify-content: flex-start; }
+  .filter-grid { grid-template-columns: 1fr; }
 }
 </style>

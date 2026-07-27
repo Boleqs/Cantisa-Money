@@ -23,6 +23,12 @@ class Budgets(Base):
     amount_spent_incomplete:bool = Column(Boolean, default=False, nullable=False)
     start_date:datetime = Column(DateTime, default=datetime.now(), nullable=False)
     end_date:datetime = Column(DateTime, default=datetime.now() + timedelta(days=365), nullable=False)
+    # 'monthly' | 'quarterly' | 'yearly' | None (pas de reconduction). Voir renew_due_budgets()
+    # dans scheduler.py.
+    renew_period:str = Column(String(16), nullable=True)
+    # Empêche de reconduire deux fois le même budget si le job tourne plusieurs fois avant que la
+    # période suivante ne soit à son tour dépassée (idempotence, même logique que Loans.is_closed).
+    renewed:bool = Column(Boolean, default=False, nullable=False)
     created_at:datetime = Column(DateTime, default=datetime.now())
     updated_at:datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())
 

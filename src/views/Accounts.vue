@@ -185,6 +185,10 @@ import { useRouter } from "vue-router";
 import axios from "axios";
 import AccountModal from "@/components/modal/AccountModal.vue";
 import { hasPermission } from "@/utils/permissions.js";
+import { confirmDialog } from "@/utils/confirmDialog";
+import { useToast } from "@/utils/toast";
+
+const toast = useToast();
 
 const router = useRouter();
 
@@ -497,6 +501,7 @@ async function handleSave(form) {
       });
     }
     await reload();
+    toast.success(modalMode.value === "create" ? `Compte « ${form.name} » créé.` : `Compte « ${form.name} » mis à jour.`);
   } catch (e) {
     error.value =
       e?.response?.data?.response_data || e?.message || "Erreur inconnue";
@@ -504,10 +509,17 @@ async function handleSave(form) {
 }
 
 async function deleteAccount(acc) {
-  if (!confirm(`Supprimer le compte « ${acc.name} » ?`)) return;
+  const ok = await confirmDialog({
+    title: "Supprimer le compte",
+    message: `Supprimer le compte « ${acc.name} » ?`,
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await axios.delete("/api/accounts", { params: { account_id: acc.id } });
     await reload();
+    toast.success(`Compte « ${acc.name} » supprimé.`);
   } catch (e) {
     error.value =
       e?.response?.data?.response_data || e?.message || "Erreur inconnue";
@@ -534,6 +546,7 @@ async function startClosing(acc) {
     await axios.post("/api/accounts/close", { account_id: acc.id });
     closingBusy.value = false;
     await reload();
+    toast.success(`Compte « ${acc.name} » clôturé.`);
   } catch (e) {
     closingBusy.value = false;
     const rd = e?.response?.data?.response_data;
@@ -560,9 +573,11 @@ async function confirmBalancingClose() {
       account_id: closingAccount.value.id,
       balancing_account_id: closingTargetId.value,
     });
+    const closedName = closingAccount.value.name;
     closingAccount.value = null;
     closingTargetId.value = "";
     await reload();
+    toast.success(`Compte « ${closedName} » clôturé après équilibrage.`);
   } catch (e) {
     closingError.value =
       e?.response?.data?.response_data || e?.message || "Erreur lors de la clôture";
@@ -572,7 +587,12 @@ async function confirmBalancingClose() {
 }
 
 async function reopenAccount(acc) {
-  if (!confirm(`Réouvrir le compte « ${acc.name} » ?`)) return;
+  const ok = await confirmDialog({
+    title: "Réouvrir le compte",
+    message: `Réouvrir le compte « ${acc.name} » ?`,
+    confirmLabel: "Réouvrir",
+  });
+  if (!ok) return;
   try {
     await axios.patch("/api/accounts", {
       account_id: acc.id,
@@ -589,6 +609,7 @@ async function reopenAccount(acc) {
       tax_treatment: acc.tax_treatment || null,
     });
     await reload();
+    toast.success(`Compte « ${acc.name} » réouvert.`);
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || "Erreur inconnue";
   }
@@ -735,6 +756,7 @@ const groupedAccounts = computed(() => {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 18px;
+  flex-wrap: wrap;
 }
 
 .title-block h1 {
@@ -936,8 +958,8 @@ const groupedAccounts = computed(() => {
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }
-.rollup-value.pos { color: #4ade80; }
-.rollup-value.neg { color: #f87171; }
+.rollup-value.pos { color: var(--color-success-text); }
+.rollup-value.neg { color: var(--color-danger-text); }
 .rollup-value.neutral { color: #e5e7eb; }
 
 .pill {
@@ -1093,8 +1115,8 @@ const groupedAccounts = computed(() => {
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }
-.figure-value.pos { color: #4ade80; }
-.figure-value.neg { color: #f87171; }
+.figure-value.pos { color: var(--color-success-text); }
+.figure-value.neg { color: var(--color-danger-text); }
 .figure-value.neutral { color: #e5e7eb; }
 
 .row-actions {
@@ -1118,8 +1140,8 @@ const groupedAccounts = computed(() => {
 }
 
 .btn-danger {
-  border-color: rgba(239, 68, 68, 0.4);
-  color: #fca5a5;
+  border-color: var(--color-danger-border);
+  color: var(--color-danger-text);
 }
 
 .btn-danger:hover {
@@ -1130,5 +1152,18 @@ const groupedAccounts = computed(() => {
   background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   border-color: transparent;
   color: #fff;
+}
+
+/* Écran étroit (tablette/mobile) : audit UX du 2026-07-27 — aucun breakpoint jusqu'ici. .acc-row
+   (nom + solde + actions sur une seule ligne, solde et actions non rétrécissables) était le point
+   de débordement le plus concret : sur un viewport étroit, le nom du compte n'avait presque plus
+   de place. */
+@media (max-width: 640px) {
+  .page { padding: 14px; }
+  .search-input { width: 100%; max-width: none; }
+  .search-wrapper { flex: 1 1 100%; }
+  .acc-row { flex-wrap: wrap; row-gap: 8px; }
+  .acc-figure { min-width: 0; flex: 1 1 auto; text-align: left; }
+  .row-actions { flex: 1 1 auto; justify-content: flex-end; }
 }
 </style>

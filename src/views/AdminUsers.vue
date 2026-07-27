@@ -15,7 +15,6 @@
     </header>
 
     <div v-if="error" class="alert"><strong>Erreur :</strong> {{ error }}</div>
-    <div v-if="success" class="success">{{ success }}</div>
 
     <div v-if="loading && !users.length" class="empty">Chargement…</div>
     <div v-else-if="!loading && !users.length" class="empty">Aucun utilisateur.</div>
@@ -118,12 +117,15 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const users = ref([])
 const roles = ref([])
 const loading = ref(false)
 const error = ref('')
-const success = ref('')
 
 const showCreateModal = ref(false)
 const showRoleModal = ref(false)
@@ -137,20 +139,19 @@ const roleForm = ref({ role_id: '' })
 const passwordForm = ref({ password: '' })
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => {
-  if (showCreateModal.value) showCreateModal.value = false
-  else if (showRoleModal.value) showRoleModal.value = false
-  else if (showPasswordModal.value) showPasswordModal.value = false
-})
+useEscapeClose(
+  () => {
+    if (showCreateModal.value) showCreateModal.value = false
+    else if (showRoleModal.value) showRoleModal.value = false
+    else if (showPasswordModal.value) showPasswordModal.value = false
+  },
+  shake,
+  () => showCreateModal.value || showRoleModal.value || showPasswordModal.value
+)
 
 function fmtDate(v) {
   if (!v) return '—'
   return new Date(v).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-function flash(msg) {
-  success.value = msg
-  setTimeout(() => { success.value = '' }, 3000)
 }
 
 async function reload() {
@@ -200,7 +201,7 @@ async function createUser() {
       role_id: createForm.value.role_id,
     })
     showCreateModal.value = false
-    flash('Utilisateur créé avec succès.')
+    toast.success('Utilisateur créé avec succès.')
     await reload()
   } catch (e) {
     modalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -215,7 +216,7 @@ async function changeRole() {
       role_id: roleForm.value.role_id,
     })
     showRoleModal.value = false
-    flash('Rôle mis à jour.')
+    toast.success('Rôle mis à jour.')
     await reload()
   } catch (e) {
     modalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -230,18 +231,24 @@ async function resetPassword() {
       password: passwordForm.value.password,
     })
     showPasswordModal.value = false
-    flash('Mot de passe réinitialisé.')
+    toast.success('Mot de passe réinitialisé.')
   } catch (e) {
     modalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
 }
 
 async function deleteUser(u) {
-  if (!confirm(`Supprimer l'utilisateur « ${u.username} » ? Cette action est irréversible.`)) return
+  const ok = await confirmDialog({
+    title: "Supprimer l'utilisateur",
+    message: `Supprimer l'utilisateur « ${u.username} » ? Cette action est irréversible.`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   error.value = ''
   try {
     await axios.delete('/api/user', { params: { user_id: u.id } })
-    flash('Utilisateur supprimé.')
+    toast.success('Utilisateur supprimé.')
     await reload()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -289,14 +296,6 @@ onMounted(() => reload())
   border-radius: 12px;
   margin-bottom: 16px;
   color: #fecaca;
-}
-.success {
-  border: 1px solid rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.08);
-  padding: 12px 14px;
-  border-radius: 12px;
-  margin-bottom: 16px;
-  color: #6ee7b7;
 }
 .empty {
   padding: 18px;

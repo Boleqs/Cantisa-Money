@@ -95,7 +95,7 @@
         <span v-if="lastScanAt" class="last-scan">Dernier scan : {{ lastScanAt }}</span>
       </div>
 
-      <div v-if="scanError" class="error-banner">{{ scanError }}</div>
+      <div v-if="scanError" class="alert">{{ scanError }}</div>
     </div>
 
     <!-- Résultats -->
@@ -519,12 +519,12 @@ function ratingClass(type, value) {
 
 .last-scan { font-size: 12px; color: #475569; }
 
-.error-banner {
-  background: rgba(239,68,68,0.15);
-  border: 1px solid rgba(239,68,68,0.4);
+.alert {
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
   border-radius: 8px;
   padding: 10px 16px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   font-size: 13px;
 }
 

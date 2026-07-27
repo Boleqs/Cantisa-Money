@@ -80,6 +80,10 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import LoanModal from '../components/modal/LoanModal.vue'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const loans = ref([])
 const accounts = ref([])
@@ -149,10 +153,17 @@ async function executeNextInstallment(l) {
 }
 
 async function deleteLoan(l) {
-  if (!confirm(`Supprimer le crédit « ${l.name} » ? Cette action n'est possible que si aucune échéance n'a encore été payée.`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer le crédit',
+    message: `Supprimer le crédit « ${l.name} » ? Cette action n'est possible que si aucune échéance n'a encore été payée.`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/loans', { params: { loan_id: l.id } })
     await reload()
+    toast.success(`Crédit « ${l.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

@@ -27,7 +27,7 @@ class ForecastWealthSchema(Schema):
 
 class ForecastRoutes:
     def __init__(self, app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
-                 Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users):
+                 Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users, FinancialGoals=None):
         ROUTE_PATH = f"{ROOT_PATH}/forecast"
 
         @app.route(f"{ROUTE_PATH}/wealth", methods=['GET'])
@@ -40,6 +40,17 @@ class ForecastRoutes:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
 
             user_id = get_jwt_identity()
+            goals = []
+            if FinancialGoals is not None:
+                for g in FinancialGoals.query.filter_by(user_id=user_id).all():
+                    goals.append({
+                        'id': str(g.id),
+                        'name': g.name,
+                        'goal_type': g.goal_type,
+                        'target_amount': float(g.target_amount),
+                        'target_date': g.target_date.date(),
+                        'end_date': g.end_date.date() if g.end_date else None,
+                    })
             result = project_wealth(
                 DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
                 Loans, LoanInstallments, Subscriptions, Transactions, Splits, user_id,
@@ -49,5 +60,6 @@ class ForecastRoutes:
                 growth_cash_pct=float(data['growth_cash_pct']),
                 avg_monthly_net_flow_override=float(data['avg_monthly_net_flow']) if data['avg_monthly_net_flow'] is not None else None,
                 target_currency=data['currency'].upper(),
+                goals=goals,
             )
             return json_response(result, HttpCode.OK)

@@ -14,7 +14,6 @@
     </header>
 
     <div v-if="error" class="alert"><strong>Erreur :</strong> {{ error }}</div>
-    <div v-if="success" class="success">{{ success }}</div>
 
     <!-- ── Section Rôles ─────────────────────────────────────────────── -->
     <section class="section">
@@ -166,12 +165,15 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const roles = ref([])
 const permissions = ref([])
 const loading = ref(false)
 const error = ref('')
-const success = ref('')
 const modalError = ref('')
 
 const showCreateRoleModal = ref(false)
@@ -188,17 +190,16 @@ const roleForm = ref({ name: '', description: '' })
 const permForm = ref({ name: '', description: '' })
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => {
-  if (showCreateRoleModal.value) showCreateRoleModal.value = false
-  else if (showEditRoleModal.value) showEditRoleModal.value = false
-  else if (showPermsModal.value) showPermsModal.value = false
-  else if (showCreatePermModal.value) showCreatePermModal.value = false
-})
-
-function flash(msg) {
-  success.value = msg
-  setTimeout(() => { success.value = '' }, 3000)
-}
+useEscapeClose(
+  () => {
+    if (showCreateRoleModal.value) showCreateRoleModal.value = false
+    else if (showEditRoleModal.value) showEditRoleModal.value = false
+    else if (showPermsModal.value) showPermsModal.value = false
+    else if (showCreatePermModal.value) showCreatePermModal.value = false
+  },
+  shake,
+  () => showCreateRoleModal.value || showEditRoleModal.value || showPermsModal.value || showCreatePermModal.value
+)
 
 async function reload() {
   loading.value = true
@@ -237,7 +238,7 @@ async function createRole() {
   try {
     await axios.post('/api/roles', roleForm.value)
     showCreateRoleModal.value = false
-    flash('Rôle créé.')
+    toast.success('Rôle créé.')
     await reload()
   } catch (e) {
     modalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -249,7 +250,7 @@ async function editRole() {
   try {
     await axios.patch(`/api/roles/${editTarget.value.id}`, roleForm.value)
     showEditRoleModal.value = false
-    flash('Rôle mis à jour.')
+    toast.success('Rôle mis à jour.')
     await reload()
   } catch (e) {
     modalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -257,11 +258,17 @@ async function editRole() {
 }
 
 async function deleteRole(r) {
-  if (!confirm(`Supprimer le rôle « ${r.name} » ? Les utilisateurs qui l'ont seront sans rôle.`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer le rôle',
+    message: `Supprimer le rôle « ${r.name} » ? Les utilisateurs qui l'ont seront sans rôle.`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   error.value = ''
   try {
     await axios.delete(`/api/roles/${r.id}`)
-    flash('Rôle supprimé.')
+    toast.success('Rôle supprimé.')
     await reload()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -321,7 +328,7 @@ async function createPerm() {
   try {
     await axios.post('/api/permissions', permForm.value)
     showCreatePermModal.value = false
-    flash('Permission créée.')
+    toast.success('Permission créée.')
     await reload()
   } catch (e) {
     modalError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
@@ -380,14 +387,6 @@ onMounted(() => reload())
   border-radius: 12px;
   margin-bottom: 16px;
   color: #fecaca;
-}
-.success {
-  border: 1px solid rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.08);
-  padding: 12px 14px;
-  border-radius: 12px;
-  margin-bottom: 16px;
-  color: #6ee7b7;
 }
 .empty {
   padding: 18px;

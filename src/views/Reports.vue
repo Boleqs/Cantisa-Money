@@ -867,6 +867,10 @@ import axios from 'axios'
 import { hasPermission } from '@/utils/permissions.js'
 import { currency } from '@/utils/settings.js'
 import LineGraph from '../components/graphs/LineGraph.vue'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const monthly   = ref([])
@@ -1063,11 +1067,18 @@ function newCustomReport() {
 }
 
 async function deleteSavedReport(r) {
-  if (!confirm(`Supprimer le rapport « ${r.name} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer le rapport',
+    message: `Supprimer le rapport « ${r.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/reports/custom', { params: { report_id: r.id } })
     if (editingReportId.value === r.id) newCustomReport()
     await loadSavedReports()
+    toast.success(`Rapport « ${r.name} » supprimé.`)
   } catch (e) {
     customError.value = errToText(e)
   }

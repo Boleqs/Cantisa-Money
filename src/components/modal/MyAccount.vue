@@ -61,7 +61,7 @@ import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const emit = defineEmits(['close'])
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => emit('close'))
+useEscapeClose(() => emit('close'), shake)
 
 const user = ref(null)
 const newPassword = ref('')

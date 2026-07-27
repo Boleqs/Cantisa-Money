@@ -106,11 +106,6 @@ const lastValue = computed(() => {
 const buildChart = () => {
   if (!canvasRef.value || !hasData.value) return
 
-  // détruire l’ancien graphique si besoin
-  if (chartInstance.value) {
-    chartInstance.value.destroy()
-  }
-
   const datasets = isMulti.value
     ? props.series.map(s => ({
         label: s.label,
@@ -133,6 +128,21 @@ const buildChart = () => {
         pointHoverRadius: 4
       }]
 
+  // update() en place a été tenté ici mais laisse les métadonnées internes de Chart.js (légende
+  // incluse) figées sur l'ANCIEN nombre de courbes quand le nombre de datasets change (ex. les 2
+  // courbes "Trésorerie" qui apparaissent dès qu'un objectif de vie existe, voir WealthForecast.vue)
+  // — `chart.data.datasets` était bien mis à jour mais `chart._metasets`/la légende restaient sur
+  // l'ancien compte. On détruit donc toujours et recrée, mais avec `animation: false` : c'est la
+  // frame d'animation asynchrone (Chart.js Animator, sur requestAnimationFrame) qui provoquait le
+  // crash initial ("Cannot read properties of null (reading 'save')" dans clipArea) quand deux
+  // rebuilds arrivaient coup sur coup (ex. WealthForecast.vue qui recharge la liste d'objectifs
+  // PUIS la projection après la sauvegarde d'un objectif) — sans animation, draw() est synchrone,
+  // il n'y a plus de frame en vol pouvant survivre à un destroy().
+  if (chartInstance.value) {
+    chartInstance.value.destroy()
+    chartInstance.value = null
+  }
+
   chartInstance.value = new Chart(canvasRef.value.getContext('2d'), {
     type: 'line',
     data: {
@@ -142,6 +152,7 @@ const buildChart = () => {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {

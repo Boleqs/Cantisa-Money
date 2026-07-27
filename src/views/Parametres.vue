@@ -345,6 +345,10 @@ import { DEFAULT_METRICS, loadWeights, loadThresholds } from '@/utils/marketScor
 import { currency as settingsCurrency, dateFormat as settingsDateFormat, saveSettings } from '@/utils/settings.js'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 import { DEFAULT_ACCENT, applyAccentColor, saveAccentColor } from '@/utils/theme.js'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 // ── Sections ─────────────────────────────────────────────────────────────────
 const sections = [
@@ -384,7 +388,7 @@ const rates = ref({})
 const ratesLoading = ref(new Set())
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (showCommodityModal.value) showCommodityModal.value = false })
+useEscapeClose(() => { if (showCommodityModal.value) showCommodityModal.value = false }, shake, () => showCommodityModal.value)
 
 // Options de devise dérivées des devises que l'utilisateur a lui-même créées (onglet "Devises"),
 // pas une liste figée — sinon une devise ajoutée ici (ex: JPY) ne serait jamais sélectionnable
@@ -521,11 +525,18 @@ async function refreshCommodityRate(c) {
 }
 
 async function deleteCommodity(c) {
-  if (!confirm(`Supprimer la devise « ${c.short_name} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer la devise',
+    message: `Supprimer la devise « ${c.short_name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   commoditiesError.value = ''
   try {
     await axios.delete('/api/commodities', { params: { commodity_id: c.id } })
     await reloadCommodities()
+    toast.success(`Devise « ${c.short_name} » supprimée.`)
   } catch (e) {
     commoditiesError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

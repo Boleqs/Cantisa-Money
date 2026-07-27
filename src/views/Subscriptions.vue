@@ -6,6 +6,15 @@
         <p class="subtitle">Gérez vos dépenses récurrentes.</p>
       </div>
       <div class="header-actions">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="search"
+            class="search-input"
+            type="text"
+            placeholder="Rechercher un abonnement (nom, compte, catégorie)…"
+          />
+        </div>
         <button class="btn" :disabled="loading" @click="reload">
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
@@ -18,6 +27,7 @@
 
     <div v-if="loading && !subscriptions.length" class="empty">Chargement…</div>
     <div v-else-if="!loading && !subscriptions.length" class="empty">Aucun abonnement.</div>
+    <div v-else-if="!filteredSubscriptions.length" class="empty">Aucun abonnement ne correspond à « {{ search }} ».</div>
 
     <table v-else class="table">
       <thead>
@@ -34,7 +44,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="s in subscriptions" :key="s.id" :class="{ 'row-overdue': s.is_overdue }">
+        <tr v-for="s in filteredSubscriptions" :key="s.id" :class="{ 'row-overdue': s.is_overdue }">
           <td>
             {{ s.name }}
             <span v-if="s.is_forecast_only" class="badge-forecast" title="Ne crée pas de transaction automatiquement">Prévisionnel</span>
@@ -143,6 +153,10 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const MONTH_NAMES = [
   'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -156,6 +170,7 @@ const categories = ref([])
 const commodities = ref([])
 const loading = ref(false)
 const error = ref('')
+const search = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
 const form = ref({
@@ -165,7 +180,7 @@ const form = ref({
 })
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (showModal.value) showModal.value = false })
+useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
 
 const scheduleValid = computed(() => {
   if (form.value.schedule_type === 'monthly') return form.value.day_of_month >= 1 && form.value.day_of_month <= 31
@@ -213,6 +228,23 @@ function categoryName(id) {
   const c = categories.value.find(c => String(c.id) === String(id))
   return c ? c.name : id
 }
+
+function normalizeText(v) {
+  return (v ?? '').toString().toLowerCase().trim()
+}
+
+// Recherche côté client : pas de pagination serveur ici (liste courte par nature), contrairement
+// à Transactions — filtre sur le nom, les deux comptes et la catégorie.
+const filteredSubscriptions = computed(() => {
+  const q = normalizeText(search.value)
+  if (!q) return subscriptions.value
+  return subscriptions.value.filter((s) =>
+    normalizeText(s.name).includes(q) ||
+    normalizeText(accountName(s.from_account_id)).includes(q) ||
+    normalizeText(accountName(s.to_account_id)).includes(q) ||
+    normalizeText(categoryName(s.category_id)).includes(q)
+  )
+})
 
 async function reload() {
   loading.value = true
@@ -306,10 +338,17 @@ async function executeSubscription(s) {
 }
 
 async function deleteSubscription(s) {
-  if (!confirm(`Supprimer l'abonnement « ${s.name} » ?`)) return
+  const ok = await confirmDialog({
+    title: "Supprimer l'abonnement",
+    message: `Supprimer l'abonnement « ${s.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/subscriptions', { params: { subscription_id: s.id } })
     await reload()
+    toast.success(`Abonnement « ${s.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -336,7 +375,20 @@ onMounted(() => reload())
 }
 .title-block h1 { margin: 0; font-size: 28px; }
 .subtitle { margin: 6px 0 0; color: #9ca3af; font-size: 14px; }
-.header-actions { display: flex; gap: 10px; align-items: center; }
+.header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.search-wrapper { position: relative; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.7; }
+.search-input {
+  padding: 10px 10px 10px 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  outline: none;
+  width: 280px;
+  max-width: 70vw;
+}
 
 .btn {
   border: 1px solid rgba(148, 163, 184, 0.25);

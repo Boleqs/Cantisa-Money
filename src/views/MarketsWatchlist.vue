@@ -25,7 +25,7 @@
       <p class="search-hint">Ajoutez des tickers pour les retrouver ici à chaque visite.</p>
     </div>
 
-    <div v-if="wlError" class="error-banner">{{ wlError }}</div>
+    <div v-if="wlError" class="alert">{{ wlError }}</div>
 
     <!-- Tableau watchlist -->
     <div v-if="watchlist.length" class="watchlist-section">
@@ -246,12 +246,12 @@ function ratingClass(type, value) {
 .btn-search:disabled { opacity: 0.5; cursor: not-allowed; }
 .search-hint { margin: 10px 0 0; color: #6b7280; font-size: 12px; }
 
-.error-banner {
-  background: rgba(239,68,68,0.15);
-  border: 1px solid rgba(239,68,68,0.4);
+.alert {
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
   border-radius: 8px;
   padding: 10px 16px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   font-size: 13px;
   margin-bottom: 20px;
 }

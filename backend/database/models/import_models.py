@@ -11,6 +11,7 @@ from .budgets import Budgets
 from .categories import Categories
 from .commodities import Commodities
 from .custom_reports import CustomReports
+from .financial_goals import FinancialGoals
 from .fx_rates import FxRates
 from .loans import Loans
 from .loan_installments import LoanInstallments

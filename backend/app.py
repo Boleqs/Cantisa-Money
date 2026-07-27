@@ -15,8 +15,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 
-from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST, VAR_STANDARD_USER_ROLE_ID, HttpCode
+from config import FlaskConfig as flask_config, VAR_PERMISSIONS_LIST, VAR_STANDARD_USER_ROLE_ID, HttpCode, \
+    VAR_API_ROOT_PATH
 from utils.api_responses import json_response
+from version import APP_VERSION
 from utils.logs import log
 import uuid
 
@@ -52,6 +54,14 @@ def _user_not_found(_jwt_header, _jwt_data):
     return json_response('User not found', HttpCode.NOT_FOUND)
 
 
+# Public (pas de @jwt_required) : affiché sur l'écran de connexion, avant toute authentification —
+# voir Signin.vue. server_version est déjà inclus dans les métadonnées de chaque réponse une fois
+# connecté (json_response), mais rien n'est accessible avant login sans cette route dédiée.
+@app.route(f"{VAR_API_ROOT_PATH}/version", methods=['GET'])
+def get_app_version():
+    return json_response(APP_VERSION, HttpCode.OK)
+
+
 limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 # Routes declaration
 UsersRoutes(app, DB, Users, UserRoles, Roles, Permissions, RolePermissions)
@@ -76,7 +86,8 @@ MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
 WealthRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users)
 LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
 ForecastRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
-               Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users)
+               Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users, FinancialGoals)
+GoalsRoutes(app, DB, FinancialGoals, Users)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
 TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,
@@ -434,7 +445,7 @@ if IS_MAIN_PROCESS:
 
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
                      AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
-                     Loans, LoanInstallments)
+                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags)
 
 uuid.uuid4()
 if __name__ == '__main__':

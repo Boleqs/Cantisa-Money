@@ -25,3 +25,4 @@ from .rt_loans import LoansRoutes
 from .rt_onboarding import OnboardingRoutes
 from .rt_tax import TaxRoutes
 from .rt_forecast import ForecastRoutes
+from .rt_goals import GoalsRoutes

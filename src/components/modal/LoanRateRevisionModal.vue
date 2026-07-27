@@ -74,7 +74,7 @@ watch(() => props.modelValue, (open) => {
 const close = () => emit('update:modelValue', false)
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (props.modelValue) close() })
+useEscapeClose(() => { if (props.modelValue) close() }, shake, () => props.modelValue)
 
 async function onSubmit() {
   formError.value = ''

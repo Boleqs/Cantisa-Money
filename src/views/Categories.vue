@@ -72,6 +72,10 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const categories = ref([])
 const loading = ref(false)
@@ -81,7 +85,7 @@ const editTarget = ref(null)
 const form = ref({ name: '', description: '', tax_treatment: null })
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (showModal.value) showModal.value = false })
+useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
 
 const TAX_TREATMENTS = [
   { value: 'taxable_income', label: 'Revenu imposable' },
@@ -148,10 +152,17 @@ async function save() {
 }
 
 async function deleteCategory(c) {
-  if (!confirm(`Supprimer la catégorie « ${c.name} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer la catégorie',
+    message: `Supprimer la catégorie « ${c.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/categories', { params: { category_id: c.id } })
     await reload()
+    toast.success(`Catégorie « ${c.name} » supprimée.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

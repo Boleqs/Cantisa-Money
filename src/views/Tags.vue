@@ -65,6 +65,10 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { confirmDialog } from '@/utils/confirmDialog'
+import { useToast } from '@/utils/toast'
+
+const toast = useToast()
 
 const COLORS = ['green', 'red', 'blue', 'white', 'black', 'yellow', 'purple']
 const COLOR_MAP = {
@@ -87,7 +91,7 @@ const editTarget = ref(null)
 const form = ref({ name: '', color: 'green', tax_treatment: null })
 
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (showModal.value) showModal.value = false })
+useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
 
 function colorHex(c) { return COLOR_MAP[c] || '#6b7280' }
 function taxTreatmentLabel(v) { return TAX_TREATMENTS.find(t => t.value === v)?.label || v }
@@ -141,10 +145,17 @@ async function save() {
 }
 
 async function deleteTag(t) {
-  if (!confirm(`Supprimer le tag « ${t.name} » ?`)) return
+  const ok = await confirmDialog({
+    title: 'Supprimer le tag',
+    message: `Supprimer le tag « ${t.name} » ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await axios.delete('/api/tags', { params: { tag_id: t.id } })
     await reload()
+    toast.success(`Tag « ${t.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }

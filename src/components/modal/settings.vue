@@ -89,7 +89,7 @@ import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const emit = defineEmits(['close'])
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => emit('close'))
+useEscapeClose(() => emit('close'), shake)
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
 const KEY_COLLAPSE  = 'cmm_sidebar_collapsed_on_start'

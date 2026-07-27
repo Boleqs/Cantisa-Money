@@ -1,5 +1,5 @@
 from datetime import datetime
-from marshmallow import Schema, fields, ValidationError
+from marshmallow import Schema, fields, ValidationError, validate
 from sqlalchemy import text
 
 from flask import request
@@ -11,6 +11,7 @@ from backend.utils.market_price import convert_amount
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 BUDGETS_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
+RENEW_PERIODS = ('monthly', 'quarterly', 'yearly')
 
 # Même prédicat "quels splits comptent" que le trigger Postgres trg_update_budget_spent (voir
 # migrations/versions/7f3b1a9d6c2e_budget_spent_currency_conversion.py) — celui-ci ne se déclenche
@@ -83,6 +84,7 @@ class AddBudgetSchema(Schema):
     account_ids = fields.List(fields.UUID(), load_default=[])
     category_ids = fields.List(fields.UUID(), load_default=[])
     tag_ids = fields.List(fields.UUID(), load_default=[])
+    renew_period = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(RENEW_PERIODS))
 
 
 class UpdateBudgetSchema(Schema):
@@ -94,6 +96,7 @@ class UpdateBudgetSchema(Schema):
     account_ids = fields.List(fields.UUID(), load_default=[])
     category_ids = fields.List(fields.UUID(), load_default=[])
     tag_ids = fields.List(fields.UUID(), load_default=[])
+    renew_period = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(RENEW_PERIODS))
 
 
 class GetBudgetSchema(Schema):
@@ -129,6 +132,7 @@ def _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags):
         'amount_spent_incomplete': bool(budget.amount_spent_incomplete),
         'start_date': budget.start_date.isoformat() if budget.start_date else None,
         'end_date': budget.end_date.isoformat() if budget.end_date else None,
+        'renew_period': budget.renew_period,
         'created_at': budget.created_at.isoformat() if budget.created_at else None,
         'updated_at': budget.updated_at.isoformat() if budget.updated_at else None,
         'account_ids': account_ids,
@@ -185,6 +189,7 @@ class BudgetsRoutes:
                     amount_spent=0,
                     start_date=_parse_date(data['start_date']),
                     end_date=_parse_date(data['end_date']),
+                    renew_period=data.get('renew_period'),
                 )
                 DB.session.add(budget)
                 DB.session.flush()
@@ -225,6 +230,7 @@ class BudgetsRoutes:
                 budget.amount_allocated = data['amount_allocated']
                 budget.start_date = _parse_date(data['start_date'])
                 budget.end_date = _parse_date(data['end_date'])
+                budget.renew_period = data.get('renew_period')
                 # Recréer les associations
                 BudgetAccounts.query.filter(BudgetAccounts.budget_id == budget.id).delete()
                 BudgetCategories.query.filter(BudgetCategories.budget_id == budget.id).delete()

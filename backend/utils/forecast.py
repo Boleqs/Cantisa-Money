@@ -107,10 +107,30 @@ def compute_avg_monthly_net_flow(DB, Accounts, Transactions, Splits, AssetPosses
     return round(total / 12, 2)
 
 
+def _goal_occurrences(goal, today, horizon_end):
+    """Dates (dans l'horizon, à partir d'aujourd'hui) où un objectif retire de la trésorerie
+    projetée : une seule fois pour 'one_time', chaque mois de target_date à end_date (ou la fin de
+    l'horizon si end_date est vide — objectif "jusqu'à la fin de la simulation", ex. train de vie
+    de retraite) pour 'recurring'."""
+    target = goal['target_date']
+    if goal['goal_type'] == 'one_time':
+        return [target] if today <= target <= horizon_end else []
+    end = min(goal['end_date'], horizon_end) if goal.get('end_date') else horizon_end
+    occs = []
+    k = 0
+    d = target
+    while d <= end:
+        if d >= today:
+            occs.append(d)
+        k += 1
+        d = _add_months(target, k)
+    return occs
+
+
 def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
                     Loans, LoanInstallments, Subscriptions, Transactions, Splits, user_id,
                     horizon_months, growth_financial_pct, growth_physical_pct, growth_cash_pct,
-                    avg_monthly_net_flow_override, target_currency):
+                    avg_monthly_net_flow_override, target_currency, goals=None):
     today = date.today()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
 
@@ -158,6 +178,16 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
             d = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, d)
         sub_occurrences[s.id] = occs
 
+    # Objectifs de vie (Lifetime Planner) : trajectoire de trésorerie parallèle à bank_cash, qui
+    # subit en plus les retraits de chaque objectif — voir _goal_occurrences(). goal_balances
+    # trace, pour chaque objectif, la trésorerie-avec-objectifs à chaque mois où il retire de
+    # l'argent, pour déterminer après coup s'il reste couvert (jamais négatif).
+    goals = goals or []
+    has_goals = bool(goals)
+    goal_occurrences = {g['id']: _goal_occurrences(g, today, horizon_end) for g in goals}
+    goal_balances = {g['id']: [] for g in goals}
+    bank_cash_goals = bank_cash if has_goals else None
+
     r_fin = (1 + growth_financial_pct / 100) ** (1 / 12) - 1
     r_phys = (1 + growth_physical_pct / 100) ** (1 / 12) - 1
     r_cash = (1 + growth_cash_pct / 100) ** (1 / 12) - 1
@@ -178,6 +208,7 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
     points = [{
         'date': today.isoformat(),
         'bank_cash': round(bank_cash, 2),
+        'bank_cash_with_goals': round(bank_cash_goals, 2) if has_goals else None,
         'portfolio_value': round(portfolio_financial + portfolio_physical, 2),
         'liabilities': round(liabilities_start, 2),
         'financial_net_worth': round(portfolio_financial + portfolio_physical - liabilities_start, 2),
@@ -193,8 +224,16 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
         # patrimoine reste quasi linéaire sur un long horizon (seul le portefeuille croît, alors
         # que l'essentiel de la variation vient souvent du cash accumulé mois après mois) — voir
         # retour utilisateur du 2026-07-25 ("se base sur le capital de départ, ne prend pas en
-        # compte les intérêts composés").
+        # compte les intérêts composés"). bank_cash_goals compose sur SA propre valeur (donc moins
+        # vite qu'un simple décalage de bank_cash) une fois amputée par des objectifs.
         bank_cash *= (1 + r_cash)
+        if has_goals:
+            bank_cash_goals *= (1 + r_cash)
+
+        # Delta commun aux deux trajectoires (abonnements, flux net, échéances de crédit) : montant
+        # en dollars, identique que la trésorerie porte des objectifs ou non — seuls les retraits
+        # d'objectifs, appliqués plus bas, divergent entre bank_cash et bank_cash_goals.
+        month_delta = 0.0
 
         for s in subscriptions:
             occs_in_month = [o for o in sub_occurrences[s.id] if cur_date < o <= next_date]
@@ -208,30 +247,65 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
                 continue  # virement interne (net nul sur le pool bancaire) ou hors pool bancaire des deux côtés
             code = _account_currency(from_acc if from_is_cash else to_acc, commodities_by_id, target_currency)
             amount = (convert_amount(float(s.amount), code, target_currency, FxRates) or 0) * len(occs_in_month)
-            bank_cash += amount if to_is_cash else -amount
+            month_delta += amount if to_is_cash else -amount
 
-        bank_cash += avg_monthly_net_flow
+        month_delta += avg_monthly_net_flow
 
         liabilities = 0.0
         for loan in active_loans:
             insts = loan_installments[loan.id]
             due_this_month = [i for i in insts if cur_date < i.due_date <= next_date]
             for i in due_this_month:
-                bank_cash -= convert_amount(float(i.total_amount), loan_currency[loan.id], target_currency, FxRates) or 0
+                month_delta -= convert_amount(float(i.total_amount), loan_currency[loan.id], target_currency, FxRates) or 0
             past_or_now = [i for i in insts if i.due_date <= next_date]
             remaining = float(past_or_now[-1].remaining_principal_after) if past_or_now else float(loan.principal)
             liabilities += convert_amount(remaining, loan_currency[loan.id], target_currency, FxRates) or 0
+
+        bank_cash += month_delta
+        if has_goals:
+            bank_cash_goals += month_delta
+            # target_amount est saisi dans la devise par défaut (target_currency), même convention
+            # que Budgets.amount_allocated — pas de conversion à appliquer ici.
+            for g in goals:
+                occs_in_month = [o for o in goal_occurrences[g['id']] if cur_date < o <= next_date]
+                if not occs_in_month:
+                    continue
+                bank_cash_goals -= float(g['target_amount']) * len(occs_in_month)
+                goal_balances[g['id']].append(bank_cash_goals)
 
         portfolio_value = portfolio_financial + portfolio_physical
         financial_net_worth = portfolio_value - liabilities
         points.append({
             'date': next_date.isoformat(),
             'bank_cash': round(bank_cash, 2),
+            'bank_cash_with_goals': round(bank_cash_goals, 2) if has_goals else None,
             'portfolio_value': round(portfolio_value, 2),
             'liabilities': round(liabilities, 2),
             'financial_net_worth': round(financial_net_worth, 2),
         })
         cur_date = next_date
+
+    # Un objectif est "feasible" si la trésorerie-avec-objectifs n'est jamais tombée sous zéro aux
+    # mois où IL retire de l'argent (attribution approximative en cas d'objectifs concurrents
+    # partageant le même pool — le pire solde atteint reste correct, mais désigner LEQUEL des
+    # objectifs simultanés "cause" le déficit n'a pas de réponse unique). 'out_of_range' = aucune
+    # occurrence dans l'horizon simulé (déjà passé, ou commence après l'horizon demandé).
+    goals_result = []
+    for g in goals:
+        balances = goal_balances[g['id']]
+        if not balances:
+            goals_result.append({
+                'id': g['id'], 'name': g['name'], 'status': 'out_of_range',
+                'balance_after': None, 'min_balance_during': None,
+            })
+            continue
+        min_balance = min(balances)
+        goals_result.append({
+            'id': g['id'], 'name': g['name'],
+            'status': 'feasible' if min_balance >= 0 else 'at_risk',
+            'balance_after': round(balances[-1], 2),
+            'min_balance_during': round(min_balance, 2),
+        })
 
     return {
         'currency': target_currency,
@@ -244,4 +318,5 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
             'avg_monthly_net_flow_auto': net_flow_auto,
         },
         'points': points,
+        'goals_result': goals_result,
     }
