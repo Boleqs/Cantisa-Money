@@ -1,4 +1,5 @@
-FROM node:20-slim
+# --- Stage 1 : build ---
+FROM node:20-slim AS build
 
 WORKDIR /app
 
@@ -9,8 +10,29 @@ COPY index.html vite.config.js jsconfig.json ./
 COPY public/ public/
 COPY src/ src/
 
-EXPOSE 5173
+# API_HOST/API_PORT/API_HTTPS (voir .env.example) sont lus par src/router/index.js via
+# import.meta.env (envPrefix dans vite.config.js) : "vite build" les fige dans les fichiers
+# statiques générés. Contrairement au serveur de dev, les changer nécessite donc de reconstruire
+# l'image ("docker compose up --build"), pas juste de relancer le conteneur.
+ARG API_HOST=localhost
+ARG API_PORT=5000
+ARG API_HTTPS=false
+ENV API_HOST=$API_HOST
+ENV API_PORT=$API_PORT
+ENV API_HTTPS=$API_HTTPS
 
-# Serveur de dev Vite (comme en local) — pas un build de prod, cohérent avec l'objectif
-# "installation facile" plutôt qu'un déploiement prod optimisé (nginx, build statique, etc.).
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+RUN npm run build
+
+# --- Stage 2 : service des fichiers statiques ---
+FROM nginx:1.27-alpine
+
+COPY --from=build /app/dist /usr/share/nginx/html
+# nginx:1.27-alpine substitue automatiquement, au démarrage du conteneur, les variables d'env
+# présentes dans les fichiers /etc/nginx/templates/*.template vers /etc/nginx/conf.d/*.conf (via
+# envsubst) — c'est ce qui permet à FRONTEND_PORT de rester configurable à l'exécution malgré un
+# build de fichiers statiques figés.
+COPY nginx.frontend.conf.template /etc/nginx/templates/default.conf.template
+
+ENV FRONTEND_PORT=5173
+
+EXPOSE 5173

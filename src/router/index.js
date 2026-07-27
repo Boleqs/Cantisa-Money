@@ -4,7 +4,13 @@ import { ensureSettingsLoaded, onboardingCompleted } from '@/utils/settings.js'
 import { ensurePermissionsLoaded } from '@/utils/permissions.js'
 
 axios.defaults.withCredentials = true
-axios.defaults.baseURL = 'http://localhost:5000'
+// API_HOST/API_PORT/API_HTTPS (voir .env.example) : "localhost" en dur empêchait tout accès au
+// backend depuis un autre appareil que celui servant le frontend (localhost désigne toujours la
+// machine de l'utilisateur, pas le serveur) — voir backlog_external_hosting.
+const apiProtocol = import.meta.env.API_HTTPS === 'true' ? 'https' : 'http'
+const apiHost = import.meta.env.API_HOST || 'localhost'
+const apiPort = import.meta.env.API_PORT || '5000'
+axios.defaults.baseURL = `${apiProtocol}://${apiHost}:${apiPort}`
 // Protection CSRF côté backend (flask-jwt-extended, double-submit cookie) : axios lit
 // automatiquement ce cookie non-httponly et l'envoie dans ce header sur chaque requête.
 axios.defaults.xsrfCookieName = 'csrf_access_token'

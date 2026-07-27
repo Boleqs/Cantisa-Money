@@ -9,6 +9,9 @@ emit('fullpage', { value: true })
 const router = useRouter()
 const retrying = ref(false)
 const retryFailed = ref(false)
+// Reflète la config réelle (API_HOST/API_PORT/API_HTTPS, voir .env.example et router/index.js)
+// plutôt qu'une adresse en dur, trompeuse dès que ces variables sont personnalisées.
+const apiBaseUrl = axios.defaults.baseURL
 
 async function retry() {
   retrying.value = true
@@ -48,7 +51,7 @@ async function retry() {
         <p class="desc">
           Impossible de contacter l'API backend.<br>
           Vérifiez que le serveur est bien démarré sur
-          <code>localhost:5000</code> et réessayez.
+          <code>{{ apiBaseUrl }}</code> et réessayez.
         </p>
       </div>
 
@@ -69,7 +72,7 @@ async function retry() {
       <!-- Infos techniques -->
       <div class="tech-info">
         <span class="dot red"></span>
-        API&nbsp;·&nbsp;<span class="mono">http://localhost:5000</span>
+        API&nbsp;·&nbsp;<span class="mono">{{ apiBaseUrl }}</span>
       </div>
     </div>
   </div>

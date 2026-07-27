@@ -60,3 +60,9 @@ target/
 
 # Environment variables — do not commit (matche à toute profondeur, y compris backend/.env)
 .env
+
+# Certificats TLS (auto-signés générés par backend/utils/tls.py, ou fournis par l'utilisateur)
+backend/certs/
+
+# Secrets générés automatiquement par backend/utils/secrets.py (FLASK_SECRET_KEY/PWD_PEPPER)
+backend/instance/

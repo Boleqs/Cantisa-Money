@@ -57,10 +57,15 @@ VAR_STANDARD_USER_ROLE_ID = uuid.UUID('00000000-cafe-46fe-9a04-a03b4c253f1f')
 VAR_API_ROOT_PATH = '/api'
 VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS = 3600
 VAR_API_JWT_REFRESH_TOKEN_LIFETIME_IN_SECONDS = 86400
-# Valeur par défaut stable (pas générée aléatoirement au démarrage) : un pepper qui change
-# invaliderait tous les mots de passe existants à chaque redémarrage. À surcharger en prod
-# via la variable d'environnement PWD_PEPPER (voir .env.example à la racine du repo).
-VAR_PWD_PEPPER = os.environ.get('PWD_PEPPER') or "My_P3pp4r_1s_V€Ry_c0Mpl&X"
+# PWD_PEPPER (voir .env.example) prioritaire si définie ; sinon valeur aléatoire générée une seule
+# fois et persistée sur disque (backend/instance/) — voir utils/secrets.py pour le détail (remplace
+# l'ancien défaut faible codé en dur).
+from utils.secrets import resolve_secret
+VAR_PWD_PEPPER = resolve_secret('PWD_PEPPER', 'pwd_pepper.txt')
+
+# API_HTTPS (voir .env.example) : sert aussi de défaut à JWT_COOKIE_SECURE ci-dessous quand cette
+# dernière n'est pas explicitement définie — pas besoin de penser à activer les deux séparément.
+_API_HTTPS = os.environ.get('API_HTTPS', 'false').lower() == 'true'
 
 
 from database.config import db_url
@@ -69,16 +74,17 @@ class FlaskConfig:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     ### Database config
     SQLALCHEMY_DATABASE_URI = db_url
-    # Même logique que PWD_PEPPER : valeur stable par défaut (une clé qui change à chaque
-    # redémarrage déconnecterait tout le monde). À surcharger en prod via FLASK_SECRET_KEY.
-    SECRET_KEY = os.environ.get('FLASK_SECRET_KEY') or 'SuperSecureSecretKey'
+    # FLASK_SECRET_KEY (voir .env.example) prioritaire si définie ; sinon valeur aléatoire générée
+    # une seule fois et persistée sur disque — voir VAR_PWD_PEPPER ci-dessus, même logique.
+    SECRET_KEY = resolve_secret('FLASK_SECRET_KEY', 'flask_secret_key.txt')
     JWT_TOKEN_LOCATION = 'cookies'
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(seconds=VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(seconds=VAR_API_JWT_REFRESH_TOKEN_LIFETIME_IN_SECONDS)
-    # Secure=True exige HTTPS (le navigateur refuse sinon d'envoyer/accepter le cookie) — false par
-    # défaut car le déploiement Docker fourni tourne en HTTP simple. À passer à true derrière un
-    # reverse proxy HTTPS.
-    JWT_COOKIE_SECURE = os.environ.get('JWT_COOKIE_SECURE', 'false').lower() == 'true'
+    # Secure=True exige HTTPS (le navigateur refuse sinon d'envoyer/accepter le cookie). Défaut :
+    # suit API_HTTPS si JWT_COOKIE_SECURE n'est pas explicitement définie (une chaîne vide ou
+    # absente compte comme non définie) ; sinon la valeur explicite prévaut.
+    _secure_env = os.environ.get('JWT_COOKIE_SECURE', '').strip()
+    JWT_COOKIE_SECURE = (_secure_env.lower() == 'true') if _secure_env else _API_HTTPS
     # Protection CSRF (double-submit cookie) activée par défaut — le frontend envoie le header
     # X-CSRF-TOKEN attendu via axios.defaults.xsrfCookieName/xsrfHeaderName (voir router/index.js).
     JWT_COOKIE_CSRF_PROTECT = os.environ.get('JWT_COOKIE_CSRF_PROTECT', 'true').lower() == 'true'

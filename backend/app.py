@@ -145,14 +145,14 @@ def init_db():
     # ── Utilisateurs ─────────────────────────────────────────────────────────
     # Mot de passe de démo identique pour les deux comptes de seed — voir README.
     DEMO_PASSWORD = 'CantisaDemo2026!'
-    loris = Users(username='Loris', email='loris@test.com', password_hash=b'', salt=b'')
+    loris = Users(username='John', email='john@test.com', password_hash=b'', salt=b'')
     loris.set_password(DEMO_PASSWORD)
     alice = Users(username='Alice', email='alice@test.com', password_hash=b'', salt=b'')
     alice.set_password(DEMO_PASSWORD)
     DB.session.add_all([loris, alice])
     DB.session.flush()
 
-    # Loris = admin, Alice = standard user
+    # John = admin, Alice = standard user
     DB.session.add(UserRoles(user_id=loris.id, role_id=uuid.UUID('00000000-cafe-4bca-82bb-a0cec8e5a6ba')))
     DB.session.add(UserRoles(user_id=alice.id, role_id=VAR_STANDARD_USER_ROLE_ID))
     # Comptes de démo déjà entièrement configurés : onboarding_completed=True pour ne pas les
@@ -405,7 +405,7 @@ from utils.wealth import backfill_wealth_history
 # rôles, comptes de démo) n'est joué qu'une seule fois, tant que la base est vide.
 RESET_DB_ON_START = os.environ.get('RESET_DB_ON_START', 'false').lower() == 'true'
 # DEMO_DATA=true (par défaut) : peuple une base vide avec le jeu de données de test utilisé en dev
-# (comptes Loris/Alice, transactions, budgets...). DEMO_DATA=false : base vide, seul un compte
+# (comptes John/Alice, transactions, budgets...). DEMO_DATA=false : base vide, seul un compte
 # admin réel est créé si ADMIN_USERNAME/ADMIN_EMAIL/ADMIN_PASSWORD sont fournis.
 DEMO_DATA = os.environ.get('DEMO_DATA', 'true').lower() == 'true'
 
@@ -449,8 +449,16 @@ if IS_MAIN_PROCESS:
 
 uuid.uuid4()
 if __name__ == '__main__':
+    ssl_context = None
+    # API_HTTPS (voir .env.example) : mode local (python app.py) équivalent au docker-entrypoint.sh
+    # utilisé en Docker — voir utils/tls.py pour la génération du certificat auto-signé.
+    if os.environ.get('API_HTTPS', 'false').lower() == 'true':
+        from utils.tls import resolve_tls_paths
+        ssl_context = resolve_tls_paths()
+
     # host=0.0.0.0 : nécessaire pour être joignable depuis l'extérieur du conteneur Docker
     # (127.0.0.1, le défaut Flask, ne serait accessible que depuis l'intérieur du conteneur).
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=USE_RELOADER)
+    app.run(host='0.0.0.0', port=int(os.environ.get('API_PORT', 5000)), debug=True,
+            use_reloader=USE_RELOADER, ssl_context=ssl_context)
 
 

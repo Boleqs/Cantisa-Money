@@ -1,0 +1,12 @@
+server {
+    listen ${FRONTEND_PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Vue Router en mode history (createWebHistory) : toute route inconnue de nginx doit retomber
+    # sur index.html pour laisser le frontend gérer le routage côté client.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

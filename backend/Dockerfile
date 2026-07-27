@@ -24,8 +24,13 @@ WORKDIR /app/backend
 
 EXPOSE 5000
 
+RUN chmod +x docker-entrypoint.sh
+
 # gunicorn plutôt que le serveur de dev Flask utilisé par "python app.py". Un seul worker : l'init
 # DB (create_tables/seed) tourne au niveau du module au chargement — plusieurs workers gunicorn
 # l'exécuteraient chacun en parallèle (double seed, conflits de triggers). Passer à plusieurs
 # workers nécessiterait d'abord d'extraire cette init dans une étape séparée (ex: avant le CMD).
-CMD ["gunicorn", "--workers", "1", "--bind", "0.0.0.0:5000", "app:app"]
+# La commande gunicorn exacte (avec ou sans --certfile/--keyfile) dépend de API_HTTPS, résolu au
+# démarrage du conteneur (variable d'env, pas encore connue à la construction de l'image) — voir
+# docker-entrypoint.sh.
+ENTRYPOINT ["./docker-entrypoint.sh"]

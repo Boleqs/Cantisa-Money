@@ -1,14 +1,21 @@
 services:
   db:
-    image: postgres:16
+    build:
+      context: .
+      dockerfile: db/Dockerfile
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: cantisa
+      # Vide (au lieu d'un défaut "postgres" en dur) si non défini par l'utilisateur : c'est
+      # db/entrypoint.sh qui génère alors un mot de passe aléatoire — voir .env.example.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: cmm
     volumes:
       - db_data:/var/lib/postgresql/data
+      # Partagé avec le service backend (voir plus bas) : dépôt du mot de passe généré par
+      # db/entrypoint.sh quand POSTGRES_PASSWORD n'est pas fourni.
+      - ./backend/instance:/instance
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -23,8 +30,11 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      DB_NAME: cantisa
+      # Même valeur (ou même vide) que POSTGRES_PASSWORD du service db ci-dessus, pour rester
+      # synchronisé — si vide, backend/database/config.py relit le mot de passe généré par
+      # db/entrypoint.sh depuis backend/instance/db_password.txt (volume partagé, voir plus bas).
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_NAME: cmm
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-}
       PWD_PEPPER: ${PWD_PEPPER:-}
@@ -34,22 +44,51 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
-      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-false}
+      # Laissé vide (au lieu d'un défaut "false" en dur) si non défini par l'utilisateur : c'est
+      # backend/config.py qui décide alors, en suivant API_HTTPS — voir .env.example.
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-}
       JWT_COOKIE_CSRF_PROTECT: ${JWT_COOKIE_CSRF_PROTECT:-true}
+      API_HTTPS: ${API_HTTPS:-false}
+      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+      API_HOST: ${API_HOST:-localhost}
+      API_PORT: ${API_PORT:-5000}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "5000:5000"
+      # Même port des deux côtés : API_PORT pilote maintenant aussi le port interne réellement
+      # écouté par gunicorn (voir docker-entrypoint.sh), pas seulement le mapping externe.
+      - "${API_PORT:-5000}:${API_PORT:-5000}"
+    volumes:
+      # Persiste le certificat auto-signé généré par utils/tls.py entre deux redémarrages (sinon
+      # regénéré à chaque fois, ce qui obligerait à réaccepter l'avertissement navigateur à chaque
+      # fois). Sert aussi de dépôt pour un certificat fourni par l'utilisateur (voir .env.example).
+      - ./backend/certs:/app/backend/certs
+      # Persiste FLASK_SECRET_KEY/PWD_PEPPER générés par utils/secrets.py quand ils ne sont pas
+      # fournis via l'env — sinon régénérés à chaque redémarrage, ce qui invaliderait toutes les
+      # sessions et tous les mots de passe existants à chaque fois.
+      - ./backend/instance:/app/backend/instance
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      args:
+        # Build de prod (nginx) : ces valeurs sont figées dans les fichiers statiques générés, pas
+        # relues à l'exécution — les changer nécessite "docker compose up --build". Voir
+        # Dockerfile.frontend et .env.example.
+        API_HOST: ${API_HOST:-localhost}
+        API_PORT: ${API_PORT:-5000}
+        API_HTTPS: ${API_HTTPS:-false}
+    environment:
+      # Seule variable encore lue à l'exécution (par l'entrypoint envsubst de l'image nginx) —
+      # voir Dockerfile.frontend.
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
     depends_on:
       - backend
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:${FRONTEND_PORT:-5173}"
 
 volumes:
   db_data:

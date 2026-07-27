@@ -19,3 +19,4 @@ pytesseract
 Pillow
 PyMuPDF
 gunicorn
+cryptography
