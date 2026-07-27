@@ -1,0 +1,5 @@
+# Les scripts shell doivent garder des fins de ligne Unix (LF) quel que soit l'OS de checkout —
+# core.autocrlf=true (courant sur Windows) les convertirait sinon en CRLF, ce qui casse le shebang
+# ("#!/bin/sh\r" est introuvable) et fait échouer les entrypoints Docker au runtime avec une erreur
+# trompeuse ("exec ...: no such file or directory").
+*.sh text eol=lf

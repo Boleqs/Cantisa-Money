@@ -27,12 +27,24 @@ RUN npm run build
 FROM nginx:1.27-alpine
 
 COPY --from=build /app/dist /usr/share/nginx/html
+
 # nginx:1.27-alpine substitue automatiquement, au démarrage du conteneur, les variables d'env
 # présentes dans les fichiers /etc/nginx/templates/*.template vers /etc/nginx/conf.d/*.conf (via
-# envsubst) — c'est ce qui permet à FRONTEND_PORT de rester configurable à l'exécution malgré un
-# build de fichiers statiques figés.
-COPY nginx.frontend.conf.template /etc/nginx/templates/default.conf.template
+# envsubst) — c'est ce qui permet à FRONTEND_PORT (et, si activé, le chemin du certificat TLS) de
+# rester configurable à l'exécution malgré un build de fichiers statiques figés. Les deux templates
+# possibles (HTTP ou HTTPS, voir API_HTTPS) sont déposés hors du dossier auto-traité :
+# /docker-entrypoint.d/19-select-nginx-template.envsh (point d'extension officiel de cette image,
+# exécuté avant l'envsubst natif) choisit lequel activer au démarrage du conteneur. Extension
+# .envsh (pas .sh) : ce script est alors "sourcé" dans le shell de l'entrypoint plutôt qu'exécuté
+# comme sous-processus — indispensable pour que les variables qu'il exporte (chemin du certificat)
+# restent visibles de l'étape d'envsubst suivante.
+RUN mkdir -p /etc/nginx/templates-available /etc/nginx/templates
+COPY nginx.frontend.http.conf.template /etc/nginx/templates-available/http.conf.template
+COPY nginx.frontend.https.conf.template /etc/nginx/templates-available/https.conf.template
+COPY nginx-select-template.sh /docker-entrypoint.d/19-select-nginx-template.envsh
+RUN chmod +x /docker-entrypoint.d/19-select-nginx-template.envsh
 
 ENV FRONTEND_PORT=5173
+ENV API_HTTPS=false
 
 EXPOSE 5173

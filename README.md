@@ -65,9 +65,11 @@ des valeurs par défaut raisonnables s'appliquent sinon) :
   appareil que la machine hôte, ou en cas de port déjà pris. `API_HOST`/`API_PORT`/`API_HTTPS` sont
   figées dans le frontend au moment du build (`docker compose up --build` nécessaire pour les
   changer, un simple redémarrage ne suffit pas)
-- `API_HTTPS=true` — sert l'API en HTTPS (certificat auto-signé généré automatiquement si
-  `TLS_CERT_PATH`/`TLS_KEY_PATH` ne sont pas fournis), pas de reverse proxy dans ce projet ; suit
-  aussi `JWT_COOKIE_SECURE` par défaut (pas besoin de définir les deux séparément)
+- `API_HTTPS=true` — sert l'API **et** le frontend en HTTPS, avec le même certificat auto-signé
+  généré automatiquement (si `TLS_CERT_PATH`/`TLS_KEY_PATH` ne sont pas fournis) ; pas de reverse
+  proxy dans ce projet, chaque service termine TLS lui-même (gunicorn, nginx/Vite). Suit aussi
+  `JWT_COOKIE_SECURE` par défaut (pas besoin de définir les deux séparément) ; penser à adapter
+  `CORS_ORIGINS` en `https://` également
 
 ### Migrations
 

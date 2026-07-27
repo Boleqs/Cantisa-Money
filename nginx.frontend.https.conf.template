@@ -1,0 +1,18 @@
+server {
+    listen ${FRONTEND_PORT} ssl;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Chemins résolus et exportés par docker-entrypoint.d/19-select-nginx-template.sh — mêmes
+    # fichiers que ceux utilisés par le backend (voir docker-compose.yml, volume ./backend/certs).
+    ssl_certificate ${NGINX_CERT_FILE};
+    ssl_certificate_key ${NGINX_CERT_KEY_FILE};
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Vue Router en mode history (createWebHistory) : toute route inconnue de nginx doit retomber
+    # sur index.html pour laisser le frontend gérer le routage côté client.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

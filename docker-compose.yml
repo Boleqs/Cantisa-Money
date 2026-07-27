@@ -82,9 +82,18 @@ services:
         API_PORT: ${API_PORT:-5000}
         API_HTTPS: ${API_HTTPS:-false}
     environment:
-      # Seule variable encore lue à l'exécution (par l'entrypoint envsubst de l'image nginx) —
-      # voir Dockerfile.frontend.
+      # Lues à l'exécution par /docker-entrypoint.d/19-select-nginx-template.sh (voir
+      # Dockerfile.frontend) pour choisir entre servir en HTTP ou HTTPS et, dans ce dernier cas,
+      # localiser le bon certificat dans /certs (voir volume ci-dessous).
       FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+      API_HTTPS: ${API_HTTPS:-false}
+      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+    volumes:
+      # Même certificat que le backend (voir plus haut) — un certificat est lié à un nom d'hôte,
+      # pas à un port, pas besoin d'en générer un différent par service. Lecture seule : seul le
+      # backend en génère un par défaut.
+      - ./backend/certs:/certs:ro
     depends_on:
       - backend
     ports:
