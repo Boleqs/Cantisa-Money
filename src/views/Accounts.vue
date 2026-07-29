@@ -5,7 +5,7 @@
       <div class="title-block">
         <h1>Comptes</h1>
         <p class="subtitle">
-          Tous les comptes de l’utilisateur connecté, groupés {{ groupBy === "parent" ? "par compte parent" : "par type" }}.
+          Tous les comptes de l’utilisateur connecté, groupés {{ groupByLabel }}.
         </p>
       </div>
 
@@ -25,6 +25,7 @@
           <select v-model="groupBy" class="group-by-select">
             <option value="type">Type</option>
             <option value="parent">Compte parent</option>
+            <option value="institution">Institution</option>
           </select>
         </label>
 
@@ -81,7 +82,7 @@
                 {{ fmtAmount(group.rollup.value) }} {{ group.rollup.currency }}
               </div>
             </div>
-            <div v-else-if="group.items.length > 1" class="group-rollup">
+            <div v-else-if="groupBy !== 'institution' && group.items.length > 1" class="group-rollup">
               <div class="rollup-label muted-note">Devises multiples</div>
             </div>
             <button class="icon-btn" type="button" :aria-label="isCollapsed(group.key) ? 'Déplier' : 'Replier'">
@@ -109,6 +110,10 @@
                 <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc.name }}</h3>
                 <span v-if="acc.code" class="code">#{{ acc.code }}</span>
                 <span class="acc-badge currency">{{ currencyShort(acc.currency_id) }}</span>
+                <span v-if="institutionById(acc.institution_id)" class="acc-badge institution">
+                  <span class="acc-badge-dot" :style="{ background: institutionColorHex(acc.institution_id) }"></span>
+                  {{ institutionById(acc.institution_id).name }}
+                </span>
                 <span v-if="acc.account_subtype" class="acc-badge">{{ acc.account_subtype }}</span>
                 <span v-if="hasChildren(acc.id)" class="acc-badge soft">{{ childCount(acc.id) }} sous-compte{{ childCount(acc.id) > 1 ? 's' : '' }}</span>
                 <span v-if="acc.is_hidden" class="acc-badge danger">Caché</span>
@@ -152,7 +157,9 @@
     :account="selectedAccount"
     :commodities="commodities"
     :parent-accounts="accounts"
+    :institutions="institutions"
     @save="handleSave"
+    @institution-created="institutions.push($event)"
   />
 
   <!-- Clôture d'un compte non soldé : demande un compte de contrepartie pour la transaction
@@ -185,8 +192,11 @@ import { useRouter } from "vue-router";
 import axios from "axios";
 import AccountModal from "@/components/modal/AccountModal.vue";
 import { hasPermission } from "@/utils/permissions.js";
+import { currency as defaultCurrency } from "@/utils/settings.js";
 import { confirmDialog } from "@/utils/confirmDialog";
 import { useToast } from "@/utils/toast";
+import { normalizeSearch } from "@/utils/search.js";
+import { formatDate } from "@/utils/dateFormat.js";
 
 const toast = useToast();
 
@@ -195,6 +205,10 @@ const router = useRouter();
 const accounts = ref([]);
 const commodities = ref([]);
 const assets = ref([]);
+const institutions = ref([]);
+// Valeur autoritaire (positions + cash libre) des comptes-conteneurs de portefeuille, calculée
+// côté backend — voir fetchAccountValues() et assetValueByAccount plus bas.
+const accountValues = ref(new Map());
 
 // Modal state
 const showModal = ref(false);
@@ -241,16 +255,10 @@ const GROUP_ROLLUP_LABEL = {
 // coloré pos/neg, cf. accountFigure().
 const NEUTRAL_ROLLUP_GROUPS = new Set(["Income", "Expense", "Assets", "Equity"]);
 
-function normalizeText(v) {
-  return (v ?? "").toString().toLowerCase().trim();
-}
+const normalizeText = normalizeSearch;
 
 function fmtDate(v) {
-  if (!v) return "—";
-  // backend renvoie souvent un ISO ou une string parseable
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return String(v);
-  return d.toLocaleString("fr-FR");
+  return formatDate(v, { withTime: true });
 }
 
 function fmtAmount(v) {
@@ -263,6 +271,24 @@ function fmtAmount(v) {
 function commodityById(id) {
   return commodities.value.find((c) => String(c.id) === String(id));
 }
+
+function institutionById(id) {
+  if (!id) return null;
+  return institutions.value.find((i) => String(i.id) === String(id)) || null;
+}
+
+// Palette tenue synchronisée avec Tags.vue / Institutions.vue (même 7 valeurs).
+const INSTITUTION_COLOR_MAP = {
+  green: "#22c55e", red: "#ef4444", blue: "#3b82f6",
+  white: "#f1f5f9", black: "#1e293b", yellow: "#eab308", purple: "#a855f7",
+};
+function institutionColorHex(id) {
+  const inst = institutionById(id);
+  return INSTITUTION_COLOR_MAP[inst?.color] || "#6b7280";
+}
+
+const GROUP_BY_LABELS = { parent: "par compte parent", institution: "par institution", type: "par type" };
+const groupByLabel = computed(() => GROUP_BY_LABELS[groupBy.value] || "par type");
 
 const parentIds = computed(
   () => new Set(accounts.value.filter((a) => a.parent_id).map((a) => String(a.parent_id)))
@@ -278,7 +304,10 @@ function childCount(accountId) {
 
 // Un compte Assets/Equity qui détient des positions (AssetPossession) est valorisé par ces
 // positions plutôt que par son solde de flux (crédité/débité n'y représente que les mouvements
-// d'achat/vente, pas la valeur réelle) — même logique que AccountDetail.vue (point 8 du backlog).
+// d'achat/vente, pas la valeur réelle) — même logique que AccountDetail.vue. La valeur position-
+// seule calculée ci-dessous ne sert plus que de repli tant que fetchAccountValues() n'a pas
+// répondu : la valeur autoritaire (positions + cash libre éventuellement laissé sur le compte)
+// vient du backend (GET /api/wealth/account-values, voir accountValues).
 const assetValueByAccount = computed(() => {
   const map = new Map();
   for (const a of assets.value) {
@@ -290,6 +319,10 @@ const assetValueByAccount = computed(() => {
       entry.positionsCount += 1;
       map.set(key, entry);
     }
+  }
+  for (const [key, entry] of map) {
+    const backendValue = accountValues.value.get(key);
+    if (backendValue != null) entry.value = backendValue;
   }
   return map;
 });
@@ -427,6 +460,11 @@ async function fetchAccounts() {
   accounts.value = Array.isArray(data?.response_data) ? data.response_data : [];
 }
 
+async function fetchInstitutions() {
+  const { data } = await axios.get("/api/institutions");
+  institutions.value = Array.isArray(data?.response_data) ? data.response_data : [];
+}
+
 async function fetchAssets() {
   // Valeur des positions par compte (voir accountFigure) — seulement si la permission est
   // accordée, pour ne pas déclencher un 403 inutile pour les utilisateurs sans accès Patrimoine.
@@ -438,13 +476,27 @@ async function fetchAssets() {
   assets.value = Array.isArray(data?.response_data) ? data.response_data : [];
 }
 
+async function fetchAccountValues() {
+  // Valeur position + cash libre par compte-conteneur (voir assetValueByAccount) — même garde de
+  // permission que fetchAssets(), l'endpoint est sous la même permission Patrimoine.
+  if (!hasPermission("Patrimoine")) {
+    accountValues.value = new Map();
+    return;
+  }
+  const { data } = await axios.get("/api/wealth/account-values", {
+    params: { currency: defaultCurrency.value },
+  });
+  const values = data?.response_data?.values || {};
+  accountValues.value = new Map(Object.entries(values));
+}
+
 async function reload() {
   loading.value = true;
   error.value = "";
   try {
     // commodities avant accounts pour afficher les devises correctement
     await fetchCommodities();
-    await Promise.all([fetchAccounts(), fetchAssets()]);
+    await Promise.all([fetchAccounts(), fetchAssets(), fetchInstitutions(), fetchAccountValues()]);
   } catch (e) {
     // erreurs typiques : 401 si auth invalide, ou backend down
     const msg =
@@ -478,6 +530,7 @@ async function handleSave(form) {
         description: form.description,
         currency_id: form.currency_id,
         parent_id: form.parent_id || undefined,
+        institution_id: form.institution_id || null,
         account_type: form.account_type || 'Current',
         account_subtype: form.account_subtype || undefined,
         is_virtual: form.is_virtual,
@@ -492,6 +545,7 @@ async function handleSave(form) {
         description: form.description,
         currency_id: form.currency_id,
         parent_id: form.parent_id || undefined,
+        institution_id: form.institution_id || null,
         account_type: form.account_type || 'Current',
         account_subtype: form.account_subtype || undefined,
         is_virtual: form.is_virtual,
@@ -600,6 +654,7 @@ async function reopenAccount(acc) {
       description: acc.description,
       currency_id: acc.currency_id,
       parent_id: acc.parent_id || undefined,
+      institution_id: acc.institution_id || null,
       account_type: acc.account_type,
       account_subtype: acc.account_subtype || undefined,
       is_virtual: acc.is_virtual,
@@ -692,7 +747,8 @@ function splitByRootAccount(items) {
   return groups;
 }
 
-// Grouping selon groupBy : par type de compte (défaut) ou par compte parent racine
+// Grouping selon groupBy : par type de compte (défaut), par compte parent racine ou par
+// institution bancaire (bucket "Sans institution" pour les comptes non rattachés).
 const groupedAccounts = computed(() => {
   if (groupBy.value === "parent") {
     return splitByRootAccount(filteredAccounts.value)
@@ -704,6 +760,31 @@ const groupedAccounts = computed(() => {
         items: g.items,
         rollup: groupRollup(g.labelKey, g.items),
       }));
+  }
+
+  if (groupBy.value === "institution") {
+    const map = new Map();
+    for (const acc of filteredAccounts.value) {
+      const key = acc.institution_id ? String(acc.institution_id) : "__none__";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(acc);
+    }
+    const keys = Array.from(map.keys()).sort((a, b) => {
+      if (a === "__none__") return 1;
+      if (b === "__none__") return -1;
+      const la = institutionById(a)?.name || "";
+      const lb = institutionById(b)?.name || "";
+      return normalizeText(la).localeCompare(normalizeText(lb), "fr");
+    });
+    return keys.map((key) => {
+      const items = buildTreeFlat(map.get(key));
+      return {
+        key,
+        label: key === "__none__" ? "Sans institution" : institutionById(key)?.name || "—",
+        items,
+        rollup: null,
+      };
+    });
   }
 
   // Regrouper par type
@@ -1075,6 +1156,17 @@ const groupedAccounts = computed(() => {
 .acc-badge.soft {
   background: transparent;
   color: #9ca3af;
+}
+.acc-badge.institution {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.acc-badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 .acc-badge.danger {
   border-color: rgba(239, 68, 68, 0.35);

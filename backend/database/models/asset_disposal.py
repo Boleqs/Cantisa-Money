@@ -27,7 +27,7 @@ class AssetDisposal(Base):
     possession_id:uuid = Column(UUID(as_uuid=True))
     # Quantité cédée par CETTE vente (pas la quantité restante du lot, qui se déduit en sommant
     # toutes les cessions liées à un possession_id — voir _remaining_quantity_as_of dans wealth.py).
-    quantity:int = Column(Integer, nullable=False, default=0)
+    quantity = Column(Numeric(18, 6), nullable=False, default=0)
     sale_price:int = Column(Numeric, nullable=True)
     sale_price_native:int = Column(Numeric, nullable=True)
     sale_date:datetime = Column(DateTime, nullable=False)

@@ -223,13 +223,22 @@ class TaxRoutes:
             return settings.currency if settings else 'EUR'
 
         _rate_cache = {}
+        # Peuplé par _rate_to() : codes devise pour lesquels aucun taux de change en cache n'a été
+        # trouvé — le montant correspondant est alors silencieusement compté comme 0 (voir _rate_to),
+        # ce qui peut sous-estimer le revenu imposable sans que rien ne le signale à l'utilisateur.
+        # Exposé en sortie (income.currency_conversion_incomplete), même principe que
+        # amount_spent_incomplete sur les budgets.
+        _missing_rate_currencies = set()
 
         def _rate_to(code, target_currency):
             if code == target_currency:
                 return 1.0
             key = (code, target_currency)
             if key not in _rate_cache:
-                _rate_cache[key] = get_fx_rate(code, target_currency, FxRates) or 0.0
+                rate = get_fx_rate(code, target_currency, FxRates)
+                if rate is None:
+                    _missing_rate_currencies.add(code)
+                _rate_cache[key] = rate or 0.0
             return _rate_cache[key]
 
         def _ensure_default_regime(user_id):
@@ -549,6 +558,8 @@ class TaxRoutes:
                     'real_estate_net': round(real_estate_net, 2),
                     'extra_household_income': round(extra_income, 2),
                     'taxable_income_total': round(taxable_income_total, 2),
+                    'currency_conversion_incomplete': bool(_missing_rate_currencies),
+                    'missing_rate_currencies': sorted(_missing_rate_currencies),
                 },
                 'computation': computation,
                 'capital_gains': capital_gains,

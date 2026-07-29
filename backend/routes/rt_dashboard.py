@@ -8,6 +8,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import get_fx_rate, get_fx_rate_series
+from backend.utils.wealth import get_portfolio_container_account_values
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
@@ -29,7 +30,8 @@ def _month_start(y, m):
 
 
 class DashboardRoutes:
-    def __init__(self, app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings):
+    def __init__(self, app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings,
+                 Assets=None, AssetPossession=None, AssetDisposal=None):
         ROUTE_PATH = f"{ROOT_PATH}/dashboard"
 
         @app.route(f"{ROUTE_PATH}/stats", methods=['GET'])
@@ -79,13 +81,28 @@ class DashboardRoutes:
             real_flow_tx = DB.session.query(Splits.tx_id).filter(Splits.account_id.in_(ie_ids)).distinct()
 
             # ── KPIs ──────────────────────────────────────────────────────────
+            # Comptes-conteneurs de portefeuille (ex. "Compte Titres") : total_earned - total_spent
+            # n'y reflète que le coût d'achat figé au moment de l'opération, pas la valeur de marché
+            # actuelle — on utilise à la place la valorisation par position (+ cash libre éventuel)
+            # calculée par get_portfolio_container_account_values, cohérente avec Accounts.vue /
+            # AccountDetail.vue qui font de même.
+            container_values = {}
+            if AssetPossession is not None and Assets is not None:
+                container_values = get_portfolio_container_account_values(
+                    Accounts, Assets, AssetPossession, AssetDisposal, Splits, Commodities, FxRates,
+                    user_id, target_currency)
+
+            def account_value(a):
+                override = container_values.get(str(a.id))
+                if override is not None:
+                    return override
+                return (float(a.total_earned or 0) - float(a.total_spent or 0)) * rate_to_target(account_currency(a))
+
             current_balance = sum(
-                (float(a.total_earned or 0) - float(a.total_spent or 0)) * rate_to_target(account_currency(a))
-                for a in all_accounts if a.account_type == 'Current'
+                account_value(a) for a in all_accounts if a.account_type == 'Current'
             )
             assets_balance = sum(
-                (float(a.total_earned or 0) - float(a.total_spent or 0)) * rate_to_target(account_currency(a))
-                for a in all_accounts if a.account_type == 'Assets'
+                account_value(a) for a in all_accounts if a.account_type == 'Assets'
             )
 
             monthly_income = 0.0
@@ -245,8 +262,7 @@ class DashboardRoutes:
             # Patrimoine (voir GET /api/wealth/overview) qui inclut aussi le portefeuille — les soldes
             # bancaires seuls n'en font pas partie et n'ont donc pas de distinction brut/net ici.
             net_worth = sum(
-                (float(a.total_earned or 0) - float(a.total_spent or 0)) * rate_to_target(account_currency(a))
-                for a in all_accounts if a.account_type in WEALTH_TYPES
+                account_value(a) for a in all_accounts if a.account_type in WEALTH_TYPES
             )
 
             # ── Historique du patrimoine net (12 mois) ────────────────────────
@@ -328,4 +344,5 @@ class DashboardRoutes:
                 'balance_history': balance_history,
                 'expenses_by_category': expenses_by_category,
                 'networth_history': networth_history,
+                'container_account_values': container_values,
             }, HttpCode.OK)

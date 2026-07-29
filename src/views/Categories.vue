@@ -6,6 +6,15 @@
         <p class="subtitle">Organisez vos transactions par catégorie.</p>
       </div>
       <div class="header-actions">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="search"
+            class="search-input"
+            type="text"
+            placeholder="Rechercher une catégorie…"
+          />
+        </div>
         <button class="btn" :disabled="loading" @click="reload">
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
@@ -18,6 +27,7 @@
 
     <div v-if="loading && !categories.length" class="empty">Chargement…</div>
     <div v-else-if="!loading && !categories.length" class="empty">Aucune catégorie.</div>
+    <div v-else-if="!filteredCategories.length" class="empty">Aucune catégorie ne correspond à la recherche.</div>
 
     <table v-else class="table">
       <thead>
@@ -30,7 +40,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in categories" :key="c.id">
+        <tr v-for="c in filteredCategories" :key="c.id">
           <td>{{ c.name }}</td>
           <td class="muted">{{ c.description || '—' }}</td>
           <td class="muted">{{ taxTreatmentLabel(c.tax_treatment) }}</td>
@@ -69,20 +79,30 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { normalizeSearch } from '@/utils/search.js'
 
 const toast = useToast()
 
 const categories = ref([])
+const search = ref('')
 const loading = ref(false)
 const error = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
 const form = ref({ name: '', description: '', tax_treatment: null })
+
+const filteredCategories = computed(() => {
+  const q = normalizeSearch(search.value)
+  if (!q) return categories.value
+  return categories.value.filter(c =>
+    normalizeSearch(c.name).includes(q) || normalizeSearch(c.description || '').includes(q)
+  )
+})
 
 const { shaking, shake } = useModalShake()
 useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
@@ -190,6 +210,19 @@ onMounted(() => reload())
 .title-block h1 { margin: 0; font-size: 28px; }
 .subtitle { margin: 6px 0 0; color: #9ca3af; font-size: 14px; }
 .header-actions { display: flex; gap: 10px; align-items: center; }
+
+.search-wrapper { position: relative; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.7; }
+.search-input {
+  padding: 10px 10px 10px 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  outline: none;
+  width: 240px;
+  max-width: 60vw;
+}
 
 .btn {
   border: 1px solid rgba(148, 163, 184, 0.25);

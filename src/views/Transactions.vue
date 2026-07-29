@@ -106,8 +106,32 @@
 
     <!-- Liste -->
     <div v-else class="list">
-      <div v-for="tx in transactions" :key="tx.id" class="card">
+      <!-- Sélection groupée -->
+      <div class="select-all-row">
+        <label class="tx-select">
+          <input type="checkbox" :checked="allSelectedOnPage" @change="toggleSelectAllOnPage" />
+          <span>Tout sélectionner sur cette page</span>
+        </label>
+      </div>
+      <div v-if="selectedIds.size > 0" class="bulk-toolbar">
+        <span class="bulk-count">{{ selectedIds.size }} sélectionnée(s)</span>
+        <button class="btn btn-sm" @click="clearSelection">Désélectionner tout</button>
+        <span class="controls-sep"></span>
+        <select v-model="bulkCategoryId" class="filter-input bulk-select">
+          <option :value="null">— Catégorie —</option>
+          <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+        <button class="btn btn-sm" :disabled="bulkCategoryId === null || bulkApplying" @click="applyBulkCategory">Appliquer la catégorie</button>
+        <button class="btn btn-sm" :disabled="bulkApplying" @click="applyBulkCleared(true)">Marquer pointées</button>
+        <button class="btn btn-sm" :disabled="bulkApplying" @click="applyBulkCleared(false)">Marquer non pointées</button>
+        <button class="btn btn-sm btn-danger" :disabled="bulkApplying" @click="bulkDelete">✕ Supprimer la sélection</button>
+      </div>
+
+      <div v-for="tx in transactions" :key="tx.id" class="card" :class="{ 'card-selected': selectedIds.has(tx.id) }">
         <div class="card-top">
+          <label class="tx-select">
+            <input type="checkbox" :checked="selectedIds.has(tx.id)" @change="toggleSelect(tx.id)" />
+          </label>
           <div class="meta">
             <div class="date-row">
               <span class="date">{{ fmtDate(tx.post_date) }}</span>
@@ -177,6 +201,7 @@ import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { formatDate } from '@/utils/dateFormat.js'
 
 const toast = useToast()
 
@@ -212,10 +237,7 @@ const pages = ref(1)
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(v) {
-  if (!v) return '—'
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return String(v)
-  return d.toLocaleDateString('fr-FR')
+  return formatDate(v)
 }
 
 function fmtAmount(v) {
@@ -287,12 +309,123 @@ async function reload() {
 async function reloadTx() {
   loading.value = true
   error.value = ''
+  // La sélection groupée ne survit pas à un rechargement (page/filtre changé, ou action groupée
+  // déjà appliquée) — évite une sélection "fantôme" sur des transactions qui ne sont plus affichées.
+  selectedIds.value = new Set()
   try {
     await fetchTransactions()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
     loading.value = false
+  }
+}
+
+// ── sélection groupée ─────────────────────────────────────────────────────────
+
+const selectedIds = ref(new Set())
+const bulkCategoryId = ref(null)
+const bulkApplying = ref(false)
+
+function toggleSelect(id) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+const allSelectedOnPage = computed(() =>
+  transactions.value.length > 0 && transactions.value.every(t => selectedIds.value.has(t.id))
+)
+
+function toggleSelectAllOnPage() {
+  const next = new Set(selectedIds.value)
+  if (allSelectedOnPage.value) {
+    transactions.value.forEach(t => next.delete(t.id))
+  } else {
+    transactions.value.forEach(t => next.add(t.id))
+  }
+  selectedIds.value = next
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+function selectedTransactions() {
+  return transactions.value.filter(t => selectedIds.value.has(t.id))
+}
+
+// PATCH /api/transactions attend une représentation complète de la transaction (pas un patch
+// partiel) — on repart donc de chaque transaction déjà chargée, en ne changeant que le(s) champ(s)
+// visé(s) par l'action groupée, splits et description inclus pour ne rien écraser par erreur.
+function buildFullPatch(tx, overrides) {
+  return {
+    transaction_id: tx.id,
+    description: tx.description || null,
+    post_date: (tx.post_date || '').slice(0, 10),
+    effective_date: tx.effective_date ? tx.effective_date.slice(0, 10) : null,
+    category_id: tx.category_id || null,
+    is_cleared: tx.is_cleared,
+    splits: tx.splits.map(s => ({ account_id: s.account_id, quantity: s.quantity, description: s.description || null })),
+    ...overrides,
+  }
+}
+
+async function applyBulkCategory() {
+  if (bulkCategoryId.value === null || bulkApplying.value) return
+  const targets = selectedTransactions()
+  if (!targets.length) return
+  bulkApplying.value = true
+  error.value = ''
+  try {
+    await Promise.all(targets.map(tx => axios.patch('/api/transactions', buildFullPatch(tx, { category_id: bulkCategoryId.value }))))
+    toast.success(`Catégorie appliquée à ${targets.length} transaction(s).`)
+    bulkCategoryId.value = null
+    await reloadTx()
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la mise à jour groupée'
+  } finally {
+    bulkApplying.value = false
+  }
+}
+
+async function applyBulkCleared(value) {
+  const targets = selectedTransactions()
+  if (!targets.length || bulkApplying.value) return
+  bulkApplying.value = true
+  error.value = ''
+  try {
+    await Promise.all(targets.map(tx => axios.patch('/api/transactions', buildFullPatch(tx, { is_cleared: value }))))
+    toast.success(`${targets.length} transaction(s) mise(s) à jour.`)
+    await reloadTx()
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la mise à jour groupée'
+  } finally {
+    bulkApplying.value = false
+  }
+}
+
+async function bulkDelete() {
+  const targets = selectedTransactions()
+  if (!targets.length) return
+  const ok = await confirmDialog({
+    title: 'Supprimer les transactions sélectionnées',
+    message: `Supprimer définitivement ${targets.length} transaction(s) ? Cette action est irréversible.`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
+  bulkApplying.value = true
+  error.value = ''
+  try {
+    await Promise.all(targets.map(tx => axios.delete('/api/transactions', { params: { transaction_id: tx.id } })))
+    toast.success(`${targets.length} transaction(s) supprimée(s).`)
+    await reloadTx()
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la suppression groupée'
+  } finally {
+    bulkApplying.value = false
   }
 }
 
@@ -582,6 +715,60 @@ onUnmounted(() => document.removeEventListener('click', closeExportMenu))
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+}
+
+.card-selected {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.tx-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #9ca3af;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tx-select input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.select-all-row {
+  padding: 4px 4px 2px;
+}
+
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 12px;
+}
+
+.bulk-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+
+.controls-sep {
+  width: 1px;
+  align-self: stretch;
+  background: rgba(148, 163, 184, 0.25);
+}
+
+.bulk-select {
+  min-width: 200px;
 }
 
 .date-row {

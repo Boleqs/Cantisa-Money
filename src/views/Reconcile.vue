@@ -137,6 +137,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { formatDate } from '@/utils/dateFormat.js'
 
 const accounts = ref([])
 const commodities = ref([])
@@ -171,10 +172,7 @@ function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v ?? 0))
 }
 
-function fmtDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('fr-FR')
-}
+const fmtDate = formatDate
 
 // ── data ──────────────────────────────────────────────────────────────────────
 

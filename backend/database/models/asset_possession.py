@@ -19,8 +19,9 @@ class AssetPossession(Base):
         ForeignKeyConstraint(['tx_id'], ['transactions.id'], ondelete='SET NULL'),
         ForeignKeyConstraint(['source_split_id'], ['splits.id'], ondelete='SET NULL'),
         ForeignKeyConstraint(['dest_split_id'], ['splits.id'], ondelete='SET NULL'),
+        ForeignKeyConstraint(['dca_plan_id'], ['dca_plans.id'], ondelete='SET NULL'),
 
-        CheckConstraint("quantity <= 1000000000 AND quantity >= 0")
+        CheckConstraint("quantity <= 1000000000 AND quantity >= 0", name='asset_possession_quantity_check')
     )
 
     user_id:uuid = Column(UUID(as_uuid=True))
@@ -31,7 +32,10 @@ class AssetPossession(Base):
     tx_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     source_split_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     dest_split_id:uuid = Column(UUID(as_uuid=True), nullable=True)
-    quantity:int = Column(Integer, nullable=False, default=0)
+    # Non nul si ce lot provient d'une exécution de plan DCA (voir dca_plans.py) — permet de
+    # retrouver les lots générés par un plan sans dépendre du texte de la description.
+    dca_plan_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    quantity = Column(Numeric(18, 6), nullable=False, default=0)
     purchase_price:int = Column(Numeric, nullable=True)
     purchase_price_native:int = Column(Numeric, nullable=True)
     purchase_date:datetime = Column(DateTime, nullable=True)

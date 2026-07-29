@@ -88,6 +88,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import ReceiptOcrReview from '@/components/ReceiptOcrReview.vue'
+import { formatDate } from '@/utils/dateFormat.js'
 
 const router = useRouter()
 
@@ -105,10 +106,7 @@ function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0)
 }
 
-function fmtDate(v) {
-  if (!v) return '—'
-  return new Date(v).toLocaleDateString('fr-FR')
-}
+const fmtDate = formatDate
 
 function switchTab(tab) {
   activeTab.value = tab

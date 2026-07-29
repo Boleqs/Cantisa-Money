@@ -10,6 +10,7 @@ from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISS
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.utils.text_search import unaccent_contains
 
 REPORTS_PERM = VAR_PERMISSIONS_LIST['Pilotage']['id']
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
@@ -75,7 +76,7 @@ def _apply_operator(column, operator, value):
             raise ValueError("une liste non vide est attendue pour l'opérateur 'in'")
         return column.in_(value)
     if operator == 'contains':
-        return column.ilike(f"%{value}%")
+        return unaccent_contains(column, value)
     if operator == 'eq':
         return column == value
     if operator == 'ne':

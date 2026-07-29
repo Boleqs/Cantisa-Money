@@ -141,6 +141,7 @@ import LineGraph from '../components/graphs/LineGraph.vue'
 import LoanRateRevisionModal from '../components/modal/LoanRateRevisionModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { formatDate } from '@/utils/dateFormat.js'
 
 const toast = useToast()
 
@@ -158,10 +159,7 @@ const showRevisionModal = ref(false)
 function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0))
 }
-function fmtDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-}
+const fmtDate = formatDate
 function isNextUnpaid(i) {
   const firstUnpaid = installments.value.find(x => !x.is_paid)
   return firstUnpaid && firstUnpaid.id === i.id

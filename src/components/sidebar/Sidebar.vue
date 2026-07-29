@@ -13,7 +13,7 @@ import {
     faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
     faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
     faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
-    faUserShield, faUsers, faUserLock, faDatabase, faChartArea
+    faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins
 } from '@fortawesome/free-solid-svg-icons';
 
 export default {
@@ -44,7 +44,7 @@ export default {
             faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
             faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
             faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
-            faUserShield, faUsers, faUserLock, faDatabase, faChartArea
+            faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins
         }
     }
 }
@@ -61,29 +61,31 @@ export default {
         <div class="sidebar-nav">
             <SidebarLink to="/" :icon="faHouse">Accueil</SidebarLink>
 
-            <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification') || hasPermission('Crédits')">
+            <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')">
               <SidebarSectionTitle label="Gestion bancaire"/>
               <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard" :icon="faGaugeHigh">Dashboard</SidebarLink>
-              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :icon="faBuildingColumns" :paths="['/accounts', '/transactions', '/import']">
+              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :icon="faBuildingColumns" :paths="['/accounts', '/institutions', '/transactions', '/import']">
                 <SidebarLink to="/accounts" :icon="faListUl">Liste des comptes</SidebarLink>
+                <SidebarLink to="/institutions" :icon="faLandmark">Institutions</SidebarLink>
                 <SidebarLink to="/transactions" :icon="faRightLeft">Transactions</SidebarLink>
                 <SidebarLink to="/import" :icon="faFileImport">Importer</SidebarLink>
               </SidebarGroup>
               <SidebarLink v-if="hasPermission('Comptabilité')" to="/reconcile" :icon="faCheckDouble">Rapprochement</SidebarLink>
               <SidebarLink v-if="hasPermission('Planification')" to="/subscriptions" :icon="faArrowsRotate">Abonnements</SidebarLink>
-              <SidebarLink v-if="hasPermission('Crédits')" to="/credits" :icon="faHandHoldingDollar">Crédits</SidebarLink>
               <SidebarLink to="/invoices" :icon="faFileInvoiceDollar">Factures</SidebarLink>
               <SidebarLink v-if="hasPermission('Planification')" to="/budgets" :icon="faChartPie">Budgets</SidebarLink>
             </template>
 
-            <template v-if="hasPermission('Patrimoine')">
+            <template v-if="hasPermission('Patrimoine') || hasPermission('Crédits')">
               <SidebarSectionTitle label="Gestion financière"/>
-              <SidebarLink to="/patrimoine" :icon="faSackDollar">Vue d'ensemble</SidebarLink>
-              <SidebarLink to="/patrimoine/prediction" :icon="faChartArea">Prédiction</SidebarLink>
-              <SidebarGroup label="Portfolio" :icon="faChartLine" :paths="['/portfolio']">
+              <SidebarLink v-if="hasPermission('Patrimoine')" to="/patrimoine" :icon="faSackDollar">Vue d'ensemble</SidebarLink>
+              <SidebarLink v-if="hasPermission('Crédits')" to="/credits" :icon="faHandHoldingDollar">Crédits</SidebarLink>
+              <SidebarGroup v-if="hasPermission('Patrimoine')" label="Portfolio" :icon="faChartLine" :paths="['/portfolio', '/patrimoine/prediction', '/dca']">
                 <SidebarLink to="/portfolio" :icon="faLayerGroup">Liste des actifs</SidebarLink>
+                <SidebarLink to="/patrimoine/prediction" :icon="faChartArea">Prédiction</SidebarLink>
+                <SidebarLink to="/dca" :icon="faCoins">Investissement programmé</SidebarLink>
               </SidebarGroup>
-              <SidebarGroup label="Marchés" :icon="faChartColumn" :paths="['/markets/analyse', '/markets/watchlist', '/markets/scan']">
+              <SidebarGroup v-if="hasPermission('Patrimoine')" label="Marchés" :icon="faChartColumn" :paths="['/markets/analyse', '/markets/watchlist', '/markets/scan']">
                 <SidebarLink to="/markets/analyse" :icon="faMagnifyingGlassChart">Analyse fondamentale</SidebarLink>
                 <SidebarLink to="/markets/watchlist" :icon="faEye">Watchlist</SidebarLink>
                 <SidebarLink to="/markets/scan" :icon="faSatelliteDish">Scanner</SidebarLink>

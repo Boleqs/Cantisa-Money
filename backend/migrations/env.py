@@ -2,6 +2,14 @@ import os
 import sys
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
+# Le CLI `alembic` est un process séparé de app.py (qui fait ce même load_dotenv() en tête de
+# fichier) : sans cet appel, database.config retombe silencieusement sur le mot de passe généré
+# obsolète (backend/instance/db_password.txt) et la base par défaut "cmm" au lieu de lire
+# backend/.env, et échoue en authentification sans que le vrai message d'erreur soit clair
+# (masqué en plus par le bug d'encodage connu de psycopg2 sur les messages Postgres en français).
+load_dotenv()
+
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 

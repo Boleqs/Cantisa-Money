@@ -32,6 +32,7 @@ class AddAccountSchema(Schema):
     description = fields.String(required=True)
     currency_id = fields.String(required=True)
     parent_id = fields.UUID()
+    institution_id = fields.UUID(load_default=None, allow_none=True)
     account_type = fields.String()
     account_subtype = fields.String()
     is_virtual = fields.Boolean()
@@ -46,6 +47,7 @@ class UpdateAccountSchema(Schema):
     description = fields.String(required=True)
     currency_id = fields.String(required=True)
     parent_id = fields.UUID()
+    institution_id = fields.UUID(load_default=None, allow_none=True)
     account_type = fields.String()
     account_subtype = fields.String()
     is_virtual = fields.Boolean()
@@ -71,7 +73,8 @@ class CloseAccountSchema(Schema):
 
 
 class AccountsRoutes:
-    def __init__(self, app, DB, Users, Accounts, Splits=None, Transactions=None, Commodities=None, FxRates=None):
+    def __init__(self, app, DB, Users, Accounts, Splits=None, Transactions=None, Commodities=None, FxRates=None,
+                 Institutions=None):
         ROUTE_PATH = f"{ROOT_PATH}/accounts"
 
         @app.route(f"{ROUTE_PATH}", methods=["POST"])
@@ -102,12 +105,21 @@ class AccountsRoutes:
                             "Le compte enfant doit avoir la même devise que son compte parent",
                             HttpCode.BAD_REQUEST)
 
+                institution_id = data.get('institution_id')
+                if institution_id and Institutions is not None:
+                    institution = Institutions.query.filter(
+                        Institutions.user_id == get_jwt_identity(),
+                        Institutions.id == institution_id).first()
+                    if not institution:
+                        return json_response("Institution introuvable", HttpCode.BAD_REQUEST)
+
                 account = Accounts(
                     user_id=get_jwt_identity(),
                     name=data.get("name"),
                     description=data.get("description"),
                     currency_id=data.get("currency_id"),
                     parent_id=data.get("parent_id"),
+                    institution_id=institution_id,
                     account_type=data.get("account_type"),
                     account_subtype=data.get("account_subtype"),
                     is_virtual=data.get("is_virtual", False),
@@ -169,6 +181,14 @@ class AccountsRoutes:
                     "Impossible de changer la devise : au moins un compte enfant a une devise différente",
                     HttpCode.BAD_REQUEST)
 
+            new_institution_id = data.get('institution_id')
+            if new_institution_id and Institutions is not None:
+                institution = Institutions.query.filter(
+                    Institutions.user_id == get_jwt_identity(),
+                    Institutions.id == new_institution_id).first()
+                if not institution:
+                    return json_response("Institution introuvable", HttpCode.BAD_REQUEST)
+
             # Champs requis par le schéma : toujours présents. Les autres sont optionnels
             # (le client peut les omettre) -> on garde alors la valeur actuelle du compte
             # plutôt que de l'écraser par None (ce qui plantait sur les colonnes NOT NULL
@@ -177,6 +197,7 @@ class AccountsRoutes:
             account.description = data.get('description')
             account.currency_id = data.get('currency_id')
             account.parent_id = data.get('parent_id', account.parent_id)
+            account.institution_id = new_institution_id
             account.account_type = data.get('account_type', account.account_type)
             account.account_subtype = data.get('account_subtype', account.account_subtype)
             account.is_virtual = data.get('is_virtual', account.is_virtual)

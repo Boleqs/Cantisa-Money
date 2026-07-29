@@ -114,7 +114,7 @@
               <span class="acc-type chip">{{ a.account_type }}</span>
             </div>
             <span class="acc-balance" :class="accountBalance(a) >= 0 ? 'pos' : 'neg'">
-              {{ fmtAmountNative(accountBalance(a), a.id) }}
+              {{ accountBalanceLabel(a) }}
             </span>
           </div>
         </div>
@@ -184,6 +184,9 @@ import LineGraph from '../components/graphs/LineGraph.vue'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 const kpis = ref({ current_balance: 0, assets_balance: 0, monthly_income: 0, monthly_expenses: 0, net_worth: 0 })
+// Valeur autoritaire (positions + cash libre, dans la devise par défaut) des comptes-conteneurs de
+// portefeuille — voir accountBalance()/accountBalanceLabel() plus bas.
+const containerAccountValues = ref(new Map())
 const balanceHistory = ref([])
 const networthHistory = ref([])
 const expensesByCategory = ref([])
@@ -229,13 +232,27 @@ function fmtDate(v) {
   return new Date(v).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
 }
 
+// Pour un compte-conteneur de portefeuille (ex. "Compte Titres"), total_earned - total_spent ne
+// reflète que le coût d'achat figé, pas la valeur de marché actuelle — on utilise à la place la
+// valeur calculée côté backend (positions + cash libre), déjà dans la devise par défaut plutôt que
+// la devise native du compte, d'où le helper de libellé dédié ci-dessous (fmtAmountNative
+// afficherait à tort le code devise natif sur un montant déjà converti).
 function accountBalance(a) {
+  const override = containerAccountValues.value.get(String(a.id))
+  if (override != null) return override
   return (Number(a.total_earned) || 0) - (Number(a.total_spent) || 0)
+}
+function accountBalanceLabel(a) {
+  const override = containerAccountValues.value.get(String(a.id))
+  if (override != null) return fmtAmount(override)
+  return fmtAmountNative(accountBalance(a), a.id)
 }
 
 function budgetPct(b) {
   if (!b.amount_allocated) return 0
-  return Math.round((b.amount_spent / b.amount_allocated) * 100)
+  // amount_spent négatif (budget compte entier, plus d'entrées que de sorties) -> 0% utilisé,
+  // pas un pourcentage négatif (largeur de barre invalide, cf. Budgets.vue::spentFloored).
+  return Math.round((Math.max(b.amount_spent, 0) / b.amount_allocated) * 100)
 }
 function budgetColor(b) {
   const p = budgetPct(b)
@@ -302,6 +319,7 @@ async function reload() {
     ])
     const stats = statsRes.data?.response_data
     kpis.value = stats?.kpis ?? kpis.value
+    containerAccountValues.value = new Map(Object.entries(stats?.container_account_values || {}))
     balanceHistory.value = Array.isArray(stats?.balance_history) ? stats.balance_history : []
     networthHistory.value = Array.isArray(stats?.networth_history) ? stats.networth_history : []
     expensesByCategory.value = Array.isArray(stats?.expenses_by_category) ? stats.expenses_by_category : []

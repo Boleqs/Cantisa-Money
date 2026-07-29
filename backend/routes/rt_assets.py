@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, date
+from decimal import Decimal
 
 from marshmallow import Schema, fields, ValidationError, validate
 from flask import request
@@ -9,6 +10,7 @@ from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISS
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import fetch_live_price, convert_amount, get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.utils.portfolio_ops import resolve_current_value, resolve_purchase_price, resolve_split_amounts, format_qty
 
 VALID_ASSET_TYPES = ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')
 ASSETS_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
@@ -47,14 +49,14 @@ class AddPossessionSchema(Schema):
     asset_id = fields.UUID(required=True)
     account_id = fields.UUID(required=True)
     source_account_id = fields.UUID(load_default=None)
-    quantity = fields.Integer(required=True)
+    quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
     purchase_price = fields.Decimal(required=True, as_string=False)
     purchase_date = fields.Date(required=True)
 
 
 class UpdatePossessionSchema(Schema):
     possession_id = fields.UUID(required=True)
-    quantity = fields.Integer(required=True)
+    quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
     purchase_price = fields.Decimal(required=True, as_string=False)
     purchase_date = fields.Date(required=True)
 
@@ -65,7 +67,7 @@ class DeletePossessionSchema(Schema):
 
 class SellPossessionSchema(Schema):
     possession_id = fields.UUID(required=True)
-    quantity = fields.Integer(required=True, validate=validate.Range(min=1))
+    quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
     sale_price = fields.Decimal(required=True, as_string=False)  # devise native si track_live_price, miroir purchase_price
     sale_date = fields.Date(required=True)
     dest_account_id = fields.UUID(load_default=None)
@@ -122,14 +124,15 @@ def _possession_to_dict(p, disposals=None):
         'account_id': str(p.account_id),
         'source_account_id': str(p.source_account_id) if p.source_account_id else None,
         'tx_id': str(p.tx_id) if p.tx_id else None,
-        'quantity': p.quantity,
-        'remaining_quantity': p.quantity - disposed_qty,
+        'dca_plan_id': str(p.dca_plan_id) if p.dca_plan_id else None,
+        'quantity': float(p.quantity),
+        'remaining_quantity': float(p.quantity - disposed_qty),
         'purchase_price': float(p.purchase_price) if p.purchase_price is not None else None,
         'purchase_price_native': float(p.purchase_price_native) if p.purchase_price_native is not None else None,
         'purchase_date': p.purchase_date.isoformat() if p.purchase_date else None,
         'created_at': p.created_at.isoformat() if p.created_at else None,
         'disposals': [{
-            'id': str(d.id), 'quantity': d.quantity,
+            'id': str(d.id), 'quantity': float(d.quantity),
             'sale_date': d.sale_date.isoformat() if d.sale_date else None,
             'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
         } for d in disposals],
@@ -154,62 +157,6 @@ def _sync_asset_value_per_unit(AssetValuations, asset):
     latest = AssetValuations.query.filter_by(asset_id=asset.id).order_by(AssetValuations.valuation_date.desc()).first()
     if latest:
         asset.value_per_unit = latest.value_per_unit
-
-
-def _resolve_current_value(symbol, target_currency, FxRates):
-    """Récupère le prix de marché actuel du ticker et le convertit vers target_currency.
-    Retourne (value_per_unit, error_response) — error_response est None si succès."""
-    result = fetch_live_price(symbol)
-    if not result['valid']:
-        return None, json_response(result['error'], HttpCode.BAD_REQUEST)
-    if result['price'] is None:
-        return None, json_response(f"Prix indisponible pour '{symbol}'", HttpCode.BAD_REQUEST)
-
-    value_per_unit = convert_amount(result['price'], result['currency'], target_currency, FxRates)
-    if value_per_unit is None:
-        return None, json_response(
-            f"Taux de change {result['currency']} → {target_currency} indisponible", HttpCode.BAD_REQUEST)
-    return value_per_unit, None
-
-
-def _resolve_purchase_price(symbol, target_currency, purchase_price_native, purchase_date, FxRates):
-    """Convertit un prix d'achat natif (devise du ticker) au taux historique de purchase_date.
-    Retourne (purchase_price, error_response) — error_response est None si succès."""
-    result = fetch_live_price(symbol)
-    if not result['valid']:
-        return None, json_response(result['error'], HttpCode.BAD_REQUEST)
-
-    purchase_price = convert_amount(purchase_price_native, result['currency'], target_currency, FxRates, on_date=purchase_date)
-    if purchase_price is None:
-        return None, json_response(
-            f"Taux de change historique {result['currency']} → {target_currency} indisponible pour la date d'achat",
-            HttpCode.BAD_REQUEST)
-    return purchase_price, None
-
-
-def _resolve_split_amounts(Accounts, Commodities, dest_account, source_account, total_cost, cost_currency, purchase_date, FxRates):
-    """Convertit total_cost (exprimé dans cost_currency) vers la devise propre de chaque compte
-    (chaque compte reçoit un montant dans sa propre devise, cf. rt_transactions.py). Retourne
-    (dest_amount, source_amount, dest_fx_rate, error_response). La transaction générée est dans la
-    devise du compte source (cf. add_possession) : dest_fx_rate permet de reconvertir dest_amount
-    vers cette devise (Splits.fx_rate, même convention que rt_transactions.py)."""
-    dest_commodity = Commodities.query.filter_by(id=dest_account.currency_id).first()
-    dest_code = dest_commodity.short_name if dest_commodity else cost_currency
-    dest_amount = convert_amount(total_cost, cost_currency, dest_code, FxRates, on_date=purchase_date)
-    if dest_amount is None:
-        return None, None, None, json_response(
-            f"Taux de change historique {cost_currency} → {dest_code} indisponible", HttpCode.BAD_REQUEST)
-
-    source_commodity = Commodities.query.filter_by(id=source_account.currency_id).first()
-    source_code = source_commodity.short_name if source_commodity else cost_currency
-    source_amount = convert_amount(total_cost, cost_currency, source_code, FxRates, on_date=purchase_date)
-    if source_amount is None:
-        return None, None, None, json_response(
-            f"Taux de change historique {cost_currency} → {source_code} indisponible", HttpCode.BAD_REQUEST)
-
-    dest_fx_rate = get_fx_rate(dest_code, source_code, FxRates, on_date=purchase_date) or 1.0
-
-    return dest_amount, source_amount, dest_fx_rate, None
 
 
 def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits,
@@ -258,8 +205,8 @@ class AssetsRoutes:
                 for disp in disposals:
                     disposals_by_possession.setdefault(disp.possession_id, []).append(disp)
 
-                total_qty = sum(p.quantity - sum(d.quantity for d in disposals_by_possession.get(p.id, []))
-                                 for p in possessions)
+                total_qty = float(sum(p.quantity - sum(d.quantity for d in disposals_by_possession.get(p.id, []))
+                                       for p in possessions))
                 total_value = round(total_qty * float(a.value_per_unit or 0), 2)
                 native_commodity = commodities_by_id.get(a.commodity_id)
                 native_code = native_commodity.short_name if native_commodity else target_currency
@@ -287,7 +234,7 @@ class AssetsRoutes:
                 commodity = Commodities.query.filter_by(id=data['commodity_id']).first()
                 if not commodity:
                     return json_response('Commodity not found', HttpCode.NOT_FOUND)
-                value_per_unit, error = _resolve_current_value(data['symbol'], commodity.short_name, FxRates)
+                value_per_unit, error = resolve_current_value(data['symbol'], commodity.short_name, FxRates)
                 if error:
                     return error
                 last_price_updated_at = datetime.now()
@@ -330,7 +277,7 @@ class AssetsRoutes:
                 commodity = Commodities.query.filter_by(id=data['commodity_id']).first()
                 if not commodity:
                     return json_response('Commodity not found', HttpCode.NOT_FOUND)
-                value_per_unit, error = _resolve_current_value(data['symbol'], commodity.short_name, FxRates)
+                value_per_unit, error = resolve_current_value(data['symbol'], commodity.short_name, FxRates)
                 if error:
                     return error
                 last_price_updated_at = datetime.now()
@@ -388,7 +335,7 @@ class AssetsRoutes:
             commodity = Commodities.query.filter_by(id=a.commodity_id).first()
             if not commodity:
                 return json_response('Commodity not found', HttpCode.NOT_FOUND)
-            value_per_unit, error = _resolve_current_value(a.symbol, commodity.short_name, FxRates)
+            value_per_unit, error = resolve_current_value(a.symbol, commodity.short_name, FxRates)
             if error:
                 return error
             try:
@@ -580,7 +527,7 @@ class AssetsRoutes:
             purchase_price_native = data['purchase_price']
             purchase_price = purchase_price_native
             if a.track_live_price:
-                purchase_price, error = _resolve_purchase_price(
+                purchase_price, error = resolve_purchase_price(
                     a.symbol, commodity.short_name, purchase_price_native, data['purchase_date'], FxRates)
                 if error:
                     return error
@@ -588,7 +535,7 @@ class AssetsRoutes:
             dest_amount = source_amount = dest_fx_rate = None
             if source_account:
                 total_cost = float(data['quantity']) * float(purchase_price)
-                dest_amount, source_amount, dest_fx_rate, error = _resolve_split_amounts(
+                dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
                     Accounts, Commodities, dest_account, source_account, total_cost,
                     commodity.short_name, data['purchase_date'], FxRates)
                 if error:
@@ -603,7 +550,7 @@ class AssetsRoutes:
                         currency_id=source_account.currency_id,
                         post_date=data['purchase_date'],
                         effective_date=data['purchase_date'],
-                        description=f"Achat {a.symbol} x{data['quantity']}",
+                        description=f"Achat {a.symbol} x{format_qty(data['quantity'])}",
                         category_id=None,
                         is_cleared=True,
                     )
@@ -669,7 +616,7 @@ class AssetsRoutes:
             if a and a.track_live_price:
                 if not commodity:
                     return json_response('Commodity not found', HttpCode.NOT_FOUND)
-                purchase_price, error = _resolve_purchase_price(
+                purchase_price, error = resolve_purchase_price(
                     a.symbol, commodity.short_name, purchase_price_native, data['purchase_date'], FxRates)
                 if error:
                     return error
@@ -679,7 +626,7 @@ class AssetsRoutes:
                 dest_account = Accounts.query.filter_by(id=p.account_id).first()
                 source_account = Accounts.query.filter_by(id=p.source_account_id).first()
                 total_cost = float(data['quantity']) * float(purchase_price)
-                dest_amount, source_amount, dest_fx_rate, error = _resolve_split_amounts(
+                dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
                     Accounts, Commodities, dest_account, source_account, total_cost,
                     commodity.short_name, data['purchase_date'], FxRates)
                 if error:
@@ -697,7 +644,7 @@ class AssetsRoutes:
                     if tx:
                         tx.post_date = data['purchase_date']
                         tx.effective_date = data['purchase_date']
-                        tx.description = f"Achat {a.symbol} x{data['quantity']}"
+                        tx.description = f"Achat {a.symbol} x{format_qty(data['quantity'])}"
                     source_split = Splits.query.filter_by(id=p.source_split_id).first()
                     dest_split = Splits.query.filter_by(id=p.dest_split_id).first()
                     if source_split:
@@ -784,7 +731,7 @@ class AssetsRoutes:
             sale_price_native = data['sale_price']
             sale_price = sale_price_native
             if a.track_live_price:
-                sale_price, error = _resolve_purchase_price(
+                sale_price, error = resolve_purchase_price(
                     a.symbol, commodity.short_name, sale_price_native, data['sale_date'], FxRates)
                 if error:
                     return error
@@ -808,7 +755,7 @@ class AssetsRoutes:
                 # crédité (le cash qui entre), "source_account" est le compte débité (la position
                 # qui sort) — cf. décision de conception Phase 2 (vente = renversement à 2 splits,
                 # au montant de la vente, pas au coût d'achat).
-                dest_amount, source_amount, dest_fx_rate, error = _resolve_split_amounts(
+                dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
                     Accounts, Commodities, dest_account, position_account, total_proceeds,
                     commodity.short_name, data['sale_date'], FxRates)
                 if error:
@@ -816,7 +763,7 @@ class AssetsRoutes:
 
             realized_gain = None
             if p.purchase_price is not None:
-                realized_gain = (float(sale_price) - float(p.purchase_price)) * data['quantity']
+                realized_gain = (float(sale_price) - float(p.purchase_price)) * float(data['quantity'])
 
             holding_period_days = None
             if p.purchase_date:
@@ -832,7 +779,7 @@ class AssetsRoutes:
                         currency_id=position_account.currency_id,
                         post_date=data['sale_date'],
                         effective_date=data['sale_date'],
-                        description=f"Vente {a.symbol} x{data['quantity']}",
+                        description=f"Vente {a.symbol} x{format_qty(data['quantity'])}",
                         category_id=None,
                         is_cleared=True,
                     )

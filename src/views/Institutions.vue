@@ -2,52 +2,55 @@
   <div class="page">
     <header class="page-header">
       <div class="title-block">
-        <h1>Tags</h1>
-        <p class="subtitle">Étiquetez vos opérations pour un filtrage avancé.</p>
+        <h1>Institutions bancaires</h1>
+        <p class="subtitle">Les banques auxquelles rattacher vos comptes.</p>
       </div>
       <div class="header-actions">
-        <div class="search-wrapper">
-          <span class="search-icon">🔍</span>
-          <input
-            v-model="search"
-            class="search-input"
-            type="text"
-            placeholder="Rechercher un tag…"
-          />
-        </div>
         <button class="btn" :disabled="loading" @click="reload">
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
         </button>
-        <button class="btn btn-primary" @click="openCreate">+ Nouveau tag</button>
+        <button class="btn btn-primary" @click="openCreate">+ Nouvelle institution</button>
       </div>
     </header>
 
     <div v-if="error" class="alert"><strong>Erreur :</strong> {{ error }}</div>
 
-    <div v-if="loading && !tags.length" class="empty">Chargement…</div>
-    <div v-else-if="!loading && !tags.length" class="empty">Aucun tag.</div>
-    <div v-else-if="!filteredTags.length" class="empty">Aucun tag ne correspond à la recherche.</div>
+    <div v-if="loading && !institutions.length" class="empty">Chargement…</div>
+    <div v-else-if="!loading && !institutions.length" class="empty">Aucune institution.</div>
 
-    <div v-else class="chips-list">
-      <div v-for="t in filteredTags" :key="t.id" class="chip-row">
-        <span class="color-dot" :style="{ background: colorHex(t.color) }"></span>
-        <span class="chip-name">{{ t.name }}</span>
-        <span class="chip-color muted">{{ t.color }}</span>
-        <span v-if="t.tax_treatment" class="chip-tax-badge">{{ taxTreatmentLabel(t.tax_treatment) }}</span>
-        <span class="chip-actions">
-          <button class="btn-action" @click="openEdit(t)">✎</button>
-          <button class="btn-action btn-danger" @click="deleteTag(t)">✕</button>
-        </span>
-      </div>
-    </div>
+    <table v-else class="table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Nom</th>
+          <th>BIC</th>
+          <th>Site web</th>
+          <th>Notes</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="i in institutions" :key="i.id">
+          <td><span class="color-dot" :style="{ background: colorHex(i.color) }"></span></td>
+          <td>{{ i.name }}</td>
+          <td class="muted">{{ i.bic || '—' }}</td>
+          <td class="muted">{{ i.website || '—' }}</td>
+          <td class="muted">{{ i.notes || '—' }}</td>
+          <td class="actions">
+            <button class="btn-action" @click="openEdit(i)">✎</button>
+            <button class="btn-action btn-danger" @click="deleteInstitution(i)">✕</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
 
     <!-- Modal inline -->
     <div v-if="showModal" class="modal-backdrop" @click.self="shake">
       <div class="modal" :class="{ 'modal-shake': shaking }">
-        <h2>{{ editTarget ? 'Modifier le tag' : 'Nouveau tag' }}</h2>
+        <h2>{{ editTarget ? 'Modifier' : 'Nouvelle institution' }}</h2>
         <label>Nom *
-          <input v-model="form.name" placeholder="Voyage, Loisirs…" />
+          <input v-model="form.name" placeholder="Banque Populaire…" />
         </label>
         <label>Couleur
           <select v-model="form.color">
@@ -55,13 +58,15 @@
           </select>
         </label>
         <div class="color-preview" :style="{ background: colorHex(form.color) }"></div>
-        <label>Ligne fiscale
-          <select v-model="form.tax_treatment">
-            <option :value="null">— Non fiscal —</option>
-            <option v-for="t in TAX_TREATMENTS" :key="t.value" :value="t.value">{{ t.label }}</option>
-          </select>
+        <label>BIC
+          <input v-model="form.bic" placeholder="Optionnel" />
         </label>
-        <span class="hint">Tout split portant ce tag compte comme fiscal, quelle que soit sa catégorie.</span>
+        <label>Site web
+          <input v-model="form.website" placeholder="Optionnel" />
+        </label>
+        <label>Notes
+          <input v-model="form.notes" placeholder="Optionnel" />
+        </label>
         <div class="modal-actions">
           <button class="btn" @click="showModal = false">Annuler</button>
           <button class="btn btn-primary" :disabled="!form.name.trim()" @click="save">Enregistrer</button>
@@ -72,54 +77,39 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
-import { normalizeSearch } from '@/utils/search.js'
 
 const toast = useToast()
 
+// Palette tenue synchronisée avec Tags.vue / rt_tags.py (même 7 valeurs, pas de color-picker
+// libre dans l'app).
 const COLORS = ['green', 'red', 'blue', 'white', 'black', 'yellow', 'purple']
 const COLOR_MAP = {
   green: '#22c55e', red: '#ef4444', blue: '#3b82f6',
   white: '#f1f5f9', black: '#1e293b', yellow: '#eab308', purple: '#a855f7',
 }
-// Tenu synchronisé avec TAX_TREATMENT_VALUES dans rt_tags.py.
-const TAX_TREATMENTS = [
-  { value: 'taxable_income', label: 'Revenu imposable' },
-  { value: 'deductible', label: 'Charge déductible' },
-  { value: 'real_estate_income', label: 'Revenu foncier' },
-  { value: 'real_estate_expense', label: 'Charge foncière' },
-]
+function colorHex(c) { return COLOR_MAP[c] || '#6b7280' }
 
-const tags = ref([])
-const search = ref('')
+const institutions = ref([])
 const loading = ref(false)
 const error = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
-const form = ref({ name: '', color: 'green', tax_treatment: null })
-
-const filteredTags = computed(() => {
-  const q = normalizeSearch(search.value)
-  if (!q) return tags.value
-  return tags.value.filter(t => normalizeSearch(t.name).includes(q))
-})
+const form = ref({ name: '', bic: '', website: '', notes: '', color: 'blue' })
 
 const { shaking, shake } = useModalShake()
 useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
-
-function colorHex(c) { return COLOR_MAP[c] || '#6b7280' }
-function taxTreatmentLabel(v) { return TAX_TREATMENTS.find(t => t.value === v)?.label || v }
 
 async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const res = await axios.get('/api/tags')
-    tags.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+    const res = await axios.get('/api/institutions')
+    institutions.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
@@ -129,30 +119,34 @@ async function reload() {
 
 function openCreate() {
   editTarget.value = null
-  form.value = { name: '', color: 'green', tax_treatment: null }
+  form.value = { name: '', bic: '', website: '', notes: '', color: 'blue' }
   showModal.value = true
 }
 
-function openEdit(t) {
-  editTarget.value = t
-  form.value = { name: t.name, color: t.color, tax_treatment: t.tax_treatment || null }
+function openEdit(i) {
+  editTarget.value = i
+  form.value = { name: i.name, bic: i.bic || '', website: i.website || '', notes: i.notes || '', color: i.color || 'blue' }
   showModal.value = true
 }
 
 async function save() {
   try {
     if (editTarget.value) {
-      await axios.patch('/api/tags', {
-        tag_id: editTarget.value.id,
+      await axios.patch('/api/institutions', {
+        institution_id: editTarget.value.id,
         name: form.value.name,
+        bic: form.value.bic || null,
+        website: form.value.website || null,
+        notes: form.value.notes || null,
         color: form.value.color,
-        tax_treatment: form.value.tax_treatment || null,
       })
     } else {
-      await axios.post('/api/tags', {
+      await axios.post('/api/institutions', {
         name: form.value.name,
+        bic: form.value.bic || null,
+        website: form.value.website || null,
+        notes: form.value.notes || null,
         color: form.value.color,
-        tax_treatment: form.value.tax_treatment || null,
       })
     }
     showModal.value = false
@@ -162,18 +156,18 @@ async function save() {
   }
 }
 
-async function deleteTag(t) {
+async function deleteInstitution(i) {
   const ok = await confirmDialog({
-    title: 'Supprimer le tag',
-    message: `Supprimer le tag « ${t.name} » ?`,
+    title: 'Supprimer l’institution',
+    message: `Supprimer « ${i.name} » ? Les comptes rattachés seront simplement détachés.`,
     confirmLabel: 'Supprimer',
     danger: true,
   })
   if (!ok) return
   try {
-    await axios.delete('/api/tags', { params: { tag_id: t.id } })
+    await axios.delete('/api/institutions', { params: { institution_id: i.id } })
     await reload()
-    toast.success(`Tag « ${t.name} » supprimé.`)
+    toast.success(`Institution « ${i.name} » supprimée.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -202,19 +196,6 @@ onMounted(() => reload())
 .subtitle { margin: 6px 0 0; color: #9ca3af; font-size: 14px; }
 .header-actions { display: flex; gap: 10px; align-items: center; }
 
-.search-wrapper { position: relative; }
-.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.7; }
-.search-input {
-  padding: 10px 10px 10px 32px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(15, 23, 42, 0.7);
-  color: #e5e7eb;
-  outline: none;
-  width: 240px;
-  max-width: 60vw;
-}
-
 .btn {
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: rgba(15, 23, 42, 0.7);
@@ -242,38 +223,31 @@ onMounted(() => reload())
   color: #cbd5e1;
 }
 
-.chips-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
 }
-.chip-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid rgba(148,163,184,0.12);
-  border-radius: 10px;
-  background: rgba(15,23,42,0.5);
+.table th {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  color: #9ca3af;
+  font-weight: 500;
 }
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+.muted { color: #9ca3af; }
+.actions { text-align: right; white-space: nowrap; }
+
 .color-dot {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  flex-shrink: 0;
+  display: inline-block;
 }
-.chip-name { font-weight: 500; flex: 1; }
-.chip-color { font-size: 12px; }
-.chip-tax-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(96,165,250,0.4);
-  background: rgba(96,165,250,0.1);
-  color: #93c5fd;
-}
-.muted { color: #9ca3af; }
-.chip-actions { display: flex; gap: 6px; }
 
 .btn-action {
   background: transparent;
@@ -283,6 +257,7 @@ onMounted(() => reload())
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
+  margin-left: 4px;
 }
 .btn-action:hover { background: rgba(148, 163, 184, 0.1); }
 .btn-danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
@@ -302,7 +277,7 @@ onMounted(() => reload())
   border: 1px solid rgba(148,163,184,0.2);
   border-radius: 16px;
   padding: 24px;
-  width: 380px;
+  width: 400px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -322,10 +297,6 @@ onMounted(() => reload())
   padding: 8px 10px;
   color: #e5e7eb;
   font-size: 14px;
-}
-.hint {
-  font-size: 11px;
-  color: #6b7280;
 }
 .color-preview {
   width: 32px;

@@ -165,8 +165,11 @@ import { useRoute } from 'vue-router'
 import axios from 'axios'
 import TransactionModal from '@/components/modal/TransactionModal.vue'
 import { hasPermission } from '@/utils/permissions.js'
+import { currency as defaultCurrency } from '@/utils/settings.js'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { normalizeSearch } from '@/utils/search.js'
+import { formatDate } from '@/utils/dateFormat.js'
 
 const toast = useToast()
 
@@ -179,6 +182,9 @@ const transactions = ref([])
 const categories = ref([])
 const commodities = ref([])
 const assets = ref([])
+// Valeur autoritaire (positions + cash libre) du compte-titre, calculée côté backend — voir
+// accountAssetsValue plus bas.
+const accountValues = ref(new Map())
 
 const loading = ref(false)
 const error = ref('')
@@ -205,8 +211,11 @@ async function reload() {
     // Compte-titre potentiel : on ne sait pas encore le account_type avant la réponse, donc on
     // ne fetch les actifs que si l'utilisateur a la permission — le filtrage par type se fait
     // ensuite à l'affichage (isAssetAccount).
-    if (hasPermission('Patrimoine')) calls.push(axios.get('/api/assets'))
-    const [accRes, allAccRes, txRes, catRes, comRes, assetsRes] = await Promise.all(calls)
+    if (hasPermission('Patrimoine')) {
+      calls.push(axios.get('/api/assets'))
+      calls.push(axios.get('/api/wealth/account-values', { params: { currency: defaultCurrency.value } }))
+    }
+    const [accRes, allAccRes, txRes, catRes, comRes, assetsRes, accountValuesRes] = await Promise.all(calls)
     account.value = accRes.data?.response_data ?? null
     allAccounts.value = Array.isArray(allAccRes.data?.response_data) ? allAccRes.data.response_data : []
     const rd = txRes.data?.response_data
@@ -215,6 +224,8 @@ async function reload() {
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
     assets.value = Array.isArray(assetsRes?.data?.response_data) ? assetsRes.data.response_data : []
+    const accountValuesData = accountValuesRes?.data?.response_data?.values || {}
+    accountValues.value = new Map(Object.entries(accountValuesData))
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
@@ -258,10 +269,14 @@ const accountPositions = computed(() => {
   return rows
 })
 
-const accountAssetsValue = computed(() =>
-  accountPositions.value.reduce((sum, { possession, asset }) =>
+// Repli position-seule tant que accountValues n'a pas répondu ; la valeur autoritaire (positions +
+// cash libre éventuellement laissé sur le compte) vient du backend, voir GET /api/wealth/account-values.
+const accountAssetsValue = computed(() => {
+  const backendValue = accountValues.value.get(String(accountId))
+  if (backendValue != null) return backendValue
+  return accountPositions.value.reduce((sum, { possession, asset }) =>
     sum + remainingQty(possession) * (asset.converted_value_per_unit || 0), 0)
-)
+})
 
 function fmtAssetAmount(v, currency) {
   return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0)} ${currency || ''}`.trim()
@@ -331,16 +346,13 @@ function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n)
 }
 
-function fmtDate(v) {
-  if (!v) return '—'
-  return new Date(v).toLocaleDateString('fr-FR')
-}
+const fmtDate = formatDate
 
 const filteredTx = computed(() => {
-  const q = search.value.toLowerCase().trim()
+  const q = normalizeSearch(search.value)
   return transactions.value.filter(tx => {
     if (onlyCleared.value && !tx.is_cleared) return false
-    if (q && !(tx.description || '').toLowerCase().includes(q)) return false
+    if (q && !normalizeSearch(tx.description || '').includes(q)) return false
     return true
   })
 })

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 
 from flask import jsonify, request, make_response
@@ -12,8 +12,6 @@ from backend.config import (HttpCode,
                             JsonResponseType,
                             VAR_API_ROOT_PATH as ROOT_PATH,
                             VAR_STANDARD_USER_ROLE_ID,
-                            VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS as JWT_ACCESS_TOKEN_LIFETIME,
-                            VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS
                             )
 from backend.utils.exceptions import RoutesException
 from backend.utils.api_responses import json_response
@@ -58,13 +56,16 @@ class AuthRoutes:
         @app.route(f"{ROUTE_PATH}/refresh", methods=["POST"])
         @jwt_required(refresh=True)
         def refresh():
+            # Appelé avec le refresh token (pas l'access token) : celui-ci n'expose que sa PROPRE
+            # expiration (24h), jamais celle de l'access token qui a motivé l'appel — la version
+            # précédente comparait par erreur l'expiration du refresh token à la moitié de la durée
+            # de vie de l'access token, ce qui ne réémettait un nouvel access token que dans les 30
+            # dernières minutes des 24h du refresh token (donc quasiment jamais en pratique). Un
+            # appel à /refresh valide réémet désormais toujours un nouvel access token, comme prévu.
             try:
-                exp_timestamp = get_jwt()["exp"]
-                target_timestamp = datetime.timestamp(datetime.now() + timedelta(seconds=VAR_API_JWT_ACCESS_TOKEN_LIFETIME_IN_SECONDS/2))
                 response = jsonify("refresh successful")
-                if target_timestamp > exp_timestamp:
-                    access_token = create_access_token(identity=get_jwt_identity())
-                    set_access_cookies(response, access_token)
+                access_token = create_access_token(identity=get_jwt_identity())
+                set_access_cookies(response, access_token)
                 return response
             except (RuntimeError, KeyError):
                 return json_response("Refresh error", HttpCode.SERVER_ERROR)

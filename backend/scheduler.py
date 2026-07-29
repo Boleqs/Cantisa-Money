@@ -106,6 +106,75 @@ def execute_one_loan_installment(installment, loan, DB, Transactions, Splits, Ac
     DB.session.commit()
 
 
+def _execute_dca_contribution(plan, exec_date, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits):
+    """Exécute une échéance DCA unique : achète l'actif du plan au prix de marché courant pour le
+    montant prévu, crée le lot de portefeuille correspondant. Retourne (success: bool,
+    error: str|None). N'avance last_executed_at QUE si un lot a effectivement été créé — une
+    échéance en échec (FX/prix indisponible) reste due et sera retentée à la prochaine passe horaire
+    (execute_due_dca_contributions) ou au clic manuel (execute_one_dca_contribution)."""
+    from backend.utils.portfolio_ops import resolve_dca_unit_price, compute_dca_quantity, resolve_split_amounts, create_possession_lot, format_qty
+
+    asset = Assets.query.filter_by(id=plan.asset_id).first()
+    source_account = Accounts.query.filter_by(id=plan.source_account_id).first()
+    dest_account = Accounts.query.filter_by(id=plan.dest_account_id).first()
+    if not (asset and source_account and dest_account):
+        return False, "Actif ou compte introuvable (supprimé depuis la création du plan)"
+    commodity = Commodities.query.filter_by(id=asset.commodity_id).first()
+    if not commodity:
+        return False, "Devise de l'actif introuvable"
+
+    unit_price, unit_price_native, err = resolve_dca_unit_price(asset, commodity, FxRates)
+    if err:
+        return False, err
+
+    source_commodity = Commodities.query.filter_by(id=source_account.currency_id).first()
+    source_code = source_commodity.short_name if source_commodity else commodity.short_name
+    quantity, err = compute_dca_quantity(plan.amount, source_code, commodity.short_name, unit_price, FxRates)
+    if err:
+        return False, err
+
+    total_cost = float(quantity) * unit_price
+    dest_amount, source_amount, dest_fx_rate, error_resp = resolve_split_amounts(
+        Accounts, Commodities, dest_account, source_account, total_cost, commodity.short_name, exec_date, FxRates)
+    if error_resp:
+        return False, "Taux de change indisponible pour l'exécution"
+
+    exec_dt = datetime.combine(exec_date, datetime.min.time())
+    create_possession_lot(
+        DB, Transactions, Splits, AssetPossession, plan.user_id, asset, dest_account, source_account,
+        quantity=quantity, purchase_price=unit_price, purchase_price_native=unit_price_native,
+        purchase_date=exec_dt, description=f"DCA {plan.name} — {asset.symbol} x{format_qty(quantity)}",
+        dest_amount=dest_amount, source_amount=source_amount, dest_fx_rate=dest_fx_rate,
+        dca_plan_id=plan.id)
+    plan.last_executed_at = exec_dt
+    return True, None
+
+
+def execute_due_dca_contributions(app, DB, DcaPlans, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits):
+    """Rattrape toutes les échéances DCA dues (comme execute_due_subscriptions). Appelé par le
+    scheduler."""
+    from backend.utils.recurrence import next_occurrence
+    with app.app_context():
+        today = date.today()
+        plans = DcaPlans.query.filter(DcaPlans.is_forecast_only == False).all()
+        for plan in plans:
+            ref = plan.last_executed_at.date() if plan.last_executed_at else (plan.start_date - timedelta(days=1))
+            next_due = next_occurrence(plan.schedule_type, plan.day_of_month, plan.month_of_year, plan.weekdays, ref)
+            while next_due <= today and (plan.end_date is None or next_due <= plan.end_date):
+                _execute_dca_contribution(plan, next_due, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits)
+                next_due = next_occurrence(plan.schedule_type, plan.day_of_month, plan.month_of_year, plan.weekdays, next_due)
+        DB.session.commit()
+
+
+def execute_one_dca_contribution(plan, exec_date, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits):
+    """Exécution manuelle (bouton 'Exécuter' / POST /dca/execute). Retourne (success, error_message)
+    pour que la route puisse afficher un message d'erreur réel — contrairement aux abonnements, un
+    DCA peut légitimement échouer (FX/prix indisponible)."""
+    success, error = _execute_dca_contribution(plan, exec_date, DB, Accounts, Assets, AssetPossession, Commodities, FxRates, Transactions, Splits)
+    DB.session.commit()
+    return success, error
+
+
 def refresh_tracked_asset_prices(app, DB, Assets, Commodities, FxRates):
     """Rafraîchit value_per_unit (converti dans la devise de l'actif) pour tous les actifs
     suivis en temps réel. Appelé par le scheduler."""
@@ -250,7 +319,7 @@ def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Asse
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
                      AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
-                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags):
+                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, DcaPlans):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=cleanup_pending_documents,
@@ -314,6 +383,14 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
         trigger='interval',
         hours=1,
         id='budget_renewal_job',
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        func=execute_due_dca_contributions,
+        args=[app, DB, DcaPlans, Assets, AssetPossession, Commodities, FxRates, Accounts, Transactions, Splits],
+        trigger='interval',
+        hours=1,
+        id='dca_contributions_job',
         replace_existing=True,
     )
     scheduler.start()

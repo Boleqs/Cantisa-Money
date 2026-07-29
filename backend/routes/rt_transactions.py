@@ -14,6 +14,7 @@ from backend.config import (HttpCode,
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.utils.text_search import unaccent_contains, unaccent_startswith
 
 TRANSACTIONS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 BALANCE_TOLERANCE = 0.01
@@ -156,7 +157,7 @@ def _apply_tx_filters(query, params, DB, Transactions, Splits, TagsOnSplits):
             Splits.account_id == params['account_id']
         )
     if params.get('search'):
-        query = query.filter(Transactions.description.ilike(f"%{params['search']}%"))
+        query = query.filter(unaccent_contains(Transactions.description, params['search']))
     if params.get('is_cleared') is not None:
         query = query.filter(Transactions.is_cleared == params['is_cleared'])
     if params.get('date_from'):
@@ -465,7 +466,7 @@ class TransactionsRoutes:
                 return json_response([], HttpCode.OK)
 
             txs = (Transactions.query
-                   .filter(Transactions.user_id == user_id, Transactions.description.ilike(f'{q}%'))
+                   .filter(Transactions.user_id == user_id, unaccent_startswith(Transactions.description, q))
                    .order_by(Transactions.post_date.desc())
                    .limit(50).all())
 

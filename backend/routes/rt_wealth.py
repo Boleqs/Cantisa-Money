@@ -6,7 +6,8 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISSIONS_LIST
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import convert_amount
-from backend.utils.wealth import compute_bank_net_worth, compute_total_liabilities, get_portfolio_breakdown, _portfolio_account_ids
+from backend.utils.wealth import (compute_bank_net_worth, compute_total_liabilities, get_portfolio_breakdown,
+                                  get_portfolio_container_account_values, _portfolio_account_ids)
 from backend.utils.restricted_by_permission import restricted_by_permission
 
 WEALTH_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
@@ -48,8 +49,19 @@ def _sector_allocation(portfolio):
 
 
 class WealthRoutes:
-    def __init__(self, app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users):
+    def __init__(self, app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+                 WealthSnapshot, Users, Splits=None):
         ROUTE_PATH = f"{ROOT_PATH}/wealth"
+
+        @app.route(f"{ROUTE_PATH}/account-values", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, WEALTH_PERM)
+        def get_account_values():
+            currency = request.args.get('currency', 'EUR').upper()
+            user_id = get_jwt_identity()
+            values = get_portfolio_container_account_values(
+                Accounts, Assets, AssetPossession, AssetDisposal, Splits, Commodities, FxRates, user_id, currency)
+            return json_response({'currency': currency, 'values': values}, HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}/overview", methods=['GET'])
         @jwt_required()

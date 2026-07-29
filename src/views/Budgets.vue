@@ -70,7 +70,7 @@
         <!-- Restant -->
         <div class="remaining" :class="{ negative: b.amount_spent > b.amount_allocated }">
           {{ b.amount_spent > b.amount_allocated ? 'Dépassement' : 'Restant' }} :
-          {{ fmtAmount(Math.abs(b.amount_allocated - b.amount_spent)) }}
+          {{ fmtAmount(Math.abs(b.amount_allocated - spentFloored(b))) }}
         </div>
 
         <!-- Comptes / catégories / tags associés -->
@@ -116,6 +116,7 @@ import { currency } from '@/utils/settings.js'
 import BudgetModal from '@/components/modal/BudgetModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { normalizeSearch } from '@/utils/search.js'
 
 const toast = useToast()
 
@@ -125,9 +126,7 @@ const categories = ref([])
 const tags = ref([])
 const search = ref('')
 
-function normalizeText(v) {
-  return (v ?? '').toString().toLowerCase().trim()
-}
+const normalizeText = normalizeSearch
 
 // Recherche côté client (pas de pagination serveur sur cet écran, contrairement à Transactions) :
 // nom du budget, mais aussi les comptes/catégories/tags qui lui sont associés — un budget "Loisirs"
@@ -164,9 +163,17 @@ function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n) + ' ' + currency.value
 }
 
+// Un budget lié à un compte entier peut légitimement avoir amount_spent négatif (plus d'argent
+// entrant que sortant sur la période, cf. mémoire projet) — mais "% utilisé"/"restant" n'ont pas de
+// sens avec un montant dépensé négatif (barre de progression à largeur négative, restant affiché
+// au-delà du montant alloué). On plancher à 0 pour ces deux affichages uniquement : le budget se
+// lit alors "0% utilisé, tout le montant alloué restant", ce qui reste correct et n'induit plus en erreur.
+function spentFloored(b) {
+  return Math.max(b.amount_spent, 0)
+}
 function pct(b) {
   if (!b.amount_allocated) return 0
-  return (b.amount_spent / b.amount_allocated) * 100
+  return (spentFloored(b) / b.amount_allocated) * 100
 }
 
 function statusClass(b) {

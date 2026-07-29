@@ -5,10 +5,12 @@ from .rt_transactions import TransactionsRoutes
 from .rt_accounts import AccountsRoutes
 from .rt_budgets import BudgetsRoutes
 from .rt_categories import CategoriesRoutes
+from .rt_institutions import InstitutionsRoutes
 from .rt_tags import TagsRoutes
 from .rt_subscriptions import SubscriptionsRoutes
 from .rt_dashboard import DashboardRoutes
 from .rt_assets import AssetsRoutes
+from .rt_dca import DcaRoutes
 from .rt_reports import ReportsRoutes
 from .rt_roles import RolesRoutes
 from .rt_import import ImportRoutes

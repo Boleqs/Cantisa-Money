@@ -15,6 +15,9 @@ class Accounts(Base):
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['currency_id'], ['commodities.id'], ondelete='CASCADE'),
         ForeignKeyConstraint(['parent_id'],['accounts.id'], ondelete='SET NULL', onupdate='CASCADE'),
+        # SET NULL (pas CASCADE) : supprimer une institution ne doit jamais supprimer les
+        # comptes qu'elle contenait, même logique que parent_id ci-dessus.
+        ForeignKeyConstraint(['institution_id'],['institutions.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
         UniqueConstraint('user_id', 'name'),
         UniqueConstraint('id'),
@@ -28,6 +31,7 @@ class Accounts(Base):
     id:uuid = Column(UUID(as_uuid=True), default=uuid.uuid4)
     name:str = Column(String(128), nullable=False)
     parent_id:uuid = Column(UUID(as_uuid=True))
+    institution_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     account_type:str = Column(String(64), nullable=False, default='Current')
     account_subtype:str = Column(String(64), nullable=True)
     currency_id:uuid = Column(UUID(as_uuid=True), nullable=False)

@@ -27,7 +27,7 @@ class ForecastWealthSchema(Schema):
 
 class ForecastRoutes:
     def __init__(self, app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
-                 Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users, FinancialGoals=None):
+                 Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, Users, FinancialGoals=None):
         ROUTE_PATH = f"{ROOT_PATH}/forecast"
 
         @app.route(f"{ROUTE_PATH}/wealth", methods=['GET'])
@@ -53,7 +53,7 @@ class ForecastRoutes:
                     })
             result = project_wealth(
                 DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
-                Loans, LoanInstallments, Subscriptions, Transactions, Splits, user_id,
+                Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, user_id,
                 horizon_months=data['horizon_months'],
                 growth_financial_pct=float(data['growth_financial_pct']),
                 growth_physical_pct=float(data['growth_physical_pct']),

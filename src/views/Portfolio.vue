@@ -61,7 +61,7 @@
             <td><span class="badge" :class="'badge-' + a.asset_type.toLowerCase()">{{ typeLabel(a.asset_type) }}</span></td>
             <td class="muted">{{ a.sector || '—' }}</td>
             <td>{{ fmtAmount(a.converted_value_per_unit, a.display_currency) }}</td>
-            <td>{{ a.total_quantity }}</td>
+            <td>{{ fmtQty(a.total_quantity) }}</td>
             <td class="value">{{ fmtAmount(a.converted_total_value, a.display_currency) }}</td>
             <td :class="gainLoss(a) ? (gainLoss(a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
               <template v-if="gainLoss(a)">
@@ -89,7 +89,7 @@
                 <tbody>
                   <tr v-for="p in a.possessions" :key="p.id" :class="{ 'possession-closed': remainingQty(p) === 0 }">
                     <td class="muted">{{ accountName(p.account_id) }}</td>
-                    <td>{{ p.disposals?.length ? `${remainingQty(p)} / ${p.quantity}` : p.quantity }}</td>
+                    <td>{{ p.disposals?.length ? `${fmtQty(remainingQty(p))} / ${fmtQty(p.quantity)}` : fmtQty(p.quantity) }}</td>
                     <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price * conversionRate(a), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ p.purchase_date ? p.purchase_date.slice(0, 10) : '—' }}</td>
                     <td>{{ fmtAmount(remainingQty(p) * a.converted_value_per_unit, a.display_currency) }}</td>
@@ -187,7 +187,7 @@
           </select>
         </label>
         <label>Quantité *
-          <input v-model.number="possessionForm.quantity" type="number" min="0" />
+          <input v-model.number="possessionForm.quantity" type="number" min="0.000001" step="any" />
         </label>
         <label>Prix d'achat unitaire *{{ possessionTarget?.track_live_price ? ` (devise native du titre)` : '' }}
           <input
@@ -203,7 +203,7 @@
           <button class="btn" @click="showPossessionModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!possessionForm.account_id || possessionForm.quantity < 1 || possessionForm.purchase_price == null || !possessionForm.purchase_date"
+            :disabled="!possessionForm.account_id || possessionForm.quantity <= 0 || possessionForm.purchase_price == null || !possessionForm.purchase_date"
             @click="savePossession"
           >Enregistrer</button>
         </div>
@@ -214,9 +214,9 @@
     <div v-if="showSellModal" class="modal-backdrop" @click.self="shake">
       <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Vendre — {{ sellAssetTarget?.name }}</h2>
-        <p class="hint-text">Position restante : {{ remainingQty(sellTarget) }} unité{{ remainingQty(sellTarget) > 1 ? 's' : '' }}.</p>
+        <p class="hint-text">Position restante : {{ fmtQty(remainingQty(sellTarget)) }} unité{{ remainingQty(sellTarget) > 1 ? 's' : '' }}.</p>
         <label>Quantité vendue *
-          <input v-model.number="sellForm.quantity" type="number" min="1" :max="remainingQty(sellTarget)" />
+          <input v-model.number="sellForm.quantity" type="number" min="0.000001" step="any" :max="remainingQty(sellTarget)" />
         </label>
         <label>Prix de vente unitaire *{{ sellAssetTarget?.track_live_price ? ` (devise native du titre)` : '' }}
           <input v-model.number="sellForm.sale_price" type="number" step="0.01" min="0" placeholder="Montant reçu par unité" />
@@ -234,7 +234,7 @@
           <button class="btn" @click="showSellModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!sellForm.quantity || sellForm.quantity < 1 || sellForm.quantity > remainingQty(sellTarget) || sellForm.sale_price == null || !sellForm.sale_date"
+            :disabled="!sellForm.quantity || sellForm.quantity <= 0 || sellForm.quantity > remainingQty(sellTarget) || sellForm.sale_price == null || !sellForm.sale_date"
             @click="saveSell"
           >Vendre</button>
         </div>
@@ -303,6 +303,7 @@ import LineGraph from '../components/graphs/LineGraph.vue'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { normalizeSearch } from '@/utils/search.js'
 
 const toast = useToast()
 
@@ -313,9 +314,7 @@ const loading = ref(false)
 const error = ref('')
 const search = ref('')
 
-function normalizeText(v) {
-  return (v ?? '').toString().toLowerCase().trim()
-}
+const normalizeText = normalizeSearch
 
 // Filtre la table (pas les cartes de synthèse par type juste au-dessus, qui restent une vue
 // d'ensemble globale) — symbole, nom ou secteur.
@@ -404,6 +403,12 @@ function fmtAmount(v, currency = 'EUR') {
   // Pas de style: 'currency' — Intl choisirait un symbole localisé (ex: "$US" pour USD en fr-FR)
   // qui ne correspond pas au code stocké en base (commodities.short_name). Nombre + code tel quel.
   return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2 }).format(v || 0)} ${currency}`
+}
+
+// Quantité potentiellement fractionnaire depuis l'introduction du DCA (achat d'un montant fixe ->
+// quantité non entière, ex: 2.29 parts d'ETF) — jusqu'à 6 décimales, sans zéros de fin superflus.
+function fmtQty(v) {
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 6 }).format(Number(v ?? 0))
 }
 
 function typeSummaryValue(group) {

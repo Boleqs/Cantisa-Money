@@ -61,12 +61,27 @@
 
           <div class="field">
             <label>Catégorie</label>
-            <select v-model="form.category_id">
-              <option value="">— Aucune —</option>
-              <option v-for="c in categories" :key="c.id" :value="c.id">
-                {{ c.name }}
-              </option>
-            </select>
+            <div v-if="!showNewCategory" class="category-row">
+              <select v-model="form.category_id">
+                <option value="">— Aucune —</option>
+                <option v-for="c in categories" :key="c.id" :value="c.id">
+                  {{ c.name }}
+                </option>
+              </select>
+              <button type="button" class="icon-btn-sm" title="Nouvelle catégorie" @click="openNewCategory">+</button>
+            </div>
+            <div v-else class="category-row">
+              <input
+                v-model="newCategoryName"
+                placeholder="Nom de la catégorie…"
+                autocomplete="off"
+                @keydown.enter.prevent="createCategory"
+                @keydown.esc.prevent="cancelNewCategory"
+              />
+              <button type="button" class="icon-btn-sm" :disabled="!newCategoryName.trim() || creatingCategory" title="Créer" @click="createCategory">✓</button>
+              <button type="button" class="icon-btn-sm" title="Annuler" @click="cancelNewCategory">✕</button>
+            </div>
+            <span v-if="newCategoryError" class="field-error">{{ newCategoryError }}</span>
           </div>
 
           <div class="field toggles">
@@ -283,6 +298,45 @@ async function loadReferenceData() {
 watch(() => props.modelValue, (open) => {
   if (open) loadReferenceData()
 }, { immediate: true })
+
+// ── Création de catégorie à la volée ────────────────────────────────────
+// Aucun compte/catégorie n'existe par défaut dans l'appli — sans ça, créer une transaction dans
+// une nouvelle catégorie obligerait à fermer ce modal, aller sur /categories, puis recommencer.
+const showNewCategory = ref(false)
+const newCategoryName = ref('')
+const newCategoryError = ref('')
+const creatingCategory = ref(false)
+
+function openNewCategory() {
+  newCategoryName.value = ''
+  newCategoryError.value = ''
+  showNewCategory.value = true
+}
+
+function cancelNewCategory() {
+  showNewCategory.value = false
+  newCategoryError.value = ''
+}
+
+async function createCategory() {
+  const name = newCategoryName.value.trim()
+  if (!name || creatingCategory.value) return
+  creatingCategory.value = true
+  newCategoryError.value = ''
+  try {
+    const { data } = await axios.post('/api/categories', { name, description: null, tax_treatment: null })
+    const created = data?.response_data
+    if (created?.id) {
+      categories.value.push(created)
+      form.category_id = created.id
+    }
+    showNewCategory.value = false
+  } catch (e) {
+    newCategoryError.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la création'
+  } finally {
+    creatingCategory.value = false
+  }
+}
 
 const emit = defineEmits(['update:modelValue', 'save', 'cancel', 'ocr-applied'])
 
@@ -847,6 +901,24 @@ const onSubmit = () => {
   outline: none;
   border-color: #2563eb;
 }
+
+.category-row { display: flex; gap: 6px; align-items: center; }
+.category-row select, .category-row input { flex: 1; min-width: 0; }
+.icon-btn-sm {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid #374151;
+  color: #9ca3af;
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 13px;
+}
+.icon-btn-sm:hover:not(:disabled) { color: #e5e7eb; border-color: #6b7280; }
+.icon-btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+.field-error { font-size: 11px; color: #fca5a5; }
 
 .quickfill-field { position: relative; }
 

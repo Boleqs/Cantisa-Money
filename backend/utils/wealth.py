@@ -91,18 +91,18 @@ def get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities,
     result = []
     for a in assets:
         possessions = AssetPossession.query.filter_by(asset_id=a.id).all()
-        qty = sum(_remaining_quantity_as_of(p, disposals_by_possession) for p in possessions)
+        qty = float(sum(_remaining_quantity_as_of(p, disposals_by_possession) for p in possessions))
         commodity = commodities_by_id.get(a.commodity_id)
         code = commodity.short_name if commodity else target_currency
 
         value = convert_amount(qty * float(a.value_per_unit or 0), code, target_currency, FxRates) or 0
 
         priced_possessions = [p for p in possessions if p.purchase_price is not None]
-        priced_qty = sum(_remaining_quantity_as_of(p, disposals_by_possession) for p in priced_possessions)
+        priced_qty = float(sum(_remaining_quantity_as_of(p, disposals_by_possession) for p in priced_possessions))
         purchase_value = None
         if priced_qty:
             raw_purchase_total = sum(
-                _remaining_quantity_as_of(p, disposals_by_possession) * float(p.purchase_price)
+                float(_remaining_quantity_as_of(p, disposals_by_possession)) * float(p.purchase_price)
                 for p in priced_possessions)
             purchase_value = convert_amount(raw_purchase_total, code, target_currency, FxRates)
 
@@ -129,6 +129,95 @@ def get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities,
 def compute_portfolio_value(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency='EUR'):
     breakdown = get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency)
     return round(sum(a['value'] for a in breakdown), 2)
+
+
+def get_dca_plan_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, plan_id, target_currency='EUR'):
+    """Agrégats (investi total, valeur actuelle, plus-value) des seuls lots créés par UN plan DCA
+    (AssetPossession.dca_plan_id = plan_id) — même principe que get_portfolio_breakdown mais scopé à
+    un sous-ensemble de lots au lieu de tous les lots d'un actif (un actif peut aussi avoir des lots
+    achetés manuellement, à ne pas compter ici)."""
+    lots = AssetPossession.query.filter_by(dca_plan_id=plan_id).all()
+    if not lots:
+        return {'total_invested': 0.0, 'current_value': 0.0, 'gain_abs': None, 'gain_pct': None,
+                'contributions_count': 0, 'total_quantity': 0.0}
+    asset = Assets.query.filter_by(id=lots[0].asset_id).first()
+    commodity = Commodities.query.filter_by(id=asset.commodity_id).first() if asset else None
+    code = commodity.short_name if commodity else target_currency
+    disposals_by_possession = _group_disposals_by_possession(
+        AssetDisposal.query.filter(AssetDisposal.possession_id.in_([l.id for l in lots])).all())
+    qty = sum(float(_remaining_quantity_as_of(l, disposals_by_possession)) for l in lots)
+    invested_native = sum(float(l.quantity) * float(l.purchase_price or 0) for l in lots)
+    invested = convert_amount(invested_native, code, target_currency, FxRates) or 0
+    current_value = (convert_amount(qty * float(asset.value_per_unit or 0), code, target_currency, FxRates) or 0) if asset else 0
+    gain_abs = round(current_value - invested, 2)
+    gain_pct = round(gain_abs / invested * 100, 2) if invested else None
+    return {
+        'total_invested': round(invested, 2), 'current_value': round(current_value, 2),
+        'gain_abs': gain_abs, 'gain_pct': gain_pct,
+        'contributions_count': len(lots), 'total_quantity': round(qty, 6),
+    }
+
+
+def get_portfolio_container_account_values(Accounts, Assets, AssetPossession, AssetDisposal, Splits, Commodities,
+                                            FxRates, user_id, target_currency='EUR'):
+    """Valeur de marché totale (positions + cash libre) de chaque compte-conteneur de portefeuille de
+    l'utilisateur, convertie dans target_currency. Sert à remplacer total_earned - total_spent pour
+    ces comptes précis (qui ne reflète que le coût d'achat figé, pas la valeur réelle) partout où un
+    solde de compte est affiché — Dashboard, Accounts.vue, AccountDetail.vue.
+
+    Le cash libre n'est PAS simplement total_earned - total_spent du compte : les splits d'achat
+    (AssetPossession.dest_split_id, au coût d'achat) et de vente (AssetDisposal.source_split_id, au
+    prix de vente — deux bases différentes, voir rt_assets.py::sell_possession) faussent ce solde. Le
+    cash libre correct est la somme des splits du compte qui NE sont PAS l'un de ces deux-là (ex. un
+    virement de liquidités ou un dividende non réinvesti sur ce même compte)."""
+    account_ids = _portfolio_account_ids(AssetPossession, user_id)
+    if not account_ids:
+        return {}
+
+    accounts_by_id = {a.id: a for a in Accounts.query.filter(Accounts.id.in_(account_ids)).all()}
+    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+    assets_by_id = {a.id: a for a in Assets.query.filter_by(user_id=user_id).all()}
+
+    possessions = AssetPossession.query.filter(AssetPossession.account_id.in_(account_ids)).all()
+    possession_ids = [p.id for p in possessions]
+    disposals = (AssetDisposal.query.filter(AssetDisposal.possession_id.in_(possession_ids)).all()
+                 if possession_ids else [])
+    disposals_by_possession = _group_disposals_by_possession(disposals)
+
+    excluded_split_ids = {p.dest_split_id for p in possessions if p.dest_split_id}
+    excluded_split_ids |= {d.source_split_id for d in disposals if d.source_split_id}
+
+    position_value_by_account = {}
+    for p in possessions:
+        asset = assets_by_id.get(p.asset_id)
+        if not asset:
+            continue
+        qty = _remaining_quantity_as_of(p, disposals_by_possession)
+        if not qty:
+            continue
+        commodity = commodities_by_id.get(asset.commodity_id)
+        code = commodity.short_name if commodity else target_currency
+        value = convert_amount(float(qty) * float(asset.value_per_unit or 0), code, target_currency, FxRates) or 0
+        position_value_by_account[p.account_id] = position_value_by_account.get(p.account_id, 0) + value
+
+    free_cash_native_by_account = {}
+    for s in Splits.query.filter(Splits.account_id.in_(account_ids)).all():
+        if s.id in excluded_split_ids:
+            continue
+        free_cash_native_by_account[s.account_id] = free_cash_native_by_account.get(s.account_id, 0) + float(s.quantity)
+
+    result = {}
+    for account_id in account_ids:
+        account = accounts_by_id.get(account_id)
+        if not account:
+            continue
+        commodity = commodities_by_id.get(account.currency_id)
+        code = commodity.short_name if commodity else target_currency
+        free_cash_value = convert_amount(
+            free_cash_native_by_account.get(account_id, 0), code, target_currency, FxRates) or 0
+        total = position_value_by_account.get(account_id, 0) + free_cash_value
+        result[str(account_id)] = round(total, 2)
+    return result
 
 
 def _day_range(start_date, end_date):
@@ -310,8 +399,8 @@ def asset_value_series(Assets, AssetPossession, AssetDisposal, Commodities, FxRa
         unit_value = price_by_day.get(d)
         if unit_value is None:
             continue
-        qty = sum(_remaining_quantity_as_of(p, disposals_by_possession, as_of_date=d) for p in possessions
-                   if d >= (p.purchase_date.date() if p.purchase_date else p.created_at.date()))
+        qty = float(sum(_remaining_quantity_as_of(p, disposals_by_possession, as_of_date=d) for p in possessions
+                        if d >= (p.purchase_date.date() if p.purchase_date else p.created_at.date())))
         if not qty:
             continue
         result.append({
@@ -358,7 +447,7 @@ def portfolio_value_series(Assets, AssetPossession, AssetDisposal, Commodities, 
                 remaining = _remaining_quantity_as_of(p, disposals_by_possession, as_of_date=d)
                 if not remaining:
                     continue
-                result[d] += remaining * unit_value
+                result[d] += float(remaining) * unit_value
 
     return {d: round(v, 2) for d, v in result.items()}
 

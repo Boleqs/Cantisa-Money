@@ -26,12 +26,13 @@ def _account_currency(account, commodities_by_id, target_currency):
     return commodity.short_name if commodity else target_currency
 
 
-def _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, user_id, start, today):
+def _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, AssetPossession, user_id, start, today):
     """Transactions déjà couvertes par une projection explicite (échéances de crédit, exécutions
-    d'abonnement) — à exclure de toute moyenne historique pour éviter un double comptage dans
-    project_wealth(). Exclusion au niveau de la TRANSACTION (jamais du compte entier) : un compte
-    "Dépenses courantes" fourre-tout, alimenté à la fois par des abonnements et des dépenses
-    ponctuelles, ne doit perdre que la part abonnements/crédits, pas être ignoré en bloc."""
+    d'abonnement, contributions DCA) — à exclure de toute moyenne historique pour éviter un double
+    comptage dans project_wealth(). Exclusion au niveau de la TRANSACTION (jamais du compte entier) :
+    un compte "Dépenses courantes" fourre-tout, alimenté à la fois par des abonnements et des
+    dépenses ponctuelles, ne doit perdre que la part abonnements/crédits/DCA, pas être ignoré en
+    bloc."""
     excluded_tx_ids = set()
     for loan in Loans.query.filter_by(user_id=user_id, is_closed=False).all():
         paid_insts = LoanInstallments.query.filter(
@@ -55,6 +56,20 @@ def _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptio
             Transactions.post_date <= today,
         ).with_entities(Transactions.id).all()
         excluded_tx_ids.update(tx_id for (tx_id,) in sub_tx_ids)
+
+    # Contributions DCA : lien explicite via dca_plan_id (plus robuste que le matching par nom des
+    # abonnements ci-dessus, la description varie à chaque exécution — voir scheduler.py::
+    # _execute_dca_contribution). Sans cette exclusion, chaque sortie DCA historique serait comptée
+    # deux fois : une fois ici (comme dépense "organique") et une fois dans la boucle DCA future de
+    # project_wealth() — même bug que celui déjà évité pour abonnements/crédits.
+    dca_tx_ids = AssetPossession.query.filter(
+        AssetPossession.user_id == user_id,
+        AssetPossession.dca_plan_id.isnot(None),
+        AssetPossession.tx_id.isnot(None),
+        AssetPossession.purchase_date >= start,
+        AssetPossession.purchase_date <= today,
+    ).with_entities(AssetPossession.tx_id).all()
+    excluded_tx_ids.update(tx_id for (tx_id,) in dca_tx_ids)
     return excluded_tx_ids
 
 
@@ -72,7 +87,7 @@ def compute_avg_monthly_net_flow(DB, Accounts, Transactions, Splits, AssetPosses
     loyer manuel, etc. en un seul chiffre, sans exiger que le revenu soit catégorisé."""
     today = date.today()
     start = today - timedelta(days=365)
-    excluded_tx_ids = _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, user_id, start, today)
+    excluded_tx_ids = _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, AssetPossession, user_id, start, today)
 
     bank_accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
@@ -128,11 +143,12 @@ def _goal_occurrences(goal, today, horizon_end):
 
 
 def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
-                    Loans, LoanInstallments, Subscriptions, Transactions, Splits, user_id,
+                    Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, user_id,
                     horizon_months, growth_financial_pct, growth_physical_pct, growth_cash_pct,
                     avg_monthly_net_flow_override, target_currency, goals=None):
     today = date.today()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+    assets_by_id = {a.id: a for a in Assets.query.filter_by(user_id=user_id).all()}
 
     bank_cash = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, target_currency)
     portfolio = get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency)
@@ -177,6 +193,21 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
             occs.append(d)
             d = next_occurrence(s.schedule_type, s.day_of_month, s.month_of_year, s.weekdays, d)
         sub_occurrences[s.id] = occs
+
+    # Plans DCA : seules les occurrences FUTURES (depuis aujourd'hui) sont énumérées — les
+    # contributions déjà exécutées sont de vrais lots AssetPossession, déjà comptés dans
+    # portfolio_financial/portfolio_physical au départ via get_portfolio_breakdown ci-dessus ; les
+    # ré-énumérer ici doublerait leur effet.
+    dca_plans = DcaPlans.query.filter_by(user_id=user_id).all()
+    dca_occurrences = {}
+    for plan in dca_plans:
+        occs = []
+        anchor = today if today >= plan.start_date else (plan.start_date - timedelta(days=1))
+        d = next_occurrence(plan.schedule_type, plan.day_of_month, plan.month_of_year, plan.weekdays, anchor)
+        while d <= horizon_end and (plan.end_date is None or d <= plan.end_date):
+            occs.append(d)
+            d = next_occurrence(plan.schedule_type, plan.day_of_month, plan.month_of_year, plan.weekdays, d)
+        dca_occurrences[plan.id] = occs
 
     # Objectifs de vie (Lifetime Planner) : trajectoire de trésorerie parallèle à bank_cash, qui
     # subit en plus les retraits de chaque objectif — voir _goal_occurrences(). goal_balances
@@ -248,6 +279,28 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
             code = _account_currency(from_acc if from_is_cash else to_acc, commodities_by_id, target_currency)
             amount = (convert_amount(float(s.amount), code, target_currency, FxRates) or 0) * len(occs_in_month)
             month_delta += amount if to_is_cash else -amount
+
+        # Contributions DCA de ce mois : sortent du pool bancaire (comme une souscription vers un
+        # compte non-cash) et alimentent la croissance composée du portefeuille — mais seulement à
+        # partir du mois SUIVANT (cette boucle tourne après portfolio_financial/physical *= (1+r)
+        # ci-dessus, donc une contribution de ce mois ne compose pas rétroactivement pour ce mois).
+        for plan in dca_plans:
+            occs_in_month = [o for o in dca_occurrences.get(plan.id, []) if cur_date < o <= next_date]
+            if not occs_in_month:
+                continue
+            source_acc = accounts_by_id.get(plan.source_account_id)
+            if not source_acc:
+                continue
+            code = _account_currency(source_acc, commodities_by_id, target_currency)
+            contribution_amount = (convert_amount(float(plan.amount), code, target_currency, FxRates) or 0) * len(occs_in_month)
+            month_delta -= contribution_amount
+
+            asset = assets_by_id.get(plan.asset_id)
+            if asset:
+                if asset.asset_type in FINANCIAL_ASSET_TYPES:
+                    portfolio_financial += contribution_amount
+                else:
+                    portfolio_physical += contribution_amount
 
         month_delta += avg_monthly_net_flow
 

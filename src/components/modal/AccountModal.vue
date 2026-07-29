@@ -48,6 +48,31 @@
           </div>
 
           <div class="field">
+            <label>Institution bancaire</label>
+            <div class="inline-add">
+              <template v-if="addingInstitution">
+                <input
+                  v-model="newInstitutionName"
+                  class="inline-input"
+                  placeholder="Nom de la banque…"
+                  autofocus
+                  @keyup.enter="createInstitution"
+                  @keyup.esc="addingInstitution = false"
+                />
+                <button type="button" class="icon-btn-sm" :disabled="!newInstitutionName?.trim() || creatingInstitution" @click="createInstitution">✓</button>
+                <button type="button" class="icon-btn-sm" @click="addingInstitution = false">✕</button>
+              </template>
+              <template v-else>
+                <select v-model="form.institution_id">
+                  <option :value="null">Aucune</option>
+                  <option v-for="i in institutions" :key="i.id" :value="i.id">{{ i.name }}</option>
+                </select>
+                <button type="button" class="icon-btn-sm" title="Nouvelle institution" @click="addingInstitution = true; newInstitutionName = ''">+</button>
+              </template>
+            </div>
+          </div>
+
+          <div class="field">
             <label>Type</label>
             <select v-model="form.account_type">
               <option value="">— Aucun —</option>
@@ -102,7 +127,8 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 
 const props = defineProps({
@@ -111,9 +137,10 @@ const props = defineProps({
   account: { type: Object, default: null },
   commodities: { type: Array, default: () => [] },
   parentAccounts: { type: Array, default: () => [] },
+  institutions: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
+const emit = defineEmits(['update:modelValue', 'save', 'cancel', 'institution-created'])
 
 const isEdit = computed(() => props.mode === 'edit')
 const isEquity = computed(() => form.account_type === 'Equity')
@@ -132,6 +159,7 @@ const emptyForm = () => ({
   description: '',
   currency_id: '',
   parent_id: null,
+  institution_id: null,
   account_type: 'Current',
   account_subtype: '',
   is_hidden: false,
@@ -141,6 +169,37 @@ const emptyForm = () => ({
 })
 
 const form = reactive(emptyForm())
+
+// Création d'institution à la volée sans quitter le formulaire — même pattern que la création
+// de catégorie pendant la révision d'import (Import.vue).
+const addingInstitution = ref(false)
+const newInstitutionName = ref('')
+const creatingInstitution = ref(false)
+
+async function createInstitution() {
+  const name = (newInstitutionName.value || '').trim()
+  if (!name) return
+  creatingInstitution.value = true
+  try {
+    const existing = props.institutions.find(i => i.name.toLowerCase() === name.toLowerCase())
+    if (existing) {
+      form.institution_id = existing.id
+    } else {
+      const { data } = await axios.post('/api/institutions', { name })
+      const created = data?.response_data
+      if (created) {
+        emit('institution-created', created)
+        form.institution_id = created.id
+      }
+    }
+    addingInstitution.value = false
+  } catch (e) {
+    // Erreur silencieuse ici (ex. nom déjà pris par une course) : le select repasse visible,
+    // l'utilisateur peut réessayer ou choisir une institution existante.
+  } finally {
+    creatingInstitution.value = false
+  }
+}
 
 // Déclenché par l'ouverture du modal (modelValue), pas par l'identité de `account` : en mode
 // création, `account` reste `null` d'une ouverture à l'autre donc un watch sur `account` seul ne
@@ -278,6 +337,35 @@ const onSubmit = () => {
 
 .field select:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inline-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.inline-add select,
+.inline-add .inline-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-btn-sm {
+  flex-shrink: 0;
+  border: 1px solid #374151;
+  background: #111827;
+  color: #e5e7eb;
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.icon-btn-sm:hover {
+  opacity: 0.9;
+}
+.icon-btn-sm:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 

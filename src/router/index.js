@@ -88,6 +88,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/institutions',
+        name: 'Institutions',
+        component: () => import('../views/Institutions.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/tags',
         name: 'Tags',
         component: () => import('../views/Tags.vue'),
@@ -115,6 +121,12 @@ const routes = [
         path: '/portfolio',
         name: 'Portfolio',
         component: () => import('../views/Portfolio.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/dca',
+        name: 'Dca',
+        component: () => import('../views/DCA.vue'),
         meta: { requiresAuth: true }
     },
     {
@@ -231,6 +243,60 @@ const router = createRouter({
     history: createWebHistory(),
     routes
 })
+
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
+    return match ? decodeURIComponent(match[2]) : null
+}
+
+// Rafraîchissement automatique de l'access token (1h de durée de vie) via le refresh token (24h) —
+// jusqu'ici POST /api/auth/refresh existait côté backend mais n'était jamais appelé par le
+// frontend, donc toute requête après 1h échouait en 401 et redirigeait vers /Signin même avec un
+// refresh token encore valide. Intercepteur global plutôt qu'un correctif ciblé sur checkAuth() :
+// une requête API en pleine session (pas seulement à la navigation) peut tout aussi bien tomber
+// sur un access token expiré.
+let refreshPromise = null
+
+function requestRefresh() {
+    if (!refreshPromise) {
+        // Le refresh token a son PROPRE cookie CSRF (csrf_refresh_token), distinct de celui de
+        // l'access token (csrf_access_token) qu'axios envoie par défaut sur toute autre requête
+        // (voir xsrfCookieName ci-dessus) — sans ce header explicite, flask-jwt-extended rejette
+        // l'appel en 401 "CSRF double submit tokens do not match" avant même de vérifier le token.
+        refreshPromise = axios.post('/api/auth/refresh', {}, {
+            headers: { 'X-CSRF-TOKEN': getCookie('csrf_refresh_token') },
+        }).finally(() => { refreshPromise = null })
+    }
+    return refreshPromise
+}
+
+const AUTH_PATHS_EXCLUDED_FROM_REFRESH = ['/auth/refresh', '/auth/login', '/auth/signup']
+
+axios.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+        const originalRequest = error.config
+        const status = error.response?.status
+        const url = originalRequest?.url || ''
+        const isExcluded = AUTH_PATHS_EXCLUDED_FROM_REFRESH.some((p) => url.includes(p))
+
+        if (status === 401 && !isExcluded && !originalRequest._retry) {
+            originalRequest._retry = true
+            try {
+                await requestRefresh()
+                return axios(originalRequest)
+            } catch (refreshError) {
+                // Refresh token lui-même expiré (>24h) ou absent : session réellement terminée,
+                // pas seulement l'access token. Redirige même si l'appel qui a échoué ne vient pas
+                // de la navigation (ex: action déclenchée en pleine session), sinon l'utilisateur
+                // resterait bloqué sur une page dont plus aucun appel API ne peut aboutir.
+                router.push('/Signin')
+                return Promise.reject(refreshError)
+            }
+        }
+        return Promise.reject(error)
+    }
+)
 
 async function checkAuth() {
     try {

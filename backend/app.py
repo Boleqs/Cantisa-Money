@@ -67,14 +67,17 @@ limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 UsersRoutes(app, DB, Users, UserRoles, Roles, Permissions, RolePermissions)
 CommoditiesRoutes(app, DB, Users, Commodities, FxRates, UserSettings, Accounts, Transactions, Assets)
 AuthRoutes(app, DB, Users, UserRoles, limiter)
-AccountsRoutes(app, DB, Users, Accounts, Splits, Transactions, Commodities, FxRates)
+AccountsRoutes(app, DB, Users, Accounts, Splits, Transactions, Commodities, FxRates, Institutions)
 TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts, Categories, Commodities, FxRates)
 BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users, FxRates, Commodities, UserSettings)
 CategoriesRoutes(app, DB, Categories, Users)
+InstitutionsRoutes(app, DB, Institutions, Users)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)
 SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts)
-DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings)
+DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings,
+                 Assets, AssetPossession, AssetDisposal)
 AssetsRoutes(app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings)
+DcaRoutes(app, DB, DcaPlans, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, Users, UserSettings)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users, Categories)
@@ -83,10 +86,10 @@ AIRoutes(app, DB, Categories, Accounts, Users)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
-WealthRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users)
+WealthRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Users, Splits)
 LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transactions, Splits, Accounts, Commodities)
 ForecastRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
-               Loans, LoanInstallments, Subscriptions, Transactions, Splits, Users, FinancialGoals)
+               Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, Users, FinancialGoals)
 GoalsRoutes(app, DB, FinancialGoals, Users)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
@@ -95,7 +98,8 @@ TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Ca
           AssetDisposal, AssetPossession, Assets, Tags, TagsOnSplits)
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
              BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
-             AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments)
+             AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments,
+             Institutions)
 CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
                      Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 
@@ -396,7 +400,7 @@ def seed_market_indices():
                 DB.session.add(MarketIndex(index_name=index_name, ticker=t))
     DB.session.commit()
 
-from scheduler import snapshot_wealth, start_scheduler
+from scheduler import snapshot_wealth, start_scheduler, renew_due_budgets
 from utils.wealth import backfill_wealth_history
 
 # RESET_DB_ON_START=true : repart d'une base vide + jeu de données de démo à chaque démarrage
@@ -442,10 +446,16 @@ if IS_MAIN_PROCESS:
         # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
         backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
         snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot)
+        # Contrairement aux abonnements/crédits (qui ont un bouton "Exécuter maintenant" en plus du
+        # job horaire), la reconduction de budget n'a aucun déclenchement manuel — sans cet appel au
+        # démarrage, un budget déjà échu au moment du (re)lancement du backend n'était reconduit qu'à
+        # la 1re passe du job planifié, jusqu'à 1h plus tard (APScheduler 'interval' ne s'exécute pas
+        # immédiatement à scheduler.start(), seulement après un intervalle complet).
+        renew_due_budgets(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, FxRates, Commodities, UserSettings)
 
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
                      AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
-                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags)
+                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, DcaPlans)
 
 uuid.uuid4()
 if __name__ == '__main__':

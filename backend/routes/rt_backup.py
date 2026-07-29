@@ -66,9 +66,10 @@ def _doc_zip_path(doc_id, original_filename):
 def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                       BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
-                      TransactionDocuments):
+                      TransactionDocuments, Institutions=None):
     commodities = Commodities.query.filter_by(user_id=user_id).all()
     accounts = Accounts.query.filter_by(user_id=user_id).all()
+    institutions = Institutions.query.filter_by(user_id=user_id).all() if Institutions is not None else []
     categories = Categories.query.filter_by(user_id=user_id).all()
     tags = Tags.query.filter_by(user_id=user_id).all()
     budgets = Budgets.query.filter_by(user_id=user_id).all()
@@ -103,7 +104,12 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'id': _u(a.id), 'name': a.name, 'parent_id': _u(a.parent_id), 'account_type': a.account_type,
             'account_subtype': a.account_subtype, 'currency_id': _u(a.currency_id), 'description': a.description,
             'is_virtual': a.is_virtual, 'is_hidden': a.is_hidden, 'code': a.code,
+            'institution_id': _u(a.institution_id),
         } for a in accounts],
+        'institutions': [{
+            'id': _u(i.id), 'name': i.name, 'bic': i.bic, 'website': i.website, 'notes': i.notes,
+            'color': i.color,
+        } for i in institutions],
         'categories': [{
             'id': _u(c.id), 'name': c.name, 'description': c.description,
         } for c in categories],
@@ -130,7 +136,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
         } for a in assets],
         'asset_possessions': [{
             'id': _u(p.id), 'asset_id': _u(p.asset_id), 'account_id': _u(p.account_id),
-            'source_account_id': _u(p.source_account_id), 'quantity': p.quantity,
+            'source_account_id': _u(p.source_account_id), 'quantity': _n(p.quantity),
             'purchase_price': _n(p.purchase_price), 'purchase_price_native': _n(p.purchase_price_native),
             'purchase_date': _dt(p.purchase_date),
         } for p in asset_possessions],
@@ -138,7 +144,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
         # asset_possessions (voir commentaire dans import_user_data) — la donnée fiscale/patrimoniale
         # (quantité, prix, date, plus-value) est préservée intégralement sans reconstituer les splits.
         'asset_disposals': [{
-            'id': _u(d.id), 'possession_id': _u(d.possession_id), 'quantity': d.quantity,
+            'id': _u(d.id), 'possession_id': _u(d.possession_id), 'quantity': _n(d.quantity),
             'sale_price': _n(d.sale_price), 'sale_price_native': _n(d.sale_price_native),
             'sale_date': _dt(d.sale_date), 'dest_account_id': _u(d.dest_account_id),
             'realized_gain': _n(d.realized_gain), 'holding_period_days': d.holding_period_days,
@@ -196,7 +202,7 @@ def _resolve(cache, key, finder, creator, DB):
 def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                       BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
-                      TransactionDocuments, apply_settings=False):
+                      TransactionDocuments, apply_settings=False, Institutions=None):
     report = {}
 
     def bump(entity, created):
@@ -208,7 +214,25 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     # catégorie dans deux exports différents concaténés à la main).
     map_commodity, map_account, map_category, map_tag = {}, {}, {}, {}
     map_budget, map_subscription, map_asset, map_tx = {}, {}, {}, {}
-    map_possession = {}
+    map_possession, map_institution = {}, {}
+
+    # ── Institutions (clé : nom) ─────────────────────────────────────────────
+    if Institutions is not None:
+        cache_institution = {i.name: i for i in Institutions.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('institutions', []):
+            existing = cache_institution.get(row['name'])
+            if existing:
+                map_institution[row['id']] = existing.id
+                bump('institutions', False)
+            else:
+                obj = Institutions(user_id=user_id, name=row['name'], bic=row.get('bic'),
+                                   website=row.get('website'), notes=row.get('notes'),
+                                   color=row.get('color', 'blue'))
+                DB.session.add(obj)
+                DB.session.flush()
+                cache_institution[row['name']] = obj
+                map_institution[row['id']] = obj.id
+                bump('institutions', True)
 
     # ── Commodities ──────────────────────────────────────────────────────────
     cache_commodity = {c.short_name.strip().upper(): c
@@ -252,6 +276,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                 obj = Accounts(
                     user_id=user_id, name=row['name'],
                     parent_id=map_account.get(parent_export_id) if parent_export_id else None,
+                    institution_id=map_institution.get(row.get('institution_id')),
                     account_type=row.get('account_type', 'Current'), account_subtype=row.get('account_subtype'),
                     currency_id=currency_local, description=row.get('description'),
                     is_virtual=row.get('is_virtual', False), is_hidden=row.get('is_hidden', False),
@@ -419,7 +444,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             report.setdefault('errors', []).append("Possession d'actif ignorée (référence introuvable)")
             continue
         purchase_date = _parse_dt(row.get('purchase_date'))
-        key = (asset_local, account_local, purchase_date, row.get('quantity'), _dec(row.get('purchase_price')))
+        key = (asset_local, account_local, purchase_date, _dec(row.get('quantity')), _dec(row.get('purchase_price')))
         existing_id = cache_possession.get(key)
         if existing_id:
             map_possession[row['id']] = existing_id
@@ -468,7 +493,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             report.setdefault('errors', []).append("Cession d'actif ignorée (lot introuvable)")
             continue
         sale_date = _parse_dt(row.get('sale_date'))
-        key = (possession_local, sale_date, row.get('quantity'), _dec(row.get('sale_price')))
+        key = (possession_local, sale_date, _dec(row.get('quantity')), _dec(row.get('sale_price')))
         if key in cache_disposal:
             bump('asset_disposals', False)
         else:
@@ -613,7 +638,8 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
 class BackupRoutes:
     def __init__(self, app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                  BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
-                 AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments):
+                 AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments,
+                 Institutions=None):
         ROUTE_PATH = f"{ROOT_PATH}/backup"
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
@@ -623,7 +649,7 @@ class BackupRoutes:
             data, doc_files = export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets,
                                     BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions, Assets,
                                     AssetPossession, AssetDisposal, AssetValuations, Transactions, Splits,
-                                    TagsOnSplits, UserSettings, TransactionDocuments)
+                                    TagsOnSplits, UserSettings, TransactionDocuments, Institutions)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr('data.json', json_lib.dumps(data, ensure_ascii=False, indent=2))
@@ -669,7 +695,7 @@ class BackupRoutes:
                                           Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions,
                                           Assets, AssetPossession, AssetDisposal, AssetValuations, Transactions,
                                           Splits, TagsOnSplits, UserSettings, TransactionDocuments,
-                                          apply_settings=apply_settings)
+                                          apply_settings=apply_settings, Institutions=Institutions)
                 DB.session.commit()
                 return json_response(report, HttpCode.OK)
             except Exception as e:

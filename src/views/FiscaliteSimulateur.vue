@@ -31,6 +31,10 @@
         ℹ️ Aucun profil de foyer pour {{ selectedYear }} — calcul avec 1 part par défaut.
         <router-link to="/fiscalite/foyer">Renseigner le foyer</router-link>.
       </div>
+      <div v-if="result.income.currency_conversion_incomplete" class="banner warn">
+        ⚠️ Taux de change manquant pour {{ result.income.missing_rate_currencies.join(', ') }} — les montants dans ces devises
+        sont comptés comme 0 dans le revenu imposable ci-dessous (sous-estimation possible).
+      </div>
 
       <div class="kpi-row">
         <div class="kpi-card kpi-card--featured">

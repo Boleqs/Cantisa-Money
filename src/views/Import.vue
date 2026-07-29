@@ -290,6 +290,12 @@
           <span v-if="aiLoading">🤖 Analyse…</span>
           <span v-else>🤖 Catégoriser avec l'IA</span>
         </button>
+        <button
+          class="btn btn-sm"
+          title="Annuler toutes les modifications manuelles de catégorie/contrepartie"
+          :disabled="!hasAnyOverride"
+          @click="resetAllOverrides"
+        >↺ Réinitialiser catégories/contreparties</button>
 
         <span class="controls-sep"></span>
 
@@ -338,6 +344,7 @@
               <th>Catégorie</th>
               <th>Contrepartie</th>
               <th>Statut</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -347,7 +354,7 @@
               :class="{ 'row-dup': tx.is_duplicate, 'row-deselected': !tx.selected }"
             >
               <td><input type="checkbox" v-model="tx.selected" /></td>
-              <td>{{ tx.date }}</td>
+              <td>{{ fmtDate(tx.date) }}</td>
               <td class="desc-cell">{{ tx.description }}</td>
               <td class="amount-col" :class="tx.amount >= 0 ? 'pos' : 'neg'">
                 {{ fmtAmount(tx.amount) }}
@@ -409,6 +416,15 @@
                 <span v-if="tx.is_duplicate" class="badge warn">Doublon</span>
                 <span v-else class="badge ok">Nouveau</span>
               </td>
+              <td>
+                <button
+                  v-if="tx.category_id !== tx.original_category_id || tx.opposing_account_id !== tx.original_opposing_account_id"
+                  class="btn btn-sm"
+                  style="padding:2px 6px;font-size:11px"
+                  title="Annuler les modifications de cette ligne"
+                  @click="resetTxOverrides(tx)"
+                >↺</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -456,6 +472,17 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { formatDate } from '@/utils/dateFormat.js'
+import { dateFormat } from '@/utils/settings.js'
+
+// Format de date par défaut proposé pour le parsing du fichier importé, dérivé du réglage
+// utilisateur (Paramétrage > Format de date) plutôt que codé en dur sur le format US — celui-ci
+// reste modifiable via le sélecteur si le fichier source (ex: export bancaire US) diffère du
+// format habituel de l'utilisateur.
+function defaultDateFormat() {
+  const map = { 'fr-FR': '%d/%m/%Y', 'en-GB': '%d/%m/%Y', 'en-US': '%m/%d/%Y', 'iso': '%Y-%m-%d' }
+  return map[dateFormat.value] || '%d/%m/%Y'
+}
 
 const router = useRouter()
 
@@ -498,7 +525,7 @@ const config = ref({
   has_header: true,
   date_col: 0,
   desc_col: 1,
-  date_format: '%d/%m/%Y',
+  date_format: defaultDateFormat(),
   decimal_sep: ',',
   amount_mode: 'single',
   amount_col: 2,
@@ -515,6 +542,12 @@ const duplicateCount = computed(() => transactions.value.filter(t => t.is_duplic
 
 function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)
+}
+
+// tx.date reste au format ISO (YYYY-MM-DD) tel que renvoyé par le backend — seul l'affichage
+// respecte le format de date choisi dans Paramétrage, pas la valeur envoyée à /import/confirm.
+function fmtDate(v) {
+  return formatDate(v)
 }
 
 function detectFormatFromFile(f) {
@@ -538,14 +571,15 @@ function setFile(f) {
   file.value = f
   error.value = ''
   detectedFormat.value = detectFormatFromFile(f)
-  // QIF default: US decimal separator
+  // QIF default: US decimal separator (convention historique du format, indépendante de la
+  // locale de l'utilisateur) — mais le format de date suit le réglage utilisateur dans les deux
+  // cas, modifiable ensuite via le sélecteur si le fichier source diffère (ex: export QIF US).
   if (detectedFormat.value === 'qif') {
     config.value.decimal_sep = '.'
-    config.value.date_format = '%m/%d/%Y'
   } else {
     config.value.decimal_sep = ','
-    config.value.date_format = '%d/%m/%Y'
   }
+  config.value.date_format = defaultDateFormat()
 }
 
 async function goToConfig() {
@@ -606,19 +640,27 @@ async function parse() {
 
     const { data } = await axios.post('/api/import/parse', fd)
     const res = data.response_data
-    transactions.value = res.transactions.map(t => ({
-      ...t,
-      category_id: t.category_id ?? null,
-      opposing_account_id: (Number(t.amount) < 0
+    transactions.value = res.transactions.map(t => {
+      const defaultCategoryId = t.category_id ?? null
+      const defaultOpposingAccountId = (Number(t.amount) < 0
         ? config.value.expense_opposing_account_id
-        : config.value.income_opposing_account_id) || null,
-      newAccountSuggestion: null,
-      aiSuggested: false,
-      creatingAccount: false,
-      addingCategory: false,
-      newCategoryName: '',
-      creatingCategory: false,
-    }))
+        : config.value.income_opposing_account_id) || null
+      return {
+        ...t,
+        category_id: defaultCategoryId,
+        opposing_account_id: defaultOpposingAccountId,
+        // Suggestion d'origine (IA ou résolution automatique côté serveur pour le QIF) — permet de
+        // revenir en arrière si l'utilisateur a modifié à la main sans se souvenir de la valeur de départ.
+        original_category_id: defaultCategoryId,
+        original_opposing_account_id: defaultOpposingAccountId,
+        newAccountSuggestion: null,
+        aiSuggested: false,
+        creatingAccount: false,
+        addingCategory: false,
+        newCategoryName: '',
+        creatingCategory: false,
+      }
+    })
     parseErrors.value = res.errors
 
     // Enrich accounts_found: mark those that already exist by name
@@ -731,6 +773,26 @@ async function createCategoryForTx(tx) {
     tx.creatingCategory = false
   }
 }
+
+// Annule les modifications manuelles (ou suggestions IA) d'une ligne — catégorie et compte de
+// contrepartie reviennent à la suggestion d'origine calculée à l'analyse du fichier.
+function resetTxOverrides(tx) {
+  tx.category_id = tx.original_category_id
+  tx.opposing_account_id = tx.original_opposing_account_id
+  tx.aiSuggested = false
+  tx.newAccountSuggestion = null
+  tx.addingCategory = false
+}
+
+function resetAllOverrides() {
+  transactions.value.forEach(resetTxOverrides)
+}
+
+const hasAnyOverride = computed(() =>
+  transactions.value.some(t =>
+    t.category_id !== t.original_category_id || t.opposing_account_id !== t.original_opposing_account_id
+  )
+)
 
 function applyBulkCategory() {
   if (!bulkCategoryId.value) return

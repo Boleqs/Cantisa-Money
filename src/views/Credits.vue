@@ -82,6 +82,7 @@ import axios from 'axios'
 import LoanModal from '../components/modal/LoanModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { formatDate } from '@/utils/dateFormat.js'
 
 const toast = useToast()
 
@@ -95,10 +96,7 @@ const editTarget = ref(null)
 function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0))
 }
-function fmtDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-}
+const fmtDate = formatDate
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
   return a ? a.name : id || '—'

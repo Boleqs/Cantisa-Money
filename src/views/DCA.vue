@@ -2,8 +2,8 @@
   <div class="page">
     <header class="page-header">
       <div class="title-block">
-        <h1>Abonnements</h1>
-        <p class="subtitle">Gérez vos dépenses récurrentes.</p>
+        <h1>Investissement programmé (DCA)</h1>
+        <p class="subtitle">Planifiez des achats récurrents d'un actif pour un montant fixe.</p>
       </div>
       <div class="header-actions">
         <div class="search-wrapper">
@@ -12,58 +12,70 @@
             v-model="search"
             class="search-input"
             type="text"
-            placeholder="Rechercher un abonnement (nom, compte, catégorie)…"
+            placeholder="Rechercher un plan (nom, actif, compte)…"
           />
         </div>
         <button class="btn" :disabled="loading" @click="reload">
           <span v-if="!loading">↻ Rafraîchir</span>
           <span v-else>Chargement…</span>
         </button>
-        <button class="btn btn-primary" @click="openCreate">+ Nouvel abonnement</button>
+        <button class="btn btn-primary" @click="openCreate">+ Nouveau plan</button>
       </div>
     </header>
 
     <div v-if="error" class="alert"><strong>Erreur :</strong> {{ error }}</div>
 
-    <div v-if="loading && !subscriptions.length" class="empty">Chargement…</div>
-    <div v-else-if="!loading && !subscriptions.length" class="empty">Aucun abonnement.</div>
-    <div v-else-if="!filteredSubscriptions.length" class="empty">Aucun abonnement ne correspond à « {{ search }} ».</div>
+    <div v-if="loading && !plans.length" class="empty">Chargement…</div>
+    <div v-else-if="!loading && !plans.length" class="empty">Aucun plan DCA.</div>
+    <div v-else-if="!filteredPlans.length" class="empty">Aucun plan ne correspond à « {{ search }} ».</div>
 
     <table v-else class="table">
       <thead>
         <tr>
           <th>Nom</th>
+          <th>Actif</th>
           <th>Montant</th>
           <th>Planification</th>
           <th>Prochaine échéance</th>
-          <th>Dernière exéc.</th>
-          <th>Compte débit</th>
-          <th>Compte crédit</th>
-          <th>Catégorie</th>
+          <th>Investi total</th>
+          <th>Valeur actuelle</th>
+          <th>Plus-value</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="s in filteredSubscriptions" :key="s.id" :class="{ 'row-overdue': s.is_overdue }">
+        <tr v-for="p in filteredPlans" :key="p.id" :class="{ 'row-overdue': p.is_overdue }">
           <td>
-            {{ s.name }}
-            <span v-if="s.is_forecast_only" class="badge-forecast" title="Ne crée pas de transaction automatiquement">Prévisionnel</span>
-            <span v-else-if="s.is_overdue" class="badge-overdue">En retard</span>
+            {{ p.name }}
+            <span v-if="p.is_forecast_only" class="badge-forecast" title="Ne crée pas de position automatiquement">Prévisionnel</span>
+            <span v-else-if="p.is_overdue" class="badge-overdue">En retard</span>
+            <span v-if="p.is_ended" class="badge-ended">Terminé</span>
           </td>
-          <td>{{ fmtAmount(s.amount, s.from_account_id) }}</td>
-          <td class="muted">{{ scheduleLabel(s) }}</td>
-          <td :class="s.is_overdue ? 'overdue' : 'muted'">{{ fmtDate(s.next_due_at) }}</td>
-          <td class="muted">{{ s.last_executed_at ? fmtDate(s.last_executed_at) : '—' }}</td>
-          <td class="muted">{{ accountName(s.from_account_id) }}</td>
-          <td class="muted">{{ accountName(s.to_account_id) }}</td>
-          <td class="muted">{{ categoryName(s.category_id) }}</td>
+          <td class="muted">{{ assetSymbol(p.asset_id) }}</td>
+          <td>{{ fmtAmount(p.amount, p.source_account_id) }}</td>
+          <td class="muted">{{ scheduleLabel(p) }}</td>
+          <td :class="p.is_overdue ? 'overdue' : 'muted'">{{ p.next_due_at ? fmtDate(p.next_due_at) : '—' }}</td>
+          <td class="muted">{{ fmtConverted(p.total_invested) }}</td>
+          <td class="muted">{{ fmtConverted(p.current_value) }}</td>
+          <td :class="p.gain_abs != null ? (p.gain_abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
+            <template v-if="p.gain_abs != null">
+              {{ fmtConverted(p.gain_abs) }}
+              <span v-if="p.gain_pct != null">({{ p.gain_pct >= 0 ? '+' : '' }}{{ p.gain_pct.toFixed(1) }}%)</span>
+            </template>
+            <template v-else>—</template>
+          </td>
           <td class="actions">
-            <button class="btn-action btn-execute" :disabled="s.executing" @click="executeSubscription(s)" title="Exécuter maintenant">
-              <span v-if="s.executing">…</span>
+            <button
+              class="btn-action btn-execute"
+              :disabled="p.executing || p.is_ended"
+              @click="executeDcaPlan(p)"
+              title="Exécuter maintenant"
+            >
+              <span v-if="p.executing">…</span>
               <span v-else>▶</span>
             </button>
-            <button class="btn-action" @click="openEdit(s)">✎</button>
-            <button class="btn-action btn-danger" @click="deleteSubscription(s)">✕</button>
+            <button class="btn-action" @click="openEdit(p)">✎</button>
+            <button class="btn-action btn-danger" @click="deleteDcaPlan(p)">✕</button>
           </td>
         </tr>
       </tbody>
@@ -72,12 +84,18 @@
     <!-- Modal inline -->
     <div v-if="showModal" class="modal-backdrop" @click.self="shake">
       <div class="modal" :class="{ 'modal-shake': shaking }">
-        <h2>{{ editTarget ? 'Modifier' : 'Nouvel abonnement' }}</h2>
+        <h2>{{ editTarget ? 'Modifier' : 'Nouveau plan DCA' }}</h2>
         <label>Nom *
-          <input v-model="form.name" placeholder="Netflix, Loyer…" />
+          <input v-model="form.name" placeholder="PEA MSCI World…" />
         </label>
-        <label>Montant *
-          <input v-model.number="form.amount" type="number" step="0.01" placeholder="9.99" />
+        <label>Actif *
+          <select v-model="form.asset_id">
+            <option value="">— Sélectionner —</option>
+            <option v-for="a in assets" :key="a.id" :value="a.id">{{ a.symbol }} — {{ a.name }}</option>
+          </select>
+        </label>
+        <label>Montant par échéance *
+          <input v-model.number="form.amount" type="number" step="0.01" min="0.01" placeholder="200" />
         </label>
         <label>Planification *
           <select v-model="form.schedule_type">
@@ -114,33 +132,33 @@
             >{{ d.slice(0, 3) }}</button>
           </div>
         </label>
-        <label>Compte débit *
-          <select v-model="form.from_account_id">
+        <label>Compte débité *
+          <select v-model="form.source_account_id">
             <option value="">— Sélectionner —</option>
-            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
           </select>
         </label>
-        <label>Compte crédit *
-          <select v-model="form.to_account_id">
+        <label>Compte de portefeuille *
+          <select v-model="form.dest_account_id">
             <option value="">— Sélectionner —</option>
-            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in investmentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
           </select>
         </label>
-        <label>Catégorie
-          <select v-model="form.category_id">
-            <option value="">— Aucune —</option>
-            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
+        <label>Date de début *
+          <input v-model="form.start_date" type="date" />
+        </label>
+        <label>Date de fin (facultatif)
+          <input v-model="form.end_date" type="date" />
         </label>
         <label class="checkbox-label">
           <input type="checkbox" v-model="form.is_forecast_only" />
-          Prévisionnel uniquement (ne crée pas de transaction automatiquement — utile si vous importez vos relevés bancaires, pour éviter les doublons)
+          Prévisionnel uniquement (ne crée pas de position automatiquement — échéance affichée seulement)
         </label>
         <div class="modal-actions">
           <button class="btn" @click="showModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!form.name.trim() || !form.amount || !form.from_account_id || !form.to_account_id || !scheduleValid"
+            :disabled="!formValid"
             @click="save"
           >Enregistrer</button>
         </div>
@@ -157,6 +175,7 @@ import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
 import { formatDate } from '@/utils/dateFormat.js'
+import { currency } from '@/utils/settings.js'
 
 const toast = useToast()
 
@@ -166,20 +185,26 @@ const MONTH_NAMES = [
 ]
 const WEEKDAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
 
-const subscriptions = ref([])
+const plans = ref([])
+const assets = ref([])
 const accounts = ref([])
-const categories = ref([])
 const commodities = ref([])
 const loading = ref(false)
 const error = ref('')
 const search = ref('')
 const showModal = ref(false)
 const editTarget = ref(null)
-const form = ref({
-  name: '', amount: '',
-  schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
-  from_account_id: '', to_account_id: '', category_id: '', is_forecast_only: false,
-})
+const form = ref(emptyForm())
+
+function emptyForm() {
+  return {
+    name: '', asset_id: '', amount: '',
+    schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
+    source_account_id: '', dest_account_id: '',
+    start_date: new Date().toISOString().slice(0, 10), end_date: '',
+    is_forecast_only: false,
+  }
+}
 
 const { shaking, shake } = useModalShake()
 useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
@@ -191,22 +216,39 @@ const scheduleValid = computed(() => {
   return false
 })
 
+const formValid = computed(() =>
+  form.value.name.trim() && form.value.asset_id && form.value.amount > 0 &&
+  form.value.source_account_id && form.value.dest_account_id && form.value.start_date && scheduleValid.value
+)
+
 function toggleWeekday(day) {
   const i = form.value.weekdays.indexOf(day)
   if (i === -1) form.value.weekdays.push(day)
   else form.value.weekdays.splice(i, 1)
 }
 
-function scheduleLabel(s) {
-  if (s.schedule_type === 'monthly') return `Le ${s.day_of_month} de chaque mois`
-  if (s.schedule_type === 'yearly') return `Le ${s.day_of_month} ${MONTH_NAMES[s.month_of_year - 1]}`
-  if (s.schedule_type === 'weekly') return (s.weekdays || []).map(d => WEEKDAY_NAMES[d - 1]).join(', ') || '—'
+function scheduleLabel(p) {
+  if (p.schedule_type === 'monthly') return `Le ${p.day_of_month} de chaque mois`
+  if (p.schedule_type === 'yearly') return `Le ${p.day_of_month} ${MONTH_NAMES[p.month_of_year - 1]}`
+  if (p.schedule_type === 'weekly') return (p.weekdays || []).map(d => WEEKDAY_NAMES[d - 1]).join(', ') || '—'
   return '—'
 }
 
-// Un abonnement n'a pas de devise propre : le montant est implicitement dans celle du compte
-// débité (from_account_id), voir le même commentaire côté backend (rt_reports.py) — jamais
-// converti vers la devise par défaut, donc on affiche sa devise native plutôt que globale.
+const investmentAccounts = computed(() => accounts.value.filter(a => ['Assets', 'Equity'].includes(a.account_type)))
+const debitableAccounts = computed(() => accounts.value.filter(a => ['Current', 'Assets', 'Equity'].includes(a.account_type)))
+
+function accountName(id) {
+  const a = accounts.value.find(a => String(a.id) === String(id))
+  return a ? a.name : id || '—'
+}
+function assetSymbol(id) {
+  const a = assets.value.find(a => String(a.id) === String(id))
+  return a ? a.symbol : '—'
+}
+
+// Le montant par échéance n'a pas de devise propre : il est implicitement dans celle du compte
+// débité (source_account_id), même convention que Subscriptions.amount — jamais converti, donc
+// affiché dans sa devise native plutôt que la devise par défaut globale.
 function currencyShort(id) {
   const c = commodities.value.find(c => String(c.id) === String(id))
   return c?.short_name?.toUpperCase?.() || '—'
@@ -216,30 +258,25 @@ function fmtAmount(v, accountId) {
   const short = a ? currencyShort(a.currency_id) : '—'
   return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v ?? 0)) + ' ' + short
 }
+// Agrégats (investi total, valeur actuelle, plus-value) déjà convertis côté backend dans la devise
+// par défaut de l'utilisateur (voir get_dca_plan_breakdown) — même convention que Dashboard/Budgets.
+function fmtConverted(v) {
+  if (v == null) return '—'
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number(v)) + ' ' + currency.value
+}
 
 const fmtDate = formatDate
-function accountName(id) {
-  const a = accounts.value.find(a => String(a.id) === String(id))
-  return a ? a.name : id || '—'
-}
-function categoryName(id) {
-  if (!id) return '—'
-  const c = categories.value.find(c => String(c.id) === String(id))
-  return c ? c.name : id
-}
 
 const normalizeText = normalizeSearch
 
-// Recherche côté client : pas de pagination serveur ici (liste courte par nature), contrairement
-// à Transactions — filtre sur le nom, les deux comptes et la catégorie.
-const filteredSubscriptions = computed(() => {
+const filteredPlans = computed(() => {
   const q = normalizeText(search.value)
-  if (!q) return subscriptions.value
-  return subscriptions.value.filter((s) =>
-    normalizeText(s.name).includes(q) ||
-    normalizeText(accountName(s.from_account_id)).includes(q) ||
-    normalizeText(accountName(s.to_account_id)).includes(q) ||
-    normalizeText(categoryName(s.category_id)).includes(q)
+  if (!q) return plans.value
+  return plans.value.filter((p) =>
+    normalizeText(p.name).includes(q) ||
+    normalizeText(assetSymbol(p.asset_id)).includes(q) ||
+    normalizeText(accountName(p.source_account_id)).includes(q) ||
+    normalizeText(accountName(p.dest_account_id)).includes(q)
   )
 })
 
@@ -247,29 +284,21 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const [subRes, accRes, catRes, comRes] = await Promise.all([
-      axios.get('/api/subscriptions'),
+    const [dcaRes, assetsRes, accRes, comRes] = await Promise.all([
+      axios.get('/api/dca'),
+      axios.get('/api/assets'),
       axios.get('/api/accounts'),
-      axios.get('/api/categories'),
       axios.get('/api/commodities'),
     ])
-    subscriptions.value = (Array.isArray(subRes.data?.response_data) ? subRes.data.response_data : [])
-      .map(s => ({ ...s, executing: false }))
+    plans.value = (Array.isArray(dcaRes.data?.response_data) ? dcaRes.data.response_data : [])
+      .map(p => ({ ...p, executing: false }))
+    assets.value = Array.isArray(assetsRes.data?.response_data) ? assetsRes.data.response_data : []
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
-    categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
     loading.value = false
-  }
-}
-
-function emptyForm() {
-  return {
-    name: '', amount: '',
-    schedule_type: 'monthly', day_of_month: 1, month_of_year: 1, weekdays: [],
-    from_account_id: '', to_account_id: '', category_id: '', is_forecast_only: false,
   }
 }
 
@@ -279,19 +308,21 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(s) {
-  editTarget.value = s
+function openEdit(p) {
+  editTarget.value = p
   form.value = {
-    name: s.name,
-    amount: s.amount,
-    schedule_type: s.schedule_type,
-    day_of_month: s.day_of_month || 1,
-    month_of_year: s.month_of_year || 1,
-    weekdays: [...(s.weekdays || [])],
-    from_account_id: s.from_account_id || '',
-    to_account_id: s.to_account_id || '',
-    category_id: s.category_id || '',
-    is_forecast_only: !!s.is_forecast_only,
+    name: p.name,
+    asset_id: p.asset_id,
+    amount: p.amount,
+    schedule_type: p.schedule_type,
+    day_of_month: p.day_of_month || 1,
+    month_of_year: p.month_of_year || 1,
+    weekdays: [...(p.weekdays || [])],
+    source_account_id: p.source_account_id || '',
+    dest_account_id: p.dest_account_id || '',
+    start_date: p.start_date || '',
+    end_date: p.end_date || '',
+    is_forecast_only: !!p.is_forecast_only,
   }
   showModal.value = true
 }
@@ -299,21 +330,23 @@ function openEdit(s) {
 async function save() {
   const payload = {
     name: form.value.name,
+    asset_id: form.value.asset_id,
     amount: form.value.amount,
     schedule_type: form.value.schedule_type,
     day_of_month: form.value.day_of_month,
     month_of_year: form.value.month_of_year,
     weekdays: form.value.weekdays,
-    from_account_id: form.value.from_account_id,
-    to_account_id: form.value.to_account_id,
-    category_id: form.value.category_id || null,
+    source_account_id: form.value.source_account_id,
+    dest_account_id: form.value.dest_account_id,
+    start_date: form.value.start_date,
+    end_date: form.value.end_date || null,
     is_forecast_only: form.value.is_forecast_only,
   }
   try {
     if (editTarget.value) {
-      await axios.patch('/api/subscriptions', { subscription_id: editTarget.value.id, ...payload })
+      await axios.patch('/api/dca', { plan_id: editTarget.value.id, ...payload })
     } else {
-      await axios.post('/api/subscriptions', payload)
+      await axios.post('/api/dca', payload)
     }
     showModal.value = false
     await reload()
@@ -322,30 +355,34 @@ async function save() {
   }
 }
 
-async function executeSubscription(s) {
-  s.executing = true
+async function executeDcaPlan(p) {
+  p.executing = true
   error.value = ''
   try {
-    const { data } = await axios.post('/api/subscriptions/execute', { subscription_id: s.id })
-    Object.assign(s, data.response_data, { executing: false })
+    const { data } = await axios.post('/api/dca/execute', { plan_id: p.id })
+    Object.assign(p, data.response_data, { executing: false })
+    toast.success(`Contribution exécutée pour « ${p.name} ».`)
   } catch (e) {
-    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de l\'exécution'
-    s.executing = false
+    // Contrairement aux abonnements (qui ne peuvent pas échouer), une exécution DCA peut échouer
+    // (prix ou taux de change indisponible) — l'erreur backend doit être visible, pas juste
+    // silencieusement retentée à la prochaine passe horaire.
+    error.value = e?.response?.data?.response_data || e?.message || "Erreur lors de l'exécution"
+    p.executing = false
   }
 }
 
-async function deleteSubscription(s) {
+async function deleteDcaPlan(p) {
   const ok = await confirmDialog({
-    title: "Supprimer l'abonnement",
-    message: `Supprimer l'abonnement « ${s.name} » ?`,
+    title: 'Supprimer le plan DCA',
+    message: `Supprimer le plan « ${p.name} » ? Les positions déjà achetées restent en portefeuille.`,
     confirmLabel: 'Supprimer',
     danger: true,
   })
   if (!ok) return
   try {
-    await axios.delete('/api/subscriptions', { params: { subscription_id: s.id } })
+    await axios.delete('/api/dca', { params: { plan_id: p.id } })
     await reload()
-    toast.success(`Abonnement « ${s.name} » supprimé.`)
+    toast.success(`Plan « ${p.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -474,6 +511,20 @@ onMounted(() => reload())
   margin-left: 6px;
   vertical-align: middle;
 }
+.badge-ended {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.3);
+  background: rgba(148,163,184,0.1);
+  color: #cbd5e1;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.gain-positive { color: #4ade80; font-weight: 600; }
+.gain-negative { color: #f87171; font-weight: 600; }
 
 .modal-backdrop {
   position: fixed;
