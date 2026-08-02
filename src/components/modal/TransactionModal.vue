@@ -183,7 +183,7 @@
               <select v-model="simple.from_account_id" required>
                 <option value="" disabled>Compte…</option>
                 <option v-for="a in accounts" :key="a.id" :value="a.id">
-                  {{ a.name }}
+                  {{ accountDisplayLabel(a, accounts) }}
                 </option>
               </select>
             </div>
@@ -193,7 +193,7 @@
               <select v-model="simple.to_account_id" required>
                 <option value="" disabled>Compte…</option>
                 <option v-for="a in accounts" :key="a.id" :value="a.id">
-                  {{ a.name }}
+                  {{ accountDisplayLabel(a, accounts) }}
                 </option>
               </select>
             </div>
@@ -220,7 +220,7 @@
             <select v-model="split.account_id" required>
               <option value="" disabled>Compte…</option>
               <option v-for="a in accounts" :key="a.id" :value="a.id">
-                {{ a.name }}
+                {{ accountDisplayLabel(a, accounts) }}
               </option>
             </select>
             <input
@@ -266,6 +266,8 @@ import { computed, reactive, watch, ref, nextTick } from 'vue'
 import axios from 'axios'
 import ReceiptOcrReview from '@/components/ReceiptOcrReview.vue'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -285,6 +287,7 @@ async function loadReferenceData() {
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
       axios.get('/api/tags'),
+      ensureInstitutionsLoaded(),
     ])
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
@@ -536,7 +539,8 @@ const currentSplitTagIds = computed(() => splitTagIds.value.get(selectedTagSplit
 function splitLabel(s) {
   const acc = accounts.value.find(a => a.id === s.account_id)
   const qty = Number(s.quantity) || 0
-  return `${acc ? acc.name : '—'} (${qty >= 0 ? '+' : ''}${qty.toFixed(2)})`
+  const label = acc ? accountDisplayLabel(acc, accounts.value) : '—'
+  return `${label} (${qty >= 0 ? '+' : ''}${qty.toFixed(2)})`
 }
 
 const TAG_COLOR_HEX = {

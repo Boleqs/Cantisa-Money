@@ -5,8 +5,8 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH
 from backend.utils.api_responses import json_response
 
-# Alignée sur la contrainte CHECK réellement en base (migration e4a7c1f9b2d3) — le modèle
-# SQLAlchemy accounts.py est resté obsolète sur ce point (n'y liste pas 'Liability').
+# Alignée sur la contrainte CHECK réellement en base (migration e4a7c1f9b2d3), même liste que le
+# CheckConstraint de accounts.py.
 ACCOUNT_TYPES = ('Income', 'Expense', 'Equity', 'Assets', 'Current', 'Liability')
 
 # Plan de comptes standard proposé au premier login — repris du jeu de démo (app.py::init_db()),

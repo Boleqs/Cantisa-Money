@@ -161,7 +161,7 @@
           <select v-model="config.account_id" class="form-select">
             <option value="">— Sélectionner —</option>
             <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-              {{ acc.name }} ({{ acc.account_type }})
+              {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
             </option>
           </select>
         </div>
@@ -170,7 +170,7 @@
           <select v-model="config.expense_opposing_account_id" class="form-select">
             <option value="">— Sélectionner —</option>
             <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-              {{ acc.name }} ({{ acc.account_type }})
+              {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
             </option>
           </select>
         </div>
@@ -179,7 +179,7 @@
           <select v-model="config.income_opposing_account_id" class="form-select">
             <option value="">— Sélectionner —</option>
             <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-              {{ acc.name }} ({{ acc.account_type }})
+              {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
             </option>
           </select>
         </div>
@@ -397,7 +397,7 @@
                 <select v-if="!tx.newAccountSuggestion || tx.opposing_account_id" v-model="tx.opposing_account_id" class="cat-select" @change="tx.newAccountSuggestion = null; tx.aiSuggested = false">
                   <option :value="null">— (défaut)</option>
                   <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-                    {{ acc.name }}
+                    {{ accountDisplayLabel(acc, accounts) }}
                   </option>
                 </select>
                 <!-- Nouveau compte proposé par l'IA -->
@@ -474,6 +474,8 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { formatDate } from '@/utils/dateFormat.js'
 import { dateFormat } from '@/utils/settings.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 // Format de date par défaut proposé pour le parsing du fichier importé, dérivé du réglage
 // utilisateur (Paramétrage > Format de date) plutôt que codé en dur sur le format US — celui-ci
@@ -945,6 +947,7 @@ async function loadReferentials() {
       axios.get('/api/accounts'),
       axios.get('/api/commodities'),
       axios.get('/api/categories'),
+      ensureInstitutionsLoaded(),
     ])
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []

@@ -40,7 +40,7 @@ export default {
 }
 .link {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
 
     cursor: pointer;
     position: relative;
@@ -51,7 +51,8 @@ export default {
     margin: 0.7em 0;
     padding: 0.4em;
     border-radius: 0.25em;
-    height: 1.5em;
+    min-height: 1.5em;
+    line-height: 1.3;
 
     color: white;
     text-decoration: none;

@@ -27,7 +27,6 @@ class AddLoanSchema(Schema):
     category_id = fields.UUID(load_default=None, allow_none=True)
     auto_debit = fields.Boolean(load_default=False)
     is_existing_loan = fields.Boolean(load_default=False)
-    equity_opening_account_id = fields.UUID(load_default=None, allow_none=True)
 
 
 class UpdateLoanSchema(Schema):
@@ -222,22 +221,8 @@ class LoansRoutes:
                     return json_response(f"Compte d'assurance : {err}", HttpCode.BAD_REQUEST)
 
             is_existing = data.get('is_existing_loan', False)
-            equity_account = None
-            if is_existing:
-                if not data.get('equity_opening_account_id'):
-                    return json_response(
-                        "equity_opening_account_id requis pour un crédit déjà en cours", HttpCode.BAD_REQUEST)
-                equity_account, err = _get_owned_account(
-                    Accounts, user_id, data['equity_opening_account_id'], 'Equity')
-                if err:
-                    return json_response(f"Compte d'ouverture : {err}", HttpCode.BAD_REQUEST)
-            elif data.get('equity_opening_account_id'):
-                return json_response(
-                    "equity_opening_account_id n'est utilisable que pour un crédit déjà en cours",
-                    HttpCode.BAD_REQUEST)
 
-            for label, acc in (("intérêts", interest_account), ("assurance", insurance_account),
-                                ("ouverture", equity_account)):
+            for label, acc in (("intérêts", interest_account), ("assurance", insurance_account)):
                 if acc and str(acc.currency_id) != str(payment_account.currency_id):
                     return json_response(
                         f"Le compte de {label} doit avoir la même devise que le compte de prélèvement",
@@ -254,6 +239,25 @@ class LoansRoutes:
                 )
                 DB.session.add(liability_account)
                 DB.session.flush()
+
+                # Contrepartie d'ouverture pour un crédit déjà en cours : auto-générée (comme le
+                # compte Liability ci-dessus), plus besoin que l'utilisateur en choisisse un
+                # existant — subtype 'loan' pour la distinguer d'un vrai compte Equity (PEA...) et
+                # l'exclure de la liste des comptes (voir Accounts.vue).
+                equity_account = None
+                if is_existing:
+                    equity_account = Accounts(
+                        user_id=user_id,
+                        name=f"Ouverture — {data['name']}",
+                        account_type='Equity',
+                        account_subtype='loan',
+                        currency_id=payment_account.currency_id,
+                        is_virtual=False,
+                        description=(f"Contrepartie comptable générée automatiquement pour "
+                                     f"l'ouverture du prêt « {data['name']} » (crédit déjà en cours)"),
+                    )
+                    DB.session.add(equity_account)
+                    DB.session.flush()
 
                 loan = Loans(
                     user_id=user_id,
@@ -432,6 +436,7 @@ class LoansRoutes:
 
             try:
                 liability_account_id = loan.liability_account_id
+                equity_account_id = loan.equity_opening_account_id
                 opening_tx_id = loan.opening_transaction_id
                 DB.session.delete(loan)
                 DB.session.flush()
@@ -440,20 +445,29 @@ class LoansRoutes:
                     if tx:
                         DB.session.delete(tx)
                         DB.session.flush()
-                liability_account = Accounts.query.filter_by(id=liability_account_id).first()
-                if liability_account:
+                for account_id, label in ((liability_account_id, "de passif"), (equity_account_id, "d'ouverture")):
+                    if not account_id:
+                        continue
+                    account = Accounts.query.filter_by(id=account_id).first()
+                    if not account:
+                        continue
+                    # Compte Equity de contrepartie éventuellement choisi par l'utilisateur parmi
+                    # ses comptes existants (anciens prêts créés avant l'auto-génération, subtype
+                    # 'loan') — un vrai compte à lui ne doit jamais être supprimé automatiquement.
+                    if account.account_type == 'Equity' and account.account_subtype != 'loan':
+                        continue
                     # Filet de sécurité : si un split existe encore sur ce compte au-delà de la
                     # transaction d'ouverture déjà supprimée ci-dessus (ex. écriture manuelle
                     # ajoutée par l'utilisateur en mode avancé), ne pas le supprimer — la cascade
                     # orphelinerait la transaction qui le porte (même bug que celui corrigé sur
                     # delete_account()).
-                    if Splits.query.filter(Splits.account_id == liability_account.id).first():
+                    if Splits.query.filter(Splits.account_id == account.id).first():
                         DB.session.rollback()
                         return json_response(
-                            "Impossible de supprimer ce prêt : son compte de passif a encore des "
+                            f"Impossible de supprimer ce prêt : son compte {label} a encore des "
                             "transactions liées",
                             HttpCode.CONFLICT)
-                    DB.session.delete(liability_account)
+                    DB.session.delete(account)
                 DB.session.commit()
                 return json_response('Prêt supprimé', HttpCode.OK)
             except Exception as error:

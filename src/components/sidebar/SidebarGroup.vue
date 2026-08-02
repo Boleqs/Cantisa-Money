@@ -111,7 +111,7 @@ export default {
 .sidebar-group-children {
   display: flex;
   flex-direction: column;
-  margin-left: 15px;
+  margin-left: 10px;
 }
 
 /* petite anim de collapse vertical */

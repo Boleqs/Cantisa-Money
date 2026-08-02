@@ -11,9 +11,9 @@ services:
       POSTGRES_DB: cmm
     volumes:
       - db_data:/var/lib/postgresql/data
-      # Partagé avec le service backend (voir plus bas) : dépôt du mot de passe généré par
-      # db/entrypoint.sh quand POSTGRES_PASSWORD n'est pas fourni.
-      - ./backend/instance:/instance
+      # Volume nommé (comme db_data), partagé avec le service backend (voir plus bas) : dépôt du
+      # mot de passe généré par db/entrypoint.sh quand POSTGRES_PASSWORD n'est pas fourni.
+      - instance_data:/instance
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -61,14 +61,15 @@ services:
       # écouté par gunicorn (voir docker-entrypoint.sh), pas seulement le mapping externe.
       - "${API_PORT:-5000}:${API_PORT:-5000}"
     volumes:
-      # Persiste le certificat auto-signé généré par utils/tls.py entre deux redémarrages (sinon
-      # regénéré à chaque fois, ce qui obligerait à réaccepter l'avertissement navigateur à chaque
-      # fois). Sert aussi de dépôt pour un certificat fourni par l'utilisateur (voir .env.example).
-      - ./backend/certs:/app/backend/certs
-      # Persiste FLASK_SECRET_KEY/PWD_PEPPER générés par utils/secrets.py quand ils ne sont pas
-      # fournis via l'env — sinon régénérés à chaque redémarrage, ce qui invaliderait toutes les
-      # sessions et tous les mots de passe existants à chaque fois.
-      - ./backend/instance:/app/backend/instance
+      # Volume nommé : persiste le certificat auto-signé généré par utils/tls.py entre deux
+      # redémarrages (sinon regénéré à chaque fois, ce qui obligerait à réaccepter l'avertissement
+      # navigateur à chaque fois). Sert aussi de dépôt pour un certificat fourni par l'utilisateur
+      # (voir .env.example) — il faut alors le copier dans le volume, pas dans ./backend/certs.
+      - certs_data:/app/backend/certs
+      # Volume nommé : persiste FLASK_SECRET_KEY/PWD_PEPPER générés par utils/secrets.py quand ils
+      # ne sont pas fournis via l'env — sinon régénérés à chaque redémarrage, ce qui invaliderait
+      # toutes les sessions et tous les mots de passe existants à chaque fois.
+      - instance_data:/app/backend/instance
 
   frontend:
     build:
@@ -90,10 +91,10 @@ services:
       TLS_CERT_PATH: ${TLS_CERT_PATH:-}
       TLS_KEY_PATH: ${TLS_KEY_PATH:-}
     volumes:
-      # Même certificat que le backend (voir plus haut) — un certificat est lié à un nom d'hôte,
+      # Même volume nommé que le backend (voir plus haut) — un certificat est lié à un nom d'hôte,
       # pas à un port, pas besoin d'en générer un différent par service. Lecture seule : seul le
       # backend en génère un par défaut.
-      - ./backend/certs:/certs:ro
+      - certs_data:/certs:ro
     depends_on:
       - backend
     ports:
@@ -101,3 +102,5 @@ services:
 
 volumes:
   db_data:
+  certs_data:
+  instance_data:

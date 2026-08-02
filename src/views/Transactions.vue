@@ -67,7 +67,7 @@
           <label class="filter-label">Compte</label>
           <select v-model="filters.account_id" class="filter-input" @change="onFilterChange">
             <option value="">— Tous —</option>
-            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </div>
         <div class="filter-group">
@@ -202,6 +202,8 @@ import TransactionModal from '@/components/modal/TransactionModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { formatDate } from '@/utils/dateFormat.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -249,7 +251,7 @@ function fmtAmount(v) {
 
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
-  return a ? a.name : String(id)
+  return a ? accountDisplayLabel(a, accounts.value) : String(id)
 }
 
 function currencyShort(id) {
@@ -265,6 +267,7 @@ async function fetchReferentials() {
     axios.get('/api/accounts'),
     axios.get('/api/categories'),
     axios.get('/api/tags'),
+    ensureInstitutionsLoaded(),
   ])
   commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
   accounts.value   = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
@@ -836,11 +839,17 @@ onUnmounted(() => document.removeEventListener('click', closeExportMenu))
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   font-size: 13px;
 }
 
 .split-account {
   color: #cbd5e1;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .split-memo {
@@ -852,6 +861,7 @@ onUnmounted(() => document.removeEventListener('click', closeExportMenu))
 .split-amount {
   font-variant-numeric: tabular-nums;
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 .split-amount.pos {

@@ -64,6 +64,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/accounts/income-expense',
+        name: 'IncomeExpenseAccounts',
+        component: () => import('../views/IncomeExpenseAccounts.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/accounts/:id',
         name: 'AccountDetail',
         component: () => import('../views/AccountDetail.vue'),

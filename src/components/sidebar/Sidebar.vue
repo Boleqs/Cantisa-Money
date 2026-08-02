@@ -13,7 +13,8 @@ import {
     faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
     faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
     faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
-    faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins
+    faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
+    faArrowRightArrowLeft
 } from '@fortawesome/free-solid-svg-icons';
 
 export default {
@@ -44,7 +45,8 @@ export default {
             faSackDollar, faChartLine, faLayerGroup, faChartColumn, faMagnifyingGlassChart, faEye,
             faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
             faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
-            faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins
+            faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
+            faArrowRightArrowLeft
         }
     }
 }
@@ -64,8 +66,9 @@ export default {
             <template v-if="hasPermission('Comptabilité') || hasPermission('Pilotage') || hasPermission('Planification')">
               <SidebarSectionTitle label="Gestion bancaire"/>
               <SidebarLink v-if="hasPermission('Pilotage')" to="/Dashboard" :icon="faGaugeHigh">Dashboard</SidebarLink>
-              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :icon="faBuildingColumns" :paths="['/accounts', '/institutions', '/transactions', '/import']">
+              <SidebarGroup v-if="hasPermission('Comptabilité')" label="Comptes Bancaires" :icon="faBuildingColumns" :paths="['/accounts', '/accounts/income-expense', '/institutions', '/transactions', '/import']">
                 <SidebarLink to="/accounts" :icon="faListUl">Liste des comptes</SidebarLink>
+                <SidebarLink to="/accounts/income-expense" :icon="faArrowRightArrowLeft">Comptes de revenus et dépenses</SidebarLink>
                 <SidebarLink to="/institutions" :icon="faLandmark">Institutions</SidebarLink>
                 <SidebarLink to="/transactions" :icon="faRightLeft">Transactions</SidebarLink>
                 <SidebarLink to="/import" :icon="faFileImport">Importer</SidebarLink>
@@ -124,10 +127,10 @@ export default {
 
         <!-- Barre d'icônes du bas, toujours visible -->
         <div class="sidebar-footer" :class="{ collapsed }">
-            <span class="collapse-icon" @click="toggleSidebar">
+            <span class="footer-icon collapse-icon" @click="toggleSidebar">
                 <img class="collapse-icon-img" :class="{ 'collapse-icon-img collapsed': collapsed}" src="../icons/double_fleche.png"></img>
             </span>
-            <span>
+            <span class="footer-icon">
                 <img
                     class="icon_account"
                     :class="{'logo disabled': showMyAccount || showSettings}"
@@ -136,7 +139,7 @@ export default {
                 />
                 <MyAccount v-if="showMyAccount" @close="showMyAccount = false"/>
             </span>
-            <span>
+            <span class="footer-icon">
                 <img
                     class="parameter"
                     :class="{'logo disabled': showMyAccount || showSettings}"
@@ -213,12 +216,23 @@ export default {
     flex-shrink: 0;
 }
 
-.collapse-icon {
+/* Boîte commune aux 3 icônes du footer (replier / compte / réglages) : même centrage flex et
+   même gabarit pour les 3, sinon les <img> nus (compte/réglages) se calent sur leur ligne de base
+   par défaut au lieu d'être centrés comme l'icône de repli (qui avait son propre display:flex),
+   ce qui les désalignait verticalement les uns par rapport aux autres. */
+.footer-icon {
     cursor: pointer;
-    padding: 0.5em;
-    color: rgba(255, 255, 255, 0.7);
     display: flex;
     align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0.25em;
+    box-sizing: content-box;
+}
+
+.collapse-icon {
+    color: rgba(255, 255, 255, 0.7);
 }
 
 .collapse-icon-img {
@@ -235,8 +249,8 @@ export default {
 
 .parameter {
     cursor: pointer;
-    padding: 0.25em;
-    width: 36px;
+    width: 100%;
+    height: 100%;
     transition: 0.3s ease-in-out;
 }
 
@@ -246,8 +260,8 @@ export default {
 
 .icon_account {
     cursor: pointer;
-    padding: 0.25em;
-    width: 36px;
+    width: 100%;
+    height: 100%;
     transition: 0.3s ease-in-out;
 }
 

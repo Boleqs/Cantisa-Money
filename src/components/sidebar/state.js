@@ -23,7 +23,7 @@ watch(collapsed, v => {
   try { localStorage.setItem(STORAGE_KEY, String(v)) } catch {}
 })
 
-export const SIDEBAR_WIDTH = 180
+export const SIDEBAR_WIDTH = 220
 export const SIDEBAR_WIDTH_COLLAPSED = 70
 export const sidebarWidth = computed(
   () => `${collapsed.value ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH}px`

@@ -110,7 +110,7 @@
           >
             <div class="acc-left">
               <span v-if="a._depth > 0" class="tree-prefix">└</span>
-              <span class="acc-name">{{ a.name }}</span>
+              <span class="acc-name">{{ accountDisplayLabel(a, accounts) }}</span>
               <span class="acc-type chip">{{ a.account_type }}</span>
             </div>
             <span class="acc-balance" :class="accountBalance(a) >= 0 ? 'pos' : 'neg'">
@@ -181,6 +181,8 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { currency } from '@/utils/settings.js'
 import LineGraph from '../components/graphs/LineGraph.vue'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 const kpis = ref({ current_balance: 0, assets_balance: 0, monthly_income: 0, monthly_expenses: 0, net_worth: 0 })
@@ -316,6 +318,7 @@ async function reload() {
       axios.get('/api/budgets'),
       axios.get('/api/transactions', { params: { per_page: 10, page: 1 } }),
       axios.get('/api/commodities'),
+      ensureInstitutionsLoaded(),
     ])
     const stats = statsRes.data?.response_data
     kpis.value = stats?.kpis ?? kpis.value

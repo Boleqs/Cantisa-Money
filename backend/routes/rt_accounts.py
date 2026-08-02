@@ -72,6 +72,23 @@ class CloseAccountSchema(Schema):
     balancing_account_id = fields.UUID(load_default=None)
 
 
+def _name_conflict(Accounts, user_id, name, parent_id, institution_id, exclude_account_id=None):
+    """Unicité du nom scopée (voir accounts.py / uq_accounts_user_parent_name et
+    uq_accounts_user_institution_name) : conflit seulement si un autre compte du même nom partage
+    le même compte parent OU la même institution — un compte sans les deux n'a aucun scope contre
+    lequel se comparer, donc jamais de conflit dans ce cas (comportement voulu, pas un oubli)."""
+    if not parent_id and not institution_id:
+        return False
+    query = Accounts.query.filter(Accounts.user_id == user_id, Accounts.name == name)
+    if exclude_account_id:
+        query = query.filter(Accounts.id != exclude_account_id)
+    if parent_id and query.filter(Accounts.parent_id == parent_id).first():
+        return True
+    if institution_id and query.filter(Accounts.institution_id == institution_id).first():
+        return True
+    return False
+
+
 class AccountsRoutes:
     def __init__(self, app, DB, Users, Accounts, Splits=None, Transactions=None, Commodities=None, FxRates=None,
                  Institutions=None):
@@ -88,12 +105,13 @@ class AccountsRoutes:
                 # Return a nice message if validation fails
                 return json_response(err.messages, HttpCode.NOT_FOUND)
             try:
-                if bool(Accounts.query.filter(
-                        Accounts.user_id == get_jwt_identity(),
-                        Accounts.name == data.get("name")).first()):
-                    return json_response("Account already exists", HttpCode.NOT_FOUND)
-
                 parent_id = data.get('parent_id')
+                institution_id = data.get('institution_id')
+                if _name_conflict(Accounts, get_jwt_identity(), data.get("name"), parent_id, institution_id):
+                    return json_response(
+                        "Un compte de ce nom existe déjà sous ce compte parent ou cette institution",
+                        HttpCode.CONFLICT)
+
                 if parent_id:
                     parent = Accounts.query.filter(
                         Accounts.user_id == get_jwt_identity(),
@@ -105,7 +123,6 @@ class AccountsRoutes:
                             "Le compte enfant doit avoir la même devise que son compte parent",
                             HttpCode.BAD_REQUEST)
 
-                institution_id = data.get('institution_id')
                 if institution_id and Institutions is not None:
                     institution = Institutions.query.filter(
                         Institutions.user_id == get_jwt_identity(),
@@ -188,6 +205,12 @@ class AccountsRoutes:
                     Institutions.id == new_institution_id).first()
                 if not institution:
                     return json_response("Institution introuvable", HttpCode.BAD_REQUEST)
+
+            if _name_conflict(Accounts, get_jwt_identity(), data.get('name'), effective_parent_id,
+                               new_institution_id, exclude_account_id=account.id):
+                return json_response(
+                    "Un compte de ce nom existe déjà sous ce compte parent ou cette institution",
+                    HttpCode.CONFLICT)
 
             # Champs requis par le schéma : toujours présents. Les autres sont optionnels
             # (le client peut les omettre) -> on garde alors la valeur actuelle du compte

@@ -82,13 +82,14 @@
           <!-- Possessions expandable -->
           <tr v-if="expanded.has(a.id) && a.possessions.length" class="possession-row">
             <td colspan="10">
+              <div class="table-scroll">
               <table class="sub-table">
                 <thead>
                   <tr><th>Compte</th><th>Quantité</th><th>Prix d'achat</th><th>Date d'achat</th><th>Valeur</th><th>Plus-value</th><th></th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="p in a.possessions" :key="p.id" :class="{ 'possession-closed': remainingQty(p) === 0 }">
-                    <td class="muted">{{ accountName(p.account_id) }}</td>
+                    <td class="muted acc-cell">{{ accountName(p.account_id) }}</td>
                     <td>{{ p.disposals?.length ? `${fmtQty(remainingQty(p))} / ${fmtQty(p.quantity)}` : fmtQty(p.quantity) }}</td>
                     <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price * conversionRate(a), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ p.purchase_date ? p.purchase_date.slice(0, 10) : '—' }}</td>
@@ -113,6 +114,7 @@
                   </tr>
                 </tbody>
               </table>
+              </div>
             </td>
           </tr>
         </template>
@@ -177,13 +179,13 @@
         <h2>{{ possessionEditTarget ? 'Modifier la position' : 'Ajouter une position' }} — {{ possessionTarget?.name }}</h2>
         <label>Compte *
           <select v-model="possessionForm.account_id" :disabled="!!possessionEditTarget">
-            <option v-for="a in investmentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in investmentAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <label>Compte débité (facultatif)
           <select v-model="possessionForm.source_account_id" :disabled="!!possessionEditTarget">
             <option :value="null">Aucun — saisie manuelle</option>
-            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <label>Quantité *
@@ -227,7 +229,7 @@
         <label>Compte crédité (facultatif)
           <select v-model="sellForm.dest_account_id">
             <option :value="null">Aucun — pas d'écriture comptable</option>
-            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <div class="modal-actions">
@@ -304,6 +306,8 @@ import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -382,7 +386,8 @@ const investmentAccounts = computed(() => accounts.value.filter(a => ['Assets', 
 const debitableAccounts = computed(() => accounts.value.filter(a => ['Current', 'Assets', 'Equity'].includes(a.account_type)))
 
 function accountName(accountId) {
-  return accounts.value.find(a => a.id === accountId)?.name || accountId
+  const a = accounts.value.find(a => a.id === accountId)
+  return a ? accountDisplayLabel(a, accounts.value) : accountId
 }
 
 const validatingSymbol = ref(false)
@@ -446,6 +451,7 @@ async function reload() {
       axios.get('/api/assets'),
       axios.get('/api/commodities'),
       axios.get('/api/accounts'),
+      ensureInstitutionsLoaded(),
     ])
     assets.value = Array.isArray(assetsRes.data?.response_data) ? assetsRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
@@ -890,6 +896,8 @@ onMounted(() => reload())
 .asset-row:hover td { background: rgba(148, 163, 184, 0.04); }
 
 .possession-row td { background: rgba(15, 23, 42, 0.5); padding: 0; }
+.table-scroll { overflow-x: auto; }
+.acc-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .sub-table th { padding: 6px 24px; color: #6b7280; font-weight: 400; }
 .sub-table td { padding: 6px 24px; border-bottom: 1px solid rgba(148,163,184,0.05); }

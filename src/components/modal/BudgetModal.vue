@@ -53,7 +53,7 @@
           <div v-else class="checkbox-list">
             <label v-for="acc in accounts" :key="acc.id" class="checkbox-item">
               <input type="checkbox" :value="acc.id" v-model="form.account_ids" />
-              <span>{{ acc.name }}</span>
+              <span class="checkbox-item-label">{{ accountDisplayLabel(acc, accounts) }}</span>
               <span v-if="acc.account_type" class="chip">{{ acc.account_type }}</span>
             </label>
             <div v-if="!accounts.length" class="hint">Aucun compte disponible.</div>
@@ -103,6 +103,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -126,6 +128,7 @@ async function loadReferentials() {
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
       axios.get('/api/tags'),
+      ensureInstitutionsLoaded(),
     ])
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
@@ -320,10 +323,20 @@ const onSubmit = () => {
 
 .checkbox-item input[type="checkbox"] {
   accent-color: #2563eb;
+  flex-shrink: 0;
+}
+
+.checkbox-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chip {
   margin-left: auto;
+  flex-shrink: 0;
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 999px;

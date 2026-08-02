@@ -19,7 +19,8 @@
     <div v-if="loading && !loans.length" class="empty">Chargement…</div>
     <div v-else-if="!loading && !loans.length" class="empty">Aucun crédit enregistré.</div>
 
-    <table v-else class="table">
+    <div v-else class="table-scroll">
+    <table class="table">
       <thead>
         <tr>
           <th>Nom</th>
@@ -53,7 +54,7 @@
           <td :class="l.next_installment?.is_overdue ? 'overdue' : 'muted'">
             {{ l.next_installment ? fmtDate(l.next_installment.due_date) : '—' }}
           </td>
-          <td class="muted">{{ accountName(l.payment_account_id) }}</td>
+          <td class="muted acc-cell">{{ accountName(l.payment_account_id) }}</td>
           <td class="actions">
             <button
               v-if="l.next_installment && !l.is_closed"
@@ -71,6 +72,7 @@
         </tr>
       </tbody>
     </table>
+    </div>
 
     <LoanModal v-model="showModal" :edit-target="editTarget" @saved="onSaved" />
   </div>
@@ -83,6 +85,8 @@ import LoanModal from '../components/modal/LoanModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { formatDate } from '@/utils/dateFormat.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -99,7 +103,7 @@ function fmtAmount(v) {
 const fmtDate = formatDate
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
-  return a ? a.name : id || '—'
+  return a ? accountDisplayLabel(a, accounts.value) : id || '—'
 }
 function progressPct(l) {
   if (!l.principal) return 0
@@ -114,6 +118,7 @@ async function reload() {
     const [loanRes, accRes] = await Promise.all([
       axios.get('/api/loans'),
       axios.get('/api/accounts'),
+      ensureInstitutionsLoaded(),
     ])
     loans.value = (Array.isArray(loanRes.data?.response_data) ? loanRes.data.response_data : [])
       .map(l => ({ ...l, executing: false }))
@@ -217,6 +222,8 @@ onMounted(() => reload())
   color: #cbd5e1;
 }
 
+.table-scroll { overflow-x: auto; }
+.acc-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table th {
   text-align: left;

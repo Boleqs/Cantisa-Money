@@ -53,14 +53,14 @@
           <label class="form-label">Compte payeur</label>
           <select v-model="form.account_id" class="form-select">
             <option value="">— Sélectionner —</option>
-            <option v-for="acc in accountsList" :key="acc.id" :value="acc.id">{{ acc.name }} ({{ acc.account_type }})</option>
+            <option v-for="acc in accountsList" :key="acc.id" :value="acc.id">{{ accountDisplayLabel(acc, accountsList) }} ({{ acc.account_type }})</option>
           </select>
         </div>
         <div class="form-group">
           <label class="form-label">Compte de dépense</label>
           <select v-model="form.expense_account_id" class="form-select">
             <option value="">— Sélectionner —</option>
-            <option v-for="acc in accountsList" :key="acc.id" :value="acc.id">{{ acc.name }} ({{ acc.account_type }})</option>
+            <option v-for="acc in accountsList" :key="acc.id" :value="acc.id">{{ accountDisplayLabel(acc, accountsList) }} ({{ acc.account_type }})</option>
           </select>
         </div>
         <div class="form-group">
@@ -127,6 +127,8 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { confirmDialog } from '@/utils/confirmDialog'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const props = defineProps({
   existingTxId: { type: String, default: null },
@@ -280,6 +282,7 @@ async function loadReferentials() {
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
       axios.get('/api/tags'),
+      ensureInstitutionsLoaded(),
     ])
     accountsList.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     categoriesList.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []

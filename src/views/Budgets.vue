@@ -117,6 +117,8 @@ import BudgetModal from '@/components/modal/BudgetModal.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -204,7 +206,7 @@ function renewLabel(period) {
 
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
-  return a ? a.name : id
+  return a ? accountDisplayLabel(a, accounts.value) : id
 }
 
 function categoryName(id) {
@@ -228,6 +230,7 @@ async function reload() {
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
       axios.get('/api/tags'),
+      ensureInstitutionsLoaded(),
     ])
     budgets.value = Array.isArray(budgetRes.data?.response_data) ? budgetRes.data.response_data : []
     accounts.value = Array.isArray(accountRes.data?.response_data) ? accountRes.data.response_data : []
@@ -444,6 +447,10 @@ onMounted(() => reload())
   border: 1px solid rgba(96,165,250,0.25);
   background: rgba(96,165,250,0.1);
   color: #93c5fd;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chip-category {
   border-color: rgba(168,85,247,0.3);

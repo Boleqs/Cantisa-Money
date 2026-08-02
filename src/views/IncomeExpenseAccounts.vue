@@ -3,9 +3,10 @@
     <!-- Header -->
     <header class="page-header">
       <div class="title-block">
-        <h1>Comptes</h1>
+        <h1>Comptes de revenus et dépenses</h1>
         <p class="subtitle">
-          Tous les comptes de l’utilisateur connecté, groupés {{ groupByLabel }}.
+          Comptes de catégorisation des transactions (contreparties du double-entry) — ne
+          représentent pas de l'argent réel, groupés {{ groupByLabel }}.
         </p>
       </div>
 
@@ -25,7 +26,6 @@
           <select v-model="groupBy" class="group-by-select">
             <option value="type">Type</option>
             <option value="parent">Compte parent</option>
-            <option value="institution">Institution</option>
           </select>
         </label>
 
@@ -82,7 +82,7 @@
                 {{ fmtAmount(group.rollup.value) }} {{ group.rollup.currency }}
               </div>
             </div>
-            <div v-else-if="groupBy !== 'institution' && group.items.length > 1" class="group-rollup">
+            <div v-else-if="group.items.length > 1" class="group-rollup">
               <div class="rollup-label muted-note">Devises multiples</div>
             </div>
             <button class="icon-btn" type="button" :aria-label="isCollapsed(group.key) ? 'Déplier' : 'Replier'">
@@ -117,15 +117,6 @@
                 <span v-if="acc.is_virtual" class="acc-badge warn">Virtuel</span>
               </div>
               <p v-if="acc.description" class="desc">{{ acc.description }}</p>
-              <div class="acc-sub" v-if="acc._figure.kind !== 'flow'">
-                <template v-if="acc._figure.positions != null">
-                  <span>{{ acc._figure.positions }} position{{ acc._figure.positions > 1 ? 's' : '' }}</span>
-                </template>
-                <template v-else>
-                  <span class="flow-pos">↑ {{ fmtAmount(acc._figure.earned) }}</span>
-                  <span class="flow-neg">↓ {{ fmtAmount(acc._figure.spent) }}</span>
-                </template>
-              </div>
             </div>
 
             <div class="acc-figure">
@@ -152,10 +143,10 @@
     :mode="modalMode"
     :account="selectedAccount"
     :commodities="commodities"
-    :parent-accounts="accounts"
-    :institutions="institutions"
+    :parent-accounts="incomeExpenseAccounts"
+    :type-options="TYPE_OPTIONS"
+    default-account-type="Expense"
     @save="handleSave"
-    @institution-created="institutions.push($event)"
   />
 
   <!-- Clôture d'un compte non soldé : demande un compte de contrepartie pour la transaction
@@ -187,27 +178,20 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import axios from "axios";
 import AccountModal from "@/components/modal/AccountModal.vue";
-import { hasPermission } from "@/utils/permissions.js";
-import { currency as defaultCurrency } from "@/utils/settings.js";
 import { confirmDialog } from "@/utils/confirmDialog";
 import { useToast } from "@/utils/toast";
 import { normalizeSearch } from "@/utils/search.js";
-import { formatDate } from "@/utils/dateFormat.js";
 import { accountDisplayLabel } from "@/utils/accountDisplay.js";
-import { institutions, ensureInstitutionsLoaded } from "@/utils/institutions.js";
+import { ensureInstitutionsLoaded } from "@/utils/institutions.js";
 
 const toast = useToast();
-
 const router = useRouter();
 
+// On récupère tous les comptes de l'utilisateur (même endpoint que la page Comptes) puis on ne
+// garde que les types Income/Expense — voir Accounts.vue qui fait l'inverse.
 const accounts = ref([]);
 const commodities = ref([]);
-const assets = ref([]);
-// Valeur autoritaire (positions + cash libre) des comptes-conteneurs de portefeuille, calculée
-// côté backend — voir fetchAccountValues() et assetValueByAccount plus bas.
-const accountValues = ref(new Map());
 
-// Modal state
 const showModal = ref(false);
 const modalMode = ref("create");
 const selectedAccount = ref(null);
@@ -217,41 +201,21 @@ const error = ref("");
 
 const search = ref("");
 const showHidden = ref(false);
-// Les comptes virtuels (ex. enveloppes budgétaires) sont utiles au quotidien, contrairement aux
-// comptes cachés (archivés) — affichés par défaut, à la différence de showHidden.
 const showVirtual = ref(true);
 const groupBy = ref("type");
 
-// Group collapse state (au niveau du groupe : type ou compte racine selon groupBy)
 const collapsed = ref(new Set());
-// Repli/dépli d'un compte parent précis, indépendant du groupe qui le contient
 const collapsedParents = ref(new Set());
 
-// Order & labels for account_type (Income/Expense/Liability exclus : voir
-// IncomeExpenseAccounts.vue et Credits.vue)
-const TYPE_ORDER = ["Current", "Assets", "Equity"];
-const TYPE_LABELS = {
-  Current: "Comptes courants",
-  Assets: "Actifs",
-  Equity: "Equity",
-};
-
-// Libellé du rollup de groupe : les comptes de type Assets/Equity peuvent mélanger de vrais
-// soldes (ex. Livret A) et des comptes-titres valorisés par leurs positions (ex. Compte Titres,
-// voir accountFigure) — "Valeur cumulée" reste correct dans les deux cas contrairement à "Solde".
-const GROUP_ROLLUP_LABEL = {
-  Assets: "Valeur cumulée",
-  Equity: "Valeur cumulée",
-};
-// Groupes dont la figure n'est pas un solde signé (gain/perte) mais un simple cumul — jamais
-// coloré pos/neg, cf. accountFigure().
-const NEUTRAL_ROLLUP_GROUPS = new Set(["Assets", "Equity"]);
+const TYPE_ORDER = ["Income", "Expense"];
+const TYPE_LABELS = { Income: "Revenus", Expense: "Dépenses" };
+const TYPE_OPTIONS = [
+  { value: "Income", label: "Income (Revenus)" },
+  { value: "Expense", label: "Expense (Dépenses)" },
+];
+const GROUP_ROLLUP_LABEL = { Income: "Total perçu", Expense: "Total dépensé" };
 
 const normalizeText = normalizeSearch;
-
-function fmtDate(v) {
-  return formatDate(v, { withTime: true });
-}
 
 function fmtAmount(v) {
   if (v === null || v === undefined || v === "") return "0";
@@ -264,16 +228,23 @@ function commodityById(id) {
   return commodities.value.find((c) => String(c.id) === String(id));
 }
 
-function institutionById(id) {
-  if (!id) return null;
-  return institutions.value.find((i) => String(i.id) === String(id)) || null;
+function currencyShort(currencyId) {
+  const c = commodityById(currencyId);
+  return c?.short_name?.toUpperCase?.() || "—";
 }
 
-const GROUP_BY_LABELS = { parent: "par compte parent", institution: "par institution", type: "par type" };
+const GROUP_BY_LABELS = { parent: "par compte parent", type: "par type" };
 const groupByLabel = computed(() => GROUP_BY_LABELS[groupBy.value] || "par type");
 
+// Comptes Income/Expense uniquement — sert de base à la fois à l'affichage (via filteredAccounts)
+// et au choix du compte parent dans le modal (un sous-compte de catégorie doit avoir un parent de
+// la même famille).
+const incomeExpenseAccounts = computed(() =>
+  accounts.value.filter((a) => a.account_type === "Income" || a.account_type === "Expense")
+);
+
 const parentIds = computed(
-  () => new Set(accounts.value.filter((a) => a.parent_id).map((a) => String(a.parent_id)))
+  () => new Set(incomeExpenseAccounts.value.filter((a) => a.parent_id).map((a) => String(a.parent_id)))
 );
 
 function hasChildren(accountId) {
@@ -281,87 +252,48 @@ function hasChildren(accountId) {
 }
 
 function childCount(accountId) {
-  return accounts.value.filter((a) => String(a.parent_id) === String(accountId)).length;
+  return incomeExpenseAccounts.value.filter((a) => String(a.parent_id) === String(accountId)).length;
 }
 
-// Un compte Assets/Equity qui détient des positions (AssetPossession) est valorisé par ces
-// positions plutôt que par son solde de flux (crédité/débité n'y représente que les mouvements
-// d'achat/vente, pas la valeur réelle) — même logique que AccountDetail.vue. La valeur position-
-// seule calculée ci-dessous ne sert plus que de repli tant que fetchAccountValues() n'a pas
-// répondu : la valeur autoritaire (positions + cash libre éventuellement laissé sur le compte)
-// vient du backend (GET /api/wealth/account-values, voir accountValues).
-const assetValueByAccount = computed(() => {
-  const map = new Map();
-  for (const a of assets.value) {
-    for (const p of a.possessions || []) {
-      const key = String(p.account_id);
-      const qty = p.remaining_quantity != null ? p.remaining_quantity : p.quantity;
-      const entry = map.get(key) || { value: 0, currency: a.display_currency, positionsCount: 0 };
-      entry.value += qty * (a.converted_value_per_unit || 0);
-      entry.positionsCount += 1;
-      map.set(key, entry);
-    }
-  }
-  for (const [key, entry] of map) {
-    const backendValue = accountValues.value.get(key);
-    if (backendValue != null) entry.value = backendValue;
-  }
-  return map;
-});
-
-// Calcule la figure clé à afficher pour un compte : valeur des actifs détenus si applicable,
-// sinon solde (consolidé si le compte a des sous-comptes).
+// Un compte Income est toujours crédité en négatif par construction du trigger SQL (le cumul réel
+// est dans total_spent) et un compte Expense toujours débité en positif (cumul réel dans
+// total_earned) — soustraire les deux donnerait un nombre au signe trompeur (ex. "Solde -9 600" sur
+// un compte de salaires). On affiche donc le cumul réel, en neutre, jamais coloré pos/neg puisque
+// ce n'est pas un gain ou une perte. Même logique que l'ancienne accountFigure() d'Accounts.vue.
 function accountFigure(acc) {
-  const assetInfo = assetValueByAccount.value.get(String(acc.id));
-  if (assetInfo && assetInfo.positionsCount > 0) {
-    return {
-      kind: "assets",
-      label: "Valeur des actifs",
-      value: assetInfo.value,
-      currency: assetInfo.currency,
-      colorClass: "neutral",
-      positions: assetInfo.positionsCount,
-    };
-  }
-
   const hc = hasChildren(acc.id);
   const earned = Number(hc ? acc.consolidated_earned : acc.total_earned) || 0;
   const spent = Number(hc ? acc.consolidated_spent : acc.total_spent) || 0;
-  const solde = earned - spent;
   const currency = currencyShort(acc.currency_id);
 
+  if (acc.account_type === "Income") {
+    return {
+      label: hc ? "Total perçu (consolidé)" : "Total perçu",
+      value: spent,
+      currency,
+      colorClass: "neutral",
+      earned,
+      spent,
+    };
+  }
+
   return {
-    kind: "solde",
-    label: hc ? "Solde consolidé" : "Solde",
-    value: solde,
+    label: hc ? "Total dépensé (consolidé)" : "Total dépensé",
+    value: earned,
     currency,
-    colorClass: solde >= 0 ? "pos" : "neg",
+    colorClass: "neutral",
     earned,
     spent,
   };
 }
 
-// Somme des figures des comptes racines d'un groupe (jamais leurs enfants, déjà inclus dans le
-// solde consolidé du parent — sinon double-comptage). Retourne null si les comptes racines du
-// groupe ne sont pas tous dans la même devise : mieux vaut ne rien afficher qu'additionner à tort
-// des montants dans des devises différentes.
-// `labelKey` sert à choisir le libellé/la couleur (le type de compte : "Liability", "Income"...) ;
-// en mode "par compte parent" ce n'est pas le même que l'identifiant unique du groupe (l'id du
-// compte racine), d'où la séparation des deux paramètres.
 function groupRollup(labelKey, items) {
   const roots = items.filter((a) => a._depth === 0);
   if (!roots.length) return null;
   const currencies = new Set(roots.map((a) => a._figure.currency));
   if (currencies.size > 1) return null;
   const value = roots.reduce((s, a) => s + a._figure.value, 0);
-  const label = GROUP_ROLLUP_LABEL[labelKey] || "Solde cumulé";
-  const colorClass = NEUTRAL_ROLLUP_GROUPS.has(labelKey) ? "neutral" : value >= 0 ? "pos" : "neg";
-  return { label, value, currency: roots[0]._figure.currency, colorClass };
-}
-
-function currencyShort(currencyId) {
-  const c = commodityById(currencyId);
-  return c?.short_name?.toUpperCase?.() || "—";
+  return { label: GROUP_ROLLUP_LABEL[labelKey] || "Cumul", value, currency: roots[0]._figure.currency, colorClass: "neutral" };
 }
 
 function isCollapsed(key) {
@@ -388,55 +320,23 @@ function toggleParent(accountId) {
 }
 
 async function fetchCommodities() {
-  // GET /api/commodities -> { response_data: [...] }
   const { data } = await axios.get("/api/commodities");
   commodities.value = Array.isArray(data?.response_data) ? data.response_data : [];
 }
 
 async function fetchAccounts() {
-  // GET /api/accounts -> { response_data: [...] }
   const { data } = await axios.get("/api/accounts");
   accounts.value = Array.isArray(data?.response_data) ? data.response_data : [];
-}
-
-async function fetchInstitutions() {
-  await ensureInstitutionsLoaded();
-}
-
-async function fetchAssets() {
-  // Valeur des positions par compte (voir accountFigure) — seulement si la permission est
-  // accordée, pour ne pas déclencher un 403 inutile pour les utilisateurs sans accès Patrimoine.
-  if (!hasPermission("Patrimoine")) {
-    assets.value = [];
-    return;
-  }
-  const { data } = await axios.get("/api/assets");
-  assets.value = Array.isArray(data?.response_data) ? data.response_data : [];
-}
-
-async function fetchAccountValues() {
-  // Valeur position + cash libre par compte-conteneur (voir assetValueByAccount) — même garde de
-  // permission que fetchAssets(), l'endpoint est sous la même permission Patrimoine.
-  if (!hasPermission("Patrimoine")) {
-    accountValues.value = new Map();
-    return;
-  }
-  const { data } = await axios.get("/api/wealth/account-values", {
-    params: { currency: defaultCurrency.value },
-  });
-  const values = data?.response_data?.values || {};
-  accountValues.value = new Map(Object.entries(values));
 }
 
 async function reload() {
   loading.value = true;
   error.value = "";
   try {
-    // commodities avant accounts pour afficher les devises correctement
     await fetchCommodities();
-    await Promise.all([fetchAccounts(), fetchAssets(), fetchInstitutions(), fetchAccountValues()]);
+    await fetchAccounts();
+    await ensureInstitutionsLoaded();
   } catch (e) {
-    // erreurs typiques : 401 si auth invalide, ou backend down
     const msg =
       e?.response?.data?.response_data ||
       e?.response?.statusText ||
@@ -469,7 +369,7 @@ async function handleSave(form) {
         currency_id: form.currency_id,
         parent_id: form.parent_id || undefined,
         institution_id: form.institution_id || null,
-        account_type: form.account_type || 'Current',
+        account_type: form.account_type || "Expense",
         account_subtype: form.account_subtype || undefined,
         is_virtual: form.is_virtual,
         is_hidden: form.is_hidden,
@@ -484,7 +384,7 @@ async function handleSave(form) {
         currency_id: form.currency_id,
         parent_id: form.parent_id || undefined,
         institution_id: form.institution_id || null,
-        account_type: form.account_type || 'Current',
+        account_type: form.account_type || "Expense",
         account_subtype: form.account_subtype || undefined,
         is_virtual: form.is_virtual,
         is_hidden: form.is_hidden,
@@ -495,8 +395,7 @@ async function handleSave(form) {
     await reload();
     toast.success(modalMode.value === "create" ? `Compte « ${form.name} » créé.` : `Compte « ${form.name} » mis à jour.`);
   } catch (e) {
-    error.value =
-      e?.response?.data?.response_data || e?.message || "Erreur inconnue";
+    error.value = e?.response?.data?.response_data || e?.message || "Erreur inconnue";
   }
 }
 
@@ -513,19 +412,17 @@ async function deleteAccount(acc) {
     await reload();
     toast.success(`Compte « ${acc.name} » supprimé.`);
   } catch (e) {
-    error.value =
-      e?.response?.data?.response_data || e?.message || "Erreur inconnue";
+    error.value = e?.response?.data?.response_data || e?.message || "Erreur inconnue";
   }
 }
 
-// ── clôture de compte ─────────────────────────────────────────────────────────
-// closingAccount porte soit le compte brut (avant tentative), soit { ...acc, balance,
-// currencyId } une fois que le backend a répondu needs_balancing avec le solde à résorber.
 const closingAccount = ref(null);
 const closingTargetId = ref("");
 const closingBusy = ref(false);
 const closingError = ref("");
 
+// Contrepartie de clôture : n'importe quel compte de l'utilisateur (pas seulement Income/Expense),
+// même logique qu'Accounts.vue.
 const balancingCandidates = computed(() =>
   accounts.value.filter((a) => a.id !== closingAccount.value?.id && !a.is_closed)
 );
@@ -571,8 +468,7 @@ async function confirmBalancingClose() {
     await reload();
     toast.success(`Compte « ${closedName} » clôturé après équilibrage.`);
   } catch (e) {
-    closingError.value =
-      e?.response?.data?.response_data || e?.message || "Erreur lors de la clôture";
+    closingError.value = e?.response?.data?.response_data || e?.message || "Erreur lors de la clôture";
   } finally {
     closingBusy.value = false;
   }
@@ -612,48 +508,29 @@ onMounted(() => {
   reload();
 });
 
-// Filtering (search + flags)
 const filteredAccounts = computed(() => {
   const q = normalizeText(search.value);
 
-  return accounts.value
-    // Les comptes Income/Expense ne représentent pas de l'argent réel de l'utilisateur (ce sont
-    // les contreparties de catégorisation du double-entry) — affichés sur leur propre page, voir
-    // IncomeExpenseAccounts.vue. Les comptes Liability, ainsi que les comptes Equity de
-    // contrepartie d'ouverture de crédit (subtype 'loan'), sont auto-générés/gérés exclusivement
-    // par le flux Crédits (voir Credits.vue/LoanDetail.vue) — les manipuler ici court-circuiterait
-    // ce flux.
-    .filter((a) => a.account_type !== "Income" && a.account_type !== "Expense" && a.account_type !== "Liability")
-    .filter((a) => !(a.account_type === "Equity" && a.account_subtype === "loan"))
+  return incomeExpenseAccounts.value
     .filter((a) => (showHidden.value ? true : !a.is_hidden))
     .filter((a) => (showVirtual.value ? true : !a.is_virtual))
     .filter((a) => {
       if (!q) return true;
-      const blob = [
-        a.name,
-        a.description,
-        a.code,
-        a.account_type,
-        a.account_subtype,
-      ]
+      const blob = [a.name, a.description, a.code, a.account_type, a.account_subtype]
         .map(normalizeText)
         .join(" ");
       return blob.includes(q);
     });
 });
 
-// Construit un tableau ordonné en profondeur (DFS) avec la propriété _depth
 function buildTreeFlat(items) {
   const itemIds = new Set(items.map((a) => String(a.id)));
   const byParent = new Map();
   byParent.set(null, []);
 
   for (const item of items) {
-    // Si le parent existe dans le groupe, on l'utilise ; sinon on traite comme racine
     const pid =
-      item.parent_id && itemIds.has(String(item.parent_id))
-        ? String(item.parent_id)
-        : null;
+      item.parent_id && itemIds.has(String(item.parent_id)) ? String(item.parent_id) : null;
     if (!byParent.has(pid)) byParent.set(pid, []);
     byParent.get(pid).push(item);
   }
@@ -665,8 +542,6 @@ function buildTreeFlat(items) {
     );
     for (const child of children) {
       result.push({ ...child, _depth: depth, _figure: accountFigure(child) });
-      // Un parent replié (collapsedParents) reste affiché lui-même, seuls ses
-      // descendants sont masqués — on n'explore donc pas ses enfants dans ce cas.
       if (!collapsedParents.value.has(String(child.id))) {
         traverse(String(child.id), depth + 1);
       }
@@ -676,9 +551,6 @@ function buildTreeFlat(items) {
   return result;
 }
 
-// Regroupe un ensemble déjà mis en arborescence (buildTreeFlat) en un groupe par compte racine
-// (parent_id vide, ou parent hors de l'ensemble filtré) : chaque racine et tous ses descendants
-// visibles forment un groupe, quel que soit leur account_type.
 function splitByRootAccount(items) {
   const flat = buildTreeFlat(items);
   const groups = [];
@@ -693,8 +565,6 @@ function splitByRootAccount(items) {
   return groups;
 }
 
-// Grouping selon groupBy : par type de compte (défaut), par compte parent racine ou par
-// institution bancaire (bucket "Sans institution" pour les comptes non rattachés).
 const groupedAccounts = computed(() => {
   if (groupBy.value === "parent") {
     return splitByRootAccount(filteredAccounts.value)
@@ -708,32 +578,6 @@ const groupedAccounts = computed(() => {
       }));
   }
 
-  if (groupBy.value === "institution") {
-    const map = new Map();
-    for (const acc of filteredAccounts.value) {
-      const key = acc.institution_id ? String(acc.institution_id) : "__none__";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(acc);
-    }
-    const keys = Array.from(map.keys()).sort((a, b) => {
-      if (a === "__none__") return 1;
-      if (b === "__none__") return -1;
-      const la = institutionById(a)?.name || "";
-      const lb = institutionById(b)?.name || "";
-      return normalizeText(la).localeCompare(normalizeText(lb), "fr");
-    });
-    return keys.map((key) => {
-      const items = buildTreeFlat(map.get(key));
-      return {
-        key,
-        label: key === "__none__" ? "Sans institution" : institutionById(key)?.name || "—",
-        items,
-        rollup: null,
-      };
-    });
-  }
-
-  // Regrouper par type
   const map = new Map();
   for (const acc of filteredAccounts.value) {
     const t = acc.account_type || "Other";
@@ -742,21 +586,9 @@ const groupedAccounts = computed(() => {
   }
 
   const keys = Array.from(map.keys());
-
-  // Ordonner les groupes selon TYPE_ORDER, puis alphanumérique
-  keys.sort((a, b) => {
-    const ia = TYPE_ORDER.indexOf(a);
-    const ib = TYPE_ORDER.indexOf(b);
-    if (ia !== -1 || ib !== -1) {
-      if (ia === -1) return 1;
-      if (ib === -1) return -1;
-      return ia - ib;
-    }
-    return a.localeCompare(b, "fr");
-  });
+  keys.sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b));
 
   return keys.map((key) => {
-    // Chaque groupe est ordonné en arborescence parent → enfants
     const items = buildTreeFlat(map.get(key));
     return {
       key,
@@ -1103,17 +935,6 @@ const groupedAccounts = computed(() => {
   background: transparent;
   color: #9ca3af;
 }
-.acc-badge.institution {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.acc-badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
 .acc-badge.danger {
   border-color: rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.10);
@@ -1124,17 +945,6 @@ const groupedAccounts = computed(() => {
   background: rgba(245, 158, 11, 0.10);
   color: #fde68a;
 }
-
-.acc-sub {
-  margin-top: 4px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: #64748b;
-}
-.acc-sub .flow-pos { color: rgba(74, 222, 128, 0.75); }
-.acc-sub .flow-neg { color: rgba(248, 113, 113, 0.75); }
 
 .acc-figure {
   text-align: right;
@@ -1192,10 +1002,6 @@ const groupedAccounts = computed(() => {
   color: #fff;
 }
 
-/* Écran étroit (tablette/mobile) : audit UX du 2026-07-27 — aucun breakpoint jusqu'ici. .acc-row
-   (nom + solde + actions sur une seule ligne, solde et actions non rétrécissables) était le point
-   de débordement le plus concret : sur un viewport étroit, le nom du compte n'avait presque plus
-   de place. */
 @media (max-width: 640px) {
   .page { padding: 14px; }
   .search-input { width: 100%; max-width: none; }

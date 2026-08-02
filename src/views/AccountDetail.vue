@@ -4,6 +4,7 @@
     <header class="page-header">
       <div class="title-block">
         <button class="back-btn" @click="$router.push('/accounts')">← Comptes</button>
+        <p v-if="accountBreadcrumb" class="breadcrumb">{{ accountBreadcrumb }}</p>
         <div v-if="account" class="name-row">
           <h1>{{ account.name }}</h1>
           <span v-if="account.code" class="code">#{{ account.code }}</span>
@@ -170,6 +171,8 @@ import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
 import { formatDate } from '@/utils/dateFormat.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -207,6 +210,7 @@ async function reload() {
       axios.get('/api/transactions', { params: { account_id: accountId } }),
       axios.get('/api/categories'),
       axios.get('/api/commodities'),
+      ensureInstitutionsLoaded(),
     ]
     // Compte-titre potentiel : on ne sait pas encore le account_type avant la réponse, donc on
     // ne fetch les actifs que si l'utilisateur a la permission — le filtrage par type se fait
@@ -244,6 +248,18 @@ const currencyShort = computed(() => {
 const hasChildren = computed(() =>
   allAccounts.value.some(a => String(a.parent_id) === String(accountId))
 )
+
+// Institution + chaîne de parents (sans le compte lui-même, déjà affiché en <h1>) — ce compte
+// peut porter le même nom qu'un autre compte du même utilisateur (voir rt_accounts.py, l'unicité
+// n'est plus globale), donc utile pour confirmer qu'on est bien sur le bon dans certains cas.
+const accountBreadcrumb = computed(() => {
+  if (!account.value) return '';
+  const full = accountDisplayLabel(account.value, allAccounts.value);
+  const ownName = account.value.name;
+  // Retire le dernier segment (le nom du compte courant) de "Institution → Parent → Compte"
+  const idx = full.lastIndexOf(` → ${ownName}`);
+  return idx !== -1 ? full.slice(0, idx) : '';
+})
 
 const childAccountsCount = computed(() =>
   allAccounts.value.filter(a => String(a.parent_id) === String(accountId)).length
@@ -485,6 +501,12 @@ async function deleteTx(tx) {
   margin: 0;
   color: #9ca3af;
   font-size: 14px;
+}
+
+.breadcrumb {
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .header-actions {

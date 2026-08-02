@@ -42,7 +42,7 @@
             <select v-model="form.parent_id">
               <option :value="null">Aucun</option>
               <option v-for="a in parentAccounts" :key="a.id" :value="a.id">
-                {{ a.name }}
+                {{ accountDisplayLabel(a, parentAccounts) }}
               </option>
             </select>
           </div>
@@ -76,11 +76,7 @@
             <label>Type</label>
             <select v-model="form.account_type">
               <option value="">— Aucun —</option>
-              <option value="Current">Current</option>
-              <option value="Assets">Assets</option>
-              <option value="Equity">Equity</option>
-              <option value="Income">Income</option>
-              <option value="Expense">Expense</option>
+              <option v-for="t in typeOptions" :key="t.value" :value="t.value">{{ t.label }}</option>
             </select>
           </div>
 
@@ -130,6 +126,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -138,6 +135,19 @@ const props = defineProps({
   commodities: { type: Array, default: () => [] },
   parentAccounts: { type: Array, default: () => [] },
   institutions: { type: Array, default: () => [] },
+  // Restreint le select "Type" (ex: page Comptes de revenus et dépenses -> Income/Expense
+  // uniquement) ; par défaut les 5 types utilisables depuis la page Comptes classique.
+  typeOptions: {
+    type: Array,
+    default: () => [
+      { value: 'Current', label: 'Current' },
+      { value: 'Assets', label: 'Assets' },
+      { value: 'Equity', label: 'Equity' },
+      { value: 'Income', label: 'Income' },
+      { value: 'Expense', label: 'Expense' },
+    ],
+  },
+  defaultAccountType: { type: String, default: 'Current' },
 })
 
 const emit = defineEmits(['update:modelValue', 'save', 'cancel', 'institution-created'])
@@ -160,7 +170,7 @@ const emptyForm = () => ({
   currency_id: '',
   parent_id: null,
   institution_id: null,
-  account_type: 'Current',
+  account_type: props.defaultAccountType,
   account_subtype: '',
   is_hidden: false,
   is_virtual: false,

@@ -29,7 +29,8 @@
     <div v-else-if="!loading && !subscriptions.length" class="empty">Aucun abonnement.</div>
     <div v-else-if="!filteredSubscriptions.length" class="empty">Aucun abonnement ne correspond à « {{ search }} ».</div>
 
-    <table v-else class="table">
+    <div v-else class="table-scroll">
+    <table class="table">
       <thead>
         <tr>
           <th>Nom</th>
@@ -54,8 +55,8 @@
           <td class="muted">{{ scheduleLabel(s) }}</td>
           <td :class="s.is_overdue ? 'overdue' : 'muted'">{{ fmtDate(s.next_due_at) }}</td>
           <td class="muted">{{ s.last_executed_at ? fmtDate(s.last_executed_at) : '—' }}</td>
-          <td class="muted">{{ accountName(s.from_account_id) }}</td>
-          <td class="muted">{{ accountName(s.to_account_id) }}</td>
+          <td class="muted acc-cell">{{ accountName(s.from_account_id) }}</td>
+          <td class="muted acc-cell">{{ accountName(s.to_account_id) }}</td>
           <td class="muted">{{ categoryName(s.category_id) }}</td>
           <td class="actions">
             <button class="btn-action btn-execute" :disabled="s.executing" @click="executeSubscription(s)" title="Exécuter maintenant">
@@ -68,6 +69,7 @@
         </tr>
       </tbody>
     </table>
+    </div>
 
     <!-- Modal inline -->
     <div v-if="showModal" class="modal-backdrop" @click.self="shake">
@@ -117,13 +119,13 @@
         <label>Compte débit *
           <select v-model="form.from_account_id">
             <option value="">— Sélectionner —</option>
-            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <label>Compte crédit *
           <select v-model="form.to_account_id">
             <option value="">— Sélectionner —</option>
-            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <label>Catégorie
@@ -157,6 +159,8 @@ import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
 import { formatDate } from '@/utils/dateFormat.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -220,7 +224,7 @@ function fmtAmount(v, accountId) {
 const fmtDate = formatDate
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
-  return a ? a.name : id || '—'
+  return a ? accountDisplayLabel(a, accounts.value) : id || '—'
 }
 function categoryName(id) {
   if (!id) return '—'
@@ -252,6 +256,7 @@ async function reload() {
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
       axios.get('/api/commodities'),
+      ensureInstitutionsLoaded(),
     ])
     subscriptions.value = (Array.isArray(subRes.data?.response_data) ? subRes.data.response_data : [])
       .map(s => ({ ...s, executing: false }))
@@ -414,6 +419,15 @@ onMounted(() => reload())
   color: #cbd5e1;
 }
 
+.table-scroll {
+  overflow-x: auto;
+}
+.acc-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .table {
   width: 100%;
   border-collapse: collapse;

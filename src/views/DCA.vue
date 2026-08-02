@@ -135,13 +135,13 @@
         <label>Compte débité *
           <select v-model="form.source_account_id">
             <option value="">— Sélectionner —</option>
-            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <label>Compte de portefeuille *
           <select v-model="form.dest_account_id">
             <option value="">— Sélectionner —</option>
-            <option v-for="a in investmentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option v-for="a in investmentAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <label>Date de début *
@@ -176,6 +176,8 @@ import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
 import { formatDate } from '@/utils/dateFormat.js'
 import { currency } from '@/utils/settings.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -239,7 +241,7 @@ const debitableAccounts = computed(() => accounts.value.filter(a => ['Current', 
 
 function accountName(id) {
   const a = accounts.value.find(a => String(a.id) === String(id))
-  return a ? a.name : id || '—'
+  return a ? accountDisplayLabel(a, accounts.value) : id || '—'
 }
 function assetSymbol(id) {
   const a = assets.value.find(a => String(a.id) === String(id))
@@ -289,6 +291,7 @@ async function reload() {
       axios.get('/api/assets'),
       axios.get('/api/accounts'),
       axios.get('/api/commodities'),
+      ensureInstitutionsLoaded(),
     ])
     plans.value = (Array.isArray(dcaRes.data?.response_data) ? dcaRes.data.response_data : [])
       .map(p => ({ ...p, executing: false }))

@@ -72,7 +72,7 @@
             <label>Compte de prélèvement (Current) *</label>
             <select v-model="form.payment_account_id" required>
               <option value="">— Sélectionner —</option>
-              <option v-for="a in currentAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+              <option v-for="a in currentAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
             </select>
             <p v-if="!currentAccounts.length" class="field-hint">Aucun compte de type Current — créez-en un d'abord.</p>
           </div>
@@ -80,7 +80,7 @@
             <label>Compte de dépense — intérêts (Expense) *</label>
             <select v-model="form.interest_expense_account_id" required>
               <option value="">— Sélectionner —</option>
-              <option v-for="a in expenseAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+              <option v-for="a in expenseAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
             </select>
             <p v-if="!expenseAccounts.length" class="field-hint">Aucun compte de type Expense — créez-en un d'abord.</p>
           </div>
@@ -92,19 +92,15 @@
             <label>Compte de dépense — assurance (optionnel)</label>
             <select v-model="form.insurance_expense_account_id">
               <option value="">— Fondue dans les intérêts —</option>
-              <option v-for="a in expenseAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+              <option v-for="a in expenseAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
             </select>
             <p class="field-hint">Sans compte dédié, l'assurance est comptée avec les intérêts.</p>
           </div>
-          <div class="field" v-if="form.is_existing_loan && !isEdit">
-            <label>Compte d'ouverture (Equity) *</label>
-            <select v-model="form.equity_opening_account_id" required>
-              <option value="">— Sélectionner —</option>
-              <option v-for="a in equityAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
-            </select>
-            <p class="field-hint">Sert de contrepartie comptable au capital restant dû initial — le prêt existait déjà, donc l'argent n'entre pas réellement sur le compte de prélèvement.</p>
-            <p v-if="!equityAccounts.length" class="field-hint">Aucun compte de type Equity — créez-en un d'abord.</p>
-          </div>
+          <p v-if="form.is_existing_loan && !isEdit" class="field-hint">
+            Un compte d'ouverture (contrepartie comptable du capital restant dû initial) sera créé
+            automatiquement — le prêt existait déjà, donc l'argent n'entre pas réellement sur le
+            compte de prélèvement.
+          </p>
           <div class="field">
             <label>Catégorie (optionnel)</label>
             <select v-model="form.category_id">
@@ -134,6 +130,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const props = defineProps({
   modelValue: { type: Boolean, required: true },
@@ -151,7 +149,6 @@ const formError = ref('')
 
 const currentAccounts = computed(() => accounts.value.filter(a => a.account_type === 'Current'))
 const expenseAccounts = computed(() => accounts.value.filter(a => a.account_type === 'Expense'))
-const equityAccounts = computed(() => accounts.value.filter(a => a.account_type === 'Equity'))
 
 async function loadReferentials() {
   loadingRef.value = true
@@ -159,6 +156,7 @@ async function loadReferentials() {
     const [accRes, catRes] = await Promise.all([
       axios.get('/api/accounts'),
       axios.get('/api/categories'),
+      ensureInstitutionsLoaded(),
     ])
     accounts.value = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
@@ -187,7 +185,6 @@ const emptyForm = () => ({
   category_id: '',
   auto_debit: false,
   is_existing_loan: false,
-  equity_opening_account_id: '',
 })
 
 const form = reactive(emptyForm())
@@ -216,7 +213,6 @@ watch(
       base.category_id = l.category_id || ''
       base.auto_debit = !!l.auto_debit
       base.is_existing_loan = !!l.is_existing_loan
-      base.equity_opening_account_id = l.equity_opening_account_id || ''
     }
     Object.assign(form, base)
   },
@@ -227,7 +223,6 @@ const canSubmit = computed(() => {
   if (!form.name.trim() || !form.payment_account_id || !form.interest_expense_account_id) return false
   if (!isEdit.value) {
     if (!form.principal || form.annual_rate === '' || !form.term_months || !form.start_date || !form.payment_day) return false
-    if (form.is_existing_loan && !form.equity_opening_account_id) return false
   }
   return true
 })
@@ -271,7 +266,6 @@ async function onSubmit() {
         category_id: form.category_id || null,
         auto_debit: form.auto_debit,
         is_existing_loan: form.is_existing_loan,
-        equity_opening_account_id: form.is_existing_loan ? form.equity_opening_account_id : null,
       }
       await axios.post('/api/loans', payload)
     }

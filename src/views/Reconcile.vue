@@ -15,7 +15,7 @@
           <select v-model="selectedAccountId" class="form-select" @change="loadData">
             <option value="">— Sélectionner un compte —</option>
             <option v-for="a in accounts" :key="a.id" :value="a.id">
-              {{ a.name }} ({{ a.account_type }})
+              {{ accountDisplayLabel(a, accounts) }} ({{ a.account_type }})
             </option>
           </select>
         </div>
@@ -138,6 +138,8 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { formatDate } from '@/utils/dateFormat.js'
+import { accountDisplayLabel } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const accounts = ref([])
 const commodities = ref([])
@@ -180,6 +182,7 @@ async function loadAccounts() {
   const [accRes, comRes] = await Promise.all([
     axios.get('/api/accounts'),
     axios.get('/api/commodities'),
+    ensureInstitutionsLoaded(),
   ])
   accounts.value = (Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : [])
     .filter(a => ['Current', 'Assets'].includes(a.account_type))

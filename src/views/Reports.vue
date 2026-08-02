@@ -267,7 +267,7 @@
           <div class="acc-bars">
             <div v-for="a in sortedByAbsNet" :key="a.id" class="acc-bar-row">
               <div class="acc-bar-name">
-                <span>{{ a.name }}</span>
+                <span>{{ accountLabelById(a.id, accountsList) || a.name }}</span>
                 <span class="acc-type-chip">{{ a.account_type }}</span>
               </div>
               <div class="acc-bar-track">
@@ -298,7 +298,7 @@
             </thead>
             <tbody>
               <tr v-for="a in accData.by_account" :key="a.id">
-                <td>{{ a.name }}</td>
+                <td>{{ accountLabelById(a.id, accountsList) || a.name }}</td>
                 <td><span class="type-chip">{{ a.account_type }}</span></td>
                 <td class="num pos">+{{ fmtAmount(a.credits) }}</td>
                 <td class="num neg">-{{ fmtAmount(a.debits) }}</td>
@@ -697,7 +697,7 @@
               <template v-if="f.operator !== 'is_null'">
                 <select v-if="fieldDef(f.field).valueType === 'account'" v-model="f.value" class="filter-select filter-value">
                   <option value="" disabled>Choisir…</option>
-                  <option v-for="a in accountsList" :key="a.id" :value="a.id">{{ a.name }}</option>
+                  <option v-for="a in accountsList" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accountsList) }}</option>
                 </select>
                 <select v-else-if="fieldDef(f.field).valueType === 'category'" v-model="f.value" class="filter-select filter-value">
                   <option value="" disabled>Choisir…</option>
@@ -869,6 +869,8 @@ import { currency } from '@/utils/settings.js'
 import LineGraph from '../components/graphs/LineGraph.vue'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
+import { accountDisplayLabel, accountLabelById } from '@/utils/accountDisplay.js'
+import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
 
 const toast = useToast()
 
@@ -985,7 +987,7 @@ function errToText(e) {
 
 async function loadFilterOptions() {
   const [accRes, catRes, tagRes] = await Promise.all([
-    axios.get('/api/accounts'), axios.get('/api/categories'), axios.get('/api/tags'),
+    axios.get('/api/accounts'), axios.get('/api/categories'), axios.get('/api/tags'), ensureInstitutionsLoaded(),
   ])
   accountsList.value   = Array.isArray(accRes.data?.response_data) ? accRes.data.response_data : []
   categoriesList.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
@@ -1553,7 +1555,7 @@ onMounted(() => reload())
 
 /* Account bars */
 .acc-bars { display: flex; flex-direction: column; gap: 10px; }
-.acc-bar-row { display: grid; grid-template-columns: 220px 1fr 120px; align-items: center; gap: 12px; }
+.acc-bar-row { display: grid; grid-template-columns: 280px 1fr 120px; align-items: center; gap: 12px; }
 .acc-bar-name { display: flex; align-items: center; gap: 8px; font-size: 13px; overflow: hidden; }
 .acc-bar-name span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acc-type-chip {

@@ -19,11 +19,19 @@ class Accounts(Base):
         # comptes qu'elle contenait, même logique que parent_id ci-dessus.
         ForeignKeyConstraint(['institution_id'],['institutions.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
-        UniqueConstraint('user_id', 'name'),
+        # Unicité du nom scopée, pas globale par utilisateur : deux comptes peuvent porter le même
+        # nom (ex. "Compte Courant" dans deux banques différentes, ou un compte de dépense "EDF"
+        # sous deux parents différents) tant qu'ils ne partagent ni le même compte parent ni la
+        # même institution. Un compte sans parent ET sans institution n'est protégé par aucune des
+        # deux (comportement voulu : rien à quoi le scoper).
+        UniqueConstraint('user_id', 'parent_id', 'name', name='uq_accounts_user_parent_name'),
+        UniqueConstraint('user_id', 'institution_id', 'name', name='uq_accounts_user_institution_name'),
         UniqueConstraint('id'),
 
-        CheckConstraint("account_type IN ('Income', 'Expense', 'Equity', 'Assets', 'Current')"),
-        CheckConstraint("(account_type = 'Equity' AND account_subtype IN ('fr_PEA', 'Other')) "
+        CheckConstraint("account_type IN ('Income', 'Expense', 'Equity', 'Assets', 'Current', 'Liability')"),
+        # 'loan' : compte d'ouverture auto-généré pour un crédit déjà en cours (voir rt_loans.py,
+        # jamais sélectionnable manuellement dans AccountModal.vue).
+        CheckConstraint("(account_type = 'Equity' AND account_subtype IN ('fr_PEA', 'Other', 'loan')) "
                         "OR account_subtype is NULL")
     )
 
