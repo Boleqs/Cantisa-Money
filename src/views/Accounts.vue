@@ -137,6 +137,7 @@
 
             <div class="row-actions">
               <button class="btn-action" @click="openEdit(acc)" title="Modifier">✎</button>
+              <button class="btn-action" @click="startOpeningBalance(acc)" title="Solde initial">⚖</button>
               <button v-if="acc.is_closed" class="btn-action" @click="reopenAccount(acc)" title="Réouvrir">🔓</button>
               <button v-else class="btn-action" @click="startClosing(acc)" title="Clôturer">🔒</button>
               <button class="btn-action btn-danger" @click="deleteAccount(acc)" title="Supprimer">✕</button>
@@ -177,6 +178,47 @@
         <button class="btn btn-primary" :disabled="!closingTargetId || closingBusy" @click="confirmBalancingClose">
           {{ closingBusy ? "…" : "Créer la transaction et clôturer" }}
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Solde initial : pour un compte dont l'historique de transactions a été perdu lors de son
+       intégration à l'app — crée/met à jour une transaction d'équilibrage contre un compte
+       Equity "Solde d'ouverture" partagé par devise (voir backend/routes/rt_accounts.py). -->
+  <div v-if="openingBalanceAccount" class="modal-backdrop" @click.self="cancelOpeningBalance">
+    <div class="close-modal">
+      <h3>Solde initial — « {{ openingBalanceAccount.name }} »</h3>
+      <p class="hint">
+        À renseigner si l'historique des transactions de ce compte a été perdu lors de son
+        intégration à l'app : un montant et une date de reprise suffisent, une transaction
+        d'équilibrage est créée automatiquement contre un compte de contrepartie dédié.
+      </p>
+      <input
+        v-model="openingBalanceAmount"
+        type="number"
+        step="0.01"
+        class="group-by-select close-select"
+        placeholder="Montant (positif ou négatif)"
+      />
+      <input
+        v-model="openingBalanceDate"
+        type="date"
+        class="group-by-select close-select"
+      />
+      <p v-if="openingBalanceError" class="alert">{{ openingBalanceError }}</p>
+      <div class="close-modal-actions">
+        <button
+          v-if="openingBalanceAccount.opening_balance_transaction_id"
+          class="btn btn-sm btn-danger"
+          :disabled="openingBalanceBusy"
+          @click="removeOpeningBalance"
+        >Supprimer</button>
+        <button class="btn btn-sm" :disabled="openingBalanceBusy" @click="cancelOpeningBalance">Annuler</button>
+        <button
+          class="btn btn-primary"
+          :disabled="!openingBalanceAmount || openingBalanceBusy"
+          @click="confirmOpeningBalance"
+        >{{ openingBalanceBusy ? "…" : "Enregistrer" }}</button>
       </div>
     </div>
   </div>
@@ -475,6 +517,8 @@ async function handleSave(form) {
         is_hidden: form.is_hidden,
         code: form.code || undefined,
         tax_treatment: form.tax_treatment || null,
+        opening_balance: form.opening_balance ? Number(form.opening_balance) : undefined,
+        opening_balance_date: form.opening_balance_date || undefined,
       });
     } else {
       await axios.patch("/api/accounts", {
@@ -608,6 +652,84 @@ async function reopenAccount(acc) {
   }
 }
 
+// ── solde initial ─────────────────────────────────────────────────────────────
+// Cas d'un compte dont l'historique de transactions a été perdu lors de son intégration à
+// l'app : un montant + une date de reprise génèrent une transaction d'équilibrage contre un
+// compte Equity "Solde d'ouverture" partagé par devise (voir rt_accounts.py).
+const openingBalanceAccount = ref(null);
+const openingBalanceAmount = ref("");
+const openingBalanceDate = ref("");
+const openingBalanceBusy = ref(false);
+const openingBalanceError = ref("");
+
+async function startOpeningBalance(acc) {
+  openingBalanceError.value = "";
+  openingBalanceAmount.value = "";
+  openingBalanceDate.value = "";
+  openingBalanceAccount.value = acc;
+  if (acc.opening_balance_transaction_id) {
+    try {
+      const { data } = await axios.get("/api/transactions", {
+        params: { transaction_id: acc.opening_balance_transaction_id },
+      });
+      const tx = data?.response_data;
+      const split = tx?.splits?.find((s) => String(s.account_id) === String(acc.id));
+      if (split) openingBalanceAmount.value = String(split.quantity);
+      if (tx?.post_date) openingBalanceDate.value = String(tx.post_date).slice(0, 10);
+    } catch (e) {
+      // Pré-remplissage best-effort : en cas d'échec, les champs restent vides et l'utilisateur
+      // ressaisit le montant/la date (l'enregistrement écrasera la transaction existante).
+    }
+  }
+}
+
+function cancelOpeningBalance() {
+  openingBalanceAccount.value = null;
+  openingBalanceError.value = "";
+}
+
+async function confirmOpeningBalance() {
+  if (!openingBalanceAmount.value || !openingBalanceAccount.value) return;
+  openingBalanceBusy.value = true;
+  openingBalanceError.value = "";
+  try {
+    await axios.post("/api/accounts/opening-balance", {
+      account_id: openingBalanceAccount.value.id,
+      amount: Number(openingBalanceAmount.value),
+      as_of_date: openingBalanceDate.value || undefined,
+    });
+    const name = openingBalanceAccount.value.name;
+    openingBalanceAccount.value = null;
+    await reload();
+    toast.success(`Solde initial enregistré pour « ${name} ».`);
+  } catch (e) {
+    openingBalanceError.value =
+      e?.response?.data?.response_data || e?.message || "Erreur lors de l'enregistrement";
+  } finally {
+    openingBalanceBusy.value = false;
+  }
+}
+
+async function removeOpeningBalance() {
+  if (!openingBalanceAccount.value) return;
+  openingBalanceBusy.value = true;
+  openingBalanceError.value = "";
+  try {
+    await axios.delete("/api/accounts/opening-balance", {
+      params: { account_id: openingBalanceAccount.value.id },
+    });
+    const name = openingBalanceAccount.value.name;
+    openingBalanceAccount.value = null;
+    await reload();
+    toast.success(`Solde initial supprimé pour « ${name} ».`);
+  } catch (e) {
+    openingBalanceError.value =
+      e?.response?.data?.response_data || e?.message || "Erreur lors de la suppression";
+  } finally {
+    openingBalanceBusy.value = false;
+  }
+}
+
 onMounted(() => {
   reload();
 });
@@ -620,11 +742,11 @@ const filteredAccounts = computed(() => {
     // Les comptes Income/Expense ne représentent pas de l'argent réel de l'utilisateur (ce sont
     // les contreparties de catégorisation du double-entry) — affichés sur leur propre page, voir
     // IncomeExpenseAccounts.vue. Les comptes Liability, ainsi que les comptes Equity de
-    // contrepartie d'ouverture de crédit (subtype 'loan'), sont auto-générés/gérés exclusivement
-    // par le flux Crédits (voir Credits.vue/LoanDetail.vue) — les manipuler ici court-circuiterait
-    // ce flux.
+    // contrepartie d'ouverture de crédit (subtype 'loan') ou de solde initial de reprise (subtype
+    // 'opening_balance'), sont auto-générés/gérés exclusivement par leur flux dédié (Crédits, ou
+    // le bouton "Solde initial" ci-dessous) — les manipuler ici court-circuiterait ce flux.
     .filter((a) => a.account_type !== "Income" && a.account_type !== "Expense" && a.account_type !== "Liability")
-    .filter((a) => !(a.account_type === "Equity" && a.account_subtype === "loan"))
+    .filter((a) => !(a.account_type === "Equity" && ["loan", "opening_balance"].includes(a.account_subtype)))
     .filter((a) => (showHidden.value ? true : !a.is_hidden))
     .filter((a) => (showVirtual.value ? true : !a.is_virtual))
     .filter((a) => {

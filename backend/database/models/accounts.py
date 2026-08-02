@@ -18,6 +18,10 @@ class Accounts(Base):
         # SET NULL (pas CASCADE) : supprimer une institution ne doit jamais supprimer les
         # comptes qu'elle contenait, même logique que parent_id ci-dessus.
         ForeignKeyConstraint(['institution_id'],['institutions.id'], ondelete='SET NULL', onupdate='CASCADE'),
+        # SET NULL : supprimer la transaction d'ouverture (ex. suppression manuelle en mode
+        # avancé) ne doit pas empêcher la suppression du compte, juste laisser le compte sans
+        # solde initial référencé.
+        ForeignKeyConstraint(['opening_balance_transaction_id'], ['transactions.id'], ondelete='SET NULL', onupdate='CASCADE'),
 
         # Unicité du nom scopée, pas globale par utilisateur : deux comptes peuvent porter le même
         # nom (ex. "Compte Courant" dans deux banques différentes, ou un compte de dépense "EDF"
@@ -31,7 +35,9 @@ class Accounts(Base):
         CheckConstraint("account_type IN ('Income', 'Expense', 'Equity', 'Assets', 'Current', 'Liability')"),
         # 'loan' : compte d'ouverture auto-généré pour un crédit déjà en cours (voir rt_loans.py,
         # jamais sélectionnable manuellement dans AccountModal.vue).
-        CheckConstraint("(account_type = 'Equity' AND account_subtype IN ('fr_PEA', 'Other', 'loan')) "
+        # 'opening_balance' : contrepartie partagée par devise pour les soldes initiaux de reprise
+        # (voir rt_accounts.py, également jamais sélectionnable manuellement).
+        CheckConstraint("(account_type = 'Equity' AND account_subtype IN ('fr_PEA', 'Other', 'loan', 'opening_balance')) "
                         "OR account_subtype is NULL")
     )
 
@@ -57,5 +63,8 @@ class Accounts(Base):
     code:str = Column(String(64), nullable=True)
     # 'taxable_income' | 'deductible' | 'real_estate_income' | 'real_estate_expense' | None (non fiscal)
     tax_treatment:str = Column(String(32), nullable=True)
+    # Transaction d'équilibrage du solde initial de reprise (voir rt_accounts.py) — None tant
+    # qu'aucun solde initial n'a été renseigné pour ce compte.
+    opening_balance_transaction_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     created_at:datetime = Column(DateTime, default=datetime.now())
     updated_at:datetime = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

@@ -109,6 +109,18 @@
               Compte virtuel
             </label>
           </div>
+
+          <template v-if="!isEdit && canHaveOpeningBalance">
+            <div class="field">
+              <label>Solde initial</label>
+              <input v-model="form.opening_balance" type="number" step="0.01" placeholder="Optionnel" />
+              <span class="hint">Si l'historique des transactions de ce compte a été perdu lors de son intégration.</span>
+            </div>
+            <div class="field">
+              <label>À la date du</label>
+              <input v-model="form.opening_balance_date" type="date" :disabled="!form.opening_balance" />
+            </div>
+          </template>
         </div>
 
         <footer class="modal-footer">
@@ -154,6 +166,9 @@ const emit = defineEmits(['update:modelValue', 'save', 'cancel', 'institution-cr
 
 const isEdit = computed(() => props.mode === 'edit')
 const isEquity = computed(() => form.account_type === 'Equity')
+// Pas de sens pour Income/Expense (contreparties de catégorisation, pas de l'argent réel) —
+// même règle côté backend, voir set_opening_balance() dans rt_accounts.py.
+const canHaveOpeningBalance = computed(() => !['Income', 'Expense'].includes(form.account_type))
 
 // Tenu synchronisé avec TAX_TREATMENT_VALUES dans rt_accounts.py.
 const TAX_TREATMENTS = [
@@ -176,6 +191,8 @@ const emptyForm = () => ({
   is_virtual: false,
   code: '',
   tax_treatment: null,
+  opening_balance: '',
+  opening_balance_date: '',
 })
 
 const form = reactive(emptyForm())
@@ -228,6 +245,10 @@ watch(
   () => form.account_type,
   (type) => {
     if (type !== 'Equity') form.account_subtype = ''
+    if (['Income', 'Expense'].includes(type)) {
+      form.opening_balance = ''
+      form.opening_balance_date = ''
+    }
   }
 )
 

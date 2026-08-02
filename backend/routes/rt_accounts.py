@@ -39,6 +39,10 @@ class AddAccountSchema(Schema):
     is_hidden = fields.Boolean()
     code = fields.String()
     tax_treatment = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(TAX_TREATMENT_VALUES))
+    # Solde initial optionnel (compte dont l'historique de transactions a été perdu lors de son
+    # intégration à l'app) — voir _apply_opening_balance ci-dessous.
+    opening_balance = fields.Float(load_default=None, allow_none=True)
+    opening_balance_date = fields.Date(load_default=None, allow_none=True)
 
 
 class UpdateAccountSchema(Schema):
@@ -72,6 +76,16 @@ class CloseAccountSchema(Schema):
     balancing_account_id = fields.UUID(load_default=None)
 
 
+class SetOpeningBalanceSchema(Schema):
+    account_id = fields.UUID(required=True)
+    amount = fields.Float(required=True)
+    as_of_date = fields.Date(load_default=date.today)
+
+
+class RemoveOpeningBalanceSchema(Schema):
+    account_id = fields.UUID(required=True)
+
+
 def _name_conflict(Accounts, user_id, name, parent_id, institution_id, exclude_account_id=None):
     """Unicité du nom scopée (voir accounts.py / uq_accounts_user_parent_name et
     uq_accounts_user_institution_name) : conflit seulement si un autre compte du même nom partage
@@ -87,6 +101,70 @@ def _name_conflict(Accounts, user_id, name, parent_id, institution_id, exclude_a
     if institution_id and query.filter(Accounts.institution_id == institution_id).first():
         return True
     return False
+
+
+def _get_or_create_opening_equity_account(DB, Accounts, Commodities, user_id, currency_id):
+    """Compte Equity de contrepartie pour les soldes initiaux de reprise, partagé par devise
+    (un seul compte par devise, pas un par compte concerné) — convention comptable standard.
+    Subtype 'opening_balance' pour l'exclure des listes de comptes (voir Accounts.vue), même
+    logique que le subtype 'loan' des prêts déjà en cours."""
+    account = Accounts.query.filter(
+        Accounts.user_id == user_id,
+        Accounts.account_type == 'Equity',
+        Accounts.account_subtype == 'opening_balance',
+        Accounts.currency_id == currency_id,
+    ).first()
+    if account:
+        return account
+    commodity = Commodities.query.filter_by(id=currency_id).first() if Commodities else None
+    label = commodity.short_name.upper() if commodity and commodity.short_name else None
+    account = Accounts(
+        user_id=user_id,
+        name=f"Solde d'ouverture ({label})" if label else "Solde d'ouverture",
+        description="Contrepartie comptable générée automatiquement pour les soldes initiaux de reprise",
+        account_type='Equity',
+        account_subtype='opening_balance',
+        currency_id=currency_id,
+        is_virtual=False,
+        is_hidden=True,
+    )
+    DB.session.add(account)
+    DB.session.flush()
+    return account
+
+
+def _apply_opening_balance(DB, Accounts, Transactions, Splits, Commodities, user_id, account, amount, as_of_date):
+    """Crée ou met à jour la transaction d'équilibrage du solde initial d'un compte. Les deux
+    splits sont dans la même devise (le compte de contrepartie est créé par devise, voir
+    _get_or_create_opening_equity_account) : pas de conversion de change nécessaire."""
+    equity_account = _get_or_create_opening_equity_account(DB, Accounts, Commodities, user_id, account.currency_id)
+    post_dt = datetime.combine(as_of_date, datetime.min.time())
+
+    tx = None
+    if account.opening_balance_transaction_id:
+        tx = Transactions.query.filter_by(id=account.opening_balance_transaction_id).first()
+
+    if tx:
+        tx.post_date = post_dt
+        tx.effective_date = post_dt
+        account_split = Splits.query.filter_by(tx_id=tx.id, account_id=account.id).first()
+        equity_split = Splits.query.filter(
+            Splits.tx_id == tx.id, Splits.account_id != account.id).first()
+        if account_split:
+            account_split.quantity = amount
+        if equity_split:
+            equity_split.quantity = -amount
+    else:
+        tx = Transactions(
+            user_id=user_id, currency_id=account.currency_id,
+            post_date=post_dt, effective_date=post_dt,
+            description=f"Solde d'ouverture — {account.name}", is_cleared=True,
+        )
+        DB.session.add(tx)
+        DB.session.flush()
+        DB.session.add(Splits(tx_id=tx.id, account_id=account.id, quantity=amount))
+        DB.session.add(Splits(tx_id=tx.id, account_id=equity_account.id, quantity=-amount))
+        account.opening_balance_transaction_id = tx.id
 
 
 class AccountsRoutes:
@@ -145,9 +223,18 @@ class AccountsRoutes:
                     tax_treatment=data.get("tax_treatment"),
                 )
                 DB.session.add(account)
+                DB.session.flush()
+
+                opening_balance = data.get('opening_balance')
+                if opening_balance and account.account_type not in ('Income', 'Expense'):
+                    _apply_opening_balance(
+                        DB, Accounts, Transactions, Splits, Commodities, get_jwt_identity(),
+                        account, opening_balance, data.get('opening_balance_date') or date.today())
+
                 DB.session.commit()
                 return json_response(account, HttpCode.CREATED)
             except Exception as error:
+                DB.session.rollback()
                 return json_response(str(error), HttpCode.SERVER_ERROR)
 
         @app.route(f"{ROUTE_PATH}", methods=["PATCH"])
@@ -366,6 +453,78 @@ class AccountsRoutes:
                 account.is_closed = True
                 account.is_hidden = True
                 account.closed_at = datetime.now()
+                DB.session.commit()
+                return json_response(account, HttpCode.OK)
+            except Exception as error:
+                DB.session.rollback()
+                return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/opening-balance", methods=["POST"])
+        @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
+        def set_opening_balance():
+            """Renseigne (ou met à jour) le solde initial d'un compte dont l'historique de
+            transactions a été perdu lors de son intégration à l'app — génère/actualise une
+            transaction d'équilibrage contre un compte Equity partagé par devise (voir
+            _apply_opening_balance)."""
+            try:
+                data = SetOpeningBalanceSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+
+            user_id = get_jwt_identity()
+            account = Accounts.query.filter(
+                Accounts.user_id == user_id, Accounts.id == data['account_id']).first()
+            if not account:
+                return json_response('Compte introuvable', HttpCode.NOT_FOUND)
+            if account.account_type in ('Income', 'Expense'):
+                return json_response(
+                    "Un solde initial n'a pas de sens pour un compte de contrepartie",
+                    HttpCode.BAD_REQUEST)
+            if account.account_subtype in ('loan', 'opening_balance'):
+                return json_response(
+                    "Ce compte est géré automatiquement, pas de solde initial manuel",
+                    HttpCode.BAD_REQUEST)
+            if data['amount'] == 0:
+                return json_response(
+                    "Le montant doit être différent de zéro — utilisez la suppression pour "
+                    "retirer un solde initial",
+                    HttpCode.BAD_REQUEST)
+
+            try:
+                _apply_opening_balance(
+                    DB, Accounts, Transactions, Splits, Commodities, user_id,
+                    account, data['amount'], data['as_of_date'])
+                DB.session.commit()
+                return json_response(account, HttpCode.OK)
+            except Exception as error:
+                DB.session.rollback()
+                return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/opening-balance", methods=["DELETE"])
+        @jwt_required()
+        @restricted_by_permission(Users, ACCOUNTS_PERM)
+        def remove_opening_balance():
+            try:
+                data = RemoveOpeningBalanceSchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+
+            user_id = get_jwt_identity()
+            account = Accounts.query.filter(
+                Accounts.user_id == user_id, Accounts.id == data['account_id']).first()
+            if not account:
+                return json_response('Compte introuvable', HttpCode.NOT_FOUND)
+            if not account.opening_balance_transaction_id:
+                return json_response("Ce compte n'a pas de solde initial", HttpCode.BAD_REQUEST)
+
+            try:
+                tx_id = account.opening_balance_transaction_id
+                account.opening_balance_transaction_id = None
+                DB.session.flush()
+                tx = Transactions.query.filter_by(id=tx_id).first()
+                if tx:
+                    DB.session.delete(tx)
                 DB.session.commit()
                 return json_response(account, HttpCode.OK)
             except Exception as error:
