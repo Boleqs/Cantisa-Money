@@ -35,7 +35,6 @@ services:
       # db/entrypoint.sh depuis backend/instance/db_password.txt (volume partagé, voir plus bas).
       DB_PASSWORD: ${POSTGRES_PASSWORD:-}
       DB_NAME: cmm
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-}
       PWD_PEPPER: ${PWD_PEPPER:-}
       RESET_DB_ON_START: ${RESET_DB_ON_START:-false}

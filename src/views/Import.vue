@@ -164,6 +164,7 @@
               {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
             </option>
           </select>
+          <p v-if="profileApplied" class="hint hint-ok">✓ Configuration du dernier import de ce compte réappliquée (modifiable ci-dessous).</p>
         </div>
         <div class="form-group">
           <label class="form-label">Compte de contrepartie — Dépenses</label>
@@ -286,10 +287,6 @@
         <button class="btn btn-sm" @click="selectAll(true)">Tout sélectionner</button>
         <button class="btn btn-sm" @click="selectAll(false)">Tout désélectionner</button>
         <button class="btn btn-sm" @click="selectNonDuplicates">Ignorer les doublons</button>
-        <button class="btn btn-sm btn-ai" :disabled="aiLoading" @click="categorizeWithAI">
-          <span v-if="aiLoading">🤖 Analyse…</span>
-          <span v-else>🤖 Catégoriser avec l'IA</span>
-        </button>
         <button
           class="btn btn-sm"
           title="Annuler toutes les modifications manuelles de catégorie/contrepartie"
@@ -331,8 +328,6 @@
         </div>
       </div>
 
-      <div v-if="aiError" class="alert">{{ aiError }}</div>
-
       <div class="table-scroll">
         <table class="tx-table">
           <thead>
@@ -360,7 +355,7 @@
                 {{ fmtAmount(tx.amount) }}
               </td>
               <td class="cat-cell">
-                <span v-if="tx.aiSuggested && tx.category_id" class="ai-dot" title="Suggéré par l'IA">🤖</span>
+                <span v-if="tx.ruleSuggested && tx.category_id" class="rule-dot" title="Suggéré d'après vos imports précédents">🔁</span>
                 <template v-if="tx.addingCategory">
                   <input
                     v-model="tx.newCategoryName"
@@ -379,7 +374,7 @@
                   <button class="btn btn-sm" style="padding:2px 6px;font-size:11px" @click="tx.addingCategory = false">✕</button>
                 </template>
                 <template v-else>
-                  <select v-model="tx.category_id" class="cat-select" @change="tx.aiSuggested = false">
+                  <select v-model="tx.category_id" class="cat-select" @change="tx.ruleSuggested = false">
                     <option :value="null">—</option>
                     <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                   </select>
@@ -392,25 +387,13 @@
                 </template>
               </td>
               <td class="opp-cell">
-                <span v-if="tx.aiSuggested && tx.opposing_account_id" class="ai-dot" title="Suggéré par l'IA">🤖</span>
-                <!-- Compte existant suggéré ou choix manuel -->
-                <select v-if="!tx.newAccountSuggestion || tx.opposing_account_id" v-model="tx.opposing_account_id" class="cat-select" @change="tx.newAccountSuggestion = null; tx.aiSuggested = false">
+                <span v-if="tx.ruleSuggested && tx.opposing_account_id" class="rule-dot" title="Suggéré d'après vos imports précédents">🔁</span>
+                <select v-model="tx.opposing_account_id" class="cat-select" @change="tx.ruleSuggested = false">
                   <option :value="null">— (défaut)</option>
                   <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
                     {{ accountDisplayLabel(acc, accounts) }}
                   </option>
                 </select>
-                <!-- Nouveau compte proposé par l'IA -->
-                <template v-if="tx.newAccountSuggestion && !tx.opposing_account_id">
-                  <span class="new-acc-label" :title="tx.newAccountSuggestion.cantisa_type">
-                    🤖 {{ tx.newAccountSuggestion.name }}
-                  </span>
-                  <button class="btn btn-sm btn-ai" style="padding:2px 8px;font-size:11px" :disabled="tx.creatingAccount" @click="createAccountFromTx(tx)">
-                    <span v-if="tx.creatingAccount">…</span>
-                    <span v-else>Créer</span>
-                  </button>
-                  <button class="btn btn-sm" style="padding:2px 6px;font-size:11px" @click="tx.newAccountSuggestion = null">✕</button>
-                </template>
               </td>
               <td>
                 <span v-if="tx.is_duplicate" class="badge warn">Doublon</span>
@@ -489,6 +472,7 @@ function defaultDateFormat() {
 const router = useRouter()
 
 const STORAGE_KEY = 'cantisa_import_wizard_v1'
+const PROFILE_PREFIX = 'cantisa_import_profile_'
 
 const steps = ['Fichier', 'Configuration', 'Révision', 'Résultat']
 const step = ref(0)
@@ -514,8 +498,7 @@ const accountsFound = ref([])
 const showAccountsFound = ref(true)
 const result = ref({ created: 0, skipped: 0 })
 const categories = ref([])
-const aiLoading = ref(false)
-const aiError = ref('')
+const profileApplied = ref(false)
 
 const bulkCategoryId = ref(null)
 const bulkAddingCategory = ref(false)
@@ -541,6 +524,165 @@ const config = ref({
 
 const selectedCount = computed(() => transactions.value.filter(t => t.selected).length)
 const duplicateCount = computed(() => transactions.value.filter(t => t.is_duplicate).length)
+
+// ── Profils d'import mémorisés par compte ──────────────────────────────────
+// Un compte bancaire donné a quasi toujours le même relevé (même banque, même mise en page) :
+// mémoriser le mapping qui a fonctionné évite à l'utilisateur de tout resaisir à chaque import.
+function profileKey(accountId) {
+  return PROFILE_PREFIX + accountId
+}
+
+function loadProfileForAccount(accountId) {
+  try {
+    const raw = localStorage.getItem(profileKey(accountId))
+    return raw ? JSON.parse(raw) : null
+  } catch (e) {
+    return null
+  }
+}
+
+function saveProfileForAccount(accountId) {
+  if (!accountId) return
+  try {
+    const {
+      delimiter, has_header, date_col, desc_col, date_format, decimal_sep,
+      amount_mode, amount_col, debit_col, credit_col,
+      expense_opposing_account_id, income_opposing_account_id, currency_id,
+    } = config.value
+    localStorage.setItem(profileKey(accountId), JSON.stringify({
+      delimiter, has_header, date_col, desc_col, date_format, decimal_sep,
+      amount_mode, amount_col, debit_col, credit_col,
+      expense_opposing_account_id, income_opposing_account_id, currency_id,
+    }))
+  } catch (e) {
+    // localStorage indisponible ou quota dépassé : le profil ne sera simplement pas mémorisé.
+  }
+}
+
+// Dès qu'un compte cible est choisi, réapplique automatiquement le mapping qui a fonctionné la
+// dernière fois pour ce même compte (sans l'imposer : tout reste modifiable ensuite).
+watch(() => config.value.account_id, (newId, oldId) => {
+  if (restoring || !newId || newId === oldId) return
+  const profile = loadProfileForAccount(newId)
+  if (profile) {
+    config.value = { ...config.value, ...profile }
+    profileApplied.value = true
+  } else {
+    profileApplied.value = false
+  }
+})
+
+// ── Auto-détection du mapping CSV (délimiteur, colonnes, format date, séparateur décimal) ──────
+// Ne fait que proposer une valeur par défaut plus pertinente que les index 0/1/2/3 codés en dur :
+// l'utilisateur garde la main via les champs de l'étape Configuration.
+const DIACRITICS_RE = /[̀-ͯ]/g
+
+function normalizeHeader(s) {
+  return (s || '').toString().trim().toLowerCase().normalize('NFD').replace(DIACRITICS_RE, '')
+}
+
+const HEADER_KEYWORDS = {
+  date: ['date operation', 'date valeur', 'date comptable', 'transaction date', 'posted date', 'date'],
+  description: ['libelle', 'description', 'label', 'memo', 'communication', 'objet', 'intitule', 'beneficiaire', 'tiers', 'payee', 'details'],
+  amount: ['montant operation', 'montant', 'amount', 'valeur'],
+  debit: ['debit', 'withdrawal', 'sortie'],
+  credit: ['credit', 'deposit', 'entree'],
+}
+
+function matchHeaderIndex(headers, keywords) {
+  for (const keyword of keywords) {
+    const idx = headers.findIndex(h => normalizeHeader(h) === keyword)
+    if (idx >= 0) return idx
+  }
+  for (const keyword of keywords) {
+    const idx = headers.findIndex(h => normalizeHeader(h).includes(keyword))
+    if (idx >= 0) return idx
+  }
+  return -1
+}
+
+function autoDetectColumns(headers) {
+  if (!headers || !headers.length) return
+  const dateIdx = matchHeaderIndex(headers, HEADER_KEYWORDS.date)
+  const descIdx = matchHeaderIndex(headers, HEADER_KEYWORDS.description)
+  const debitIdx = matchHeaderIndex(headers, HEADER_KEYWORDS.debit)
+  const creditIdx = matchHeaderIndex(headers, HEADER_KEYWORDS.credit)
+  const amountIdx = matchHeaderIndex(headers, HEADER_KEYWORDS.amount)
+
+  if (dateIdx >= 0) config.value.date_col = dateIdx
+  if (descIdx >= 0) config.value.desc_col = descIdx
+
+  if (debitIdx >= 0 && creditIdx >= 0) {
+    config.value.amount_mode = 'debit_credit'
+    config.value.debit_col = debitIdx
+    config.value.credit_col = creditIdx
+  } else if (amountIdx >= 0) {
+    config.value.amount_mode = 'single'
+    config.value.amount_col = amountIdx
+  }
+}
+
+// Devine le délimiteur CSV le plus probable à partir de la 1re ligne du fichier (le plus fréquent
+// parmi ; , et tabulation) — reste modifiable via le sélecteur de l'étape Fichier.
+function guessDelimiter(text) {
+  const firstLine = (text.split(/\r?\n/).find(l => l.trim()) || '')
+  const counts = {
+    ';': (firstLine.match(/;/g) || []).length,
+    ',': (firstLine.match(/,/g) || []).length,
+    '\t': (firstLine.match(/\t/g) || []).length,
+  }
+  let best = null, bestCount = 0
+  for (const [d, c] of Object.entries(counts)) {
+    if (c > bestCount) { best = d; bestCount = c }
+  }
+  if (!best) return null
+  return best === '\t' ? '\\t' : best
+}
+
+// Devine le format de date à partir d'un échantillon de valeurs (ex: rawPreview) : ne tranche que
+// si le format est non ambigu (ex: un jour > 12 révèle l'ordre jour/mois) ; sinon renvoie null et
+// laisse le format par défaut (dérivé du réglage utilisateur) en place.
+function detectDateFormat(samples) {
+  const clean = samples.map(s => (s || '').toString().trim()).filter(Boolean)
+  if (!clean.length) return null
+
+  if (clean.every(s => /^\d{4}-\d{2}-\d{2}$/.test(s))) return '%Y-%m-%d'
+
+  const longYear = clean.every(s => /^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}$/.test(s))
+  const shortYear = !longYear && clean.every(s => /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2}$/.test(s))
+  if (longYear || shortYear) {
+    const sep = clean[0].includes('/') ? '/' : '-'
+    const parts = clean.map(s => s.split(/[\/-]/).map(Number))
+    const dayFirst = parts.some(([a]) => a > 12)
+    const monthFirst = parts.some(([, b]) => b > 12)
+    if (dayFirst && !monthFirst) return longYear ? `%d${sep}%m${sep}%Y` : `%d${sep}%m${sep}%y`
+    if (monthFirst && !dayFirst) return longYear ? `%m${sep}%d${sep}%Y` : `%m${sep}%d${sep}%y`
+  }
+  return null
+}
+
+// Devine le séparateur décimal à partir d'un échantillon de montants : entre virgule et point,
+// celui qui apparaît en dernière position dans le nombre est le séparateur décimal (l'autre étant
+// alors un séparateur de milliers).
+function detectDecimalSep(samples) {
+  const clean = samples.map(s => (s || '').toString().trim()).filter(Boolean)
+  if (!clean.length) return null
+  let commaVotes = 0, dotVotes = 0
+  for (const s of clean) {
+    const hasComma = s.includes(',')
+    const hasDot = s.includes('.')
+    if (hasComma && hasDot) {
+      if (s.lastIndexOf(',') > s.lastIndexOf('.')) commaVotes++
+      else dotVotes++
+    } else if (hasComma) {
+      commaVotes++
+    } else if (hasDot) {
+      dotVotes++
+    }
+  }
+  if (commaVotes === 0 && dotVotes === 0) return null
+  return commaVotes >= dotVotes ? ',' : '.'
+}
 
 function fmtAmount(v) {
   return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)
@@ -569,9 +711,10 @@ function onFileChange(e) {
   if (f) setFile(f)
 }
 
-function setFile(f) {
+async function setFile(f) {
   file.value = f
   error.value = ''
+  profileApplied.value = false
   detectedFormat.value = detectFormatFromFile(f)
   // QIF default: US decimal separator (convention historique du format, indépendante de la
   // locale de l'utilisateur) — mais le format de date suit le réglage utilisateur dans les deux
@@ -580,6 +723,12 @@ function setFile(f) {
     config.value.decimal_sep = '.'
   } else {
     config.value.decimal_sep = ','
+    try {
+      const guessedDelim = guessDelimiter(await f.text())
+      if (guessedDelim) config.value.delimiter = guessedDelim
+    } catch (e) {
+      // Lecture impossible : le délimiteur par défaut reste sélectionné, modifiable à la main.
+    }
   }
   config.value.date_format = defaultDateFormat()
 }
@@ -608,10 +757,20 @@ async function goToConfig() {
     if (config.value.has_header && allRows.length) {
       previewHeaders.value = allRows[0]
       rawPreview.value = allRows.slice(1, 6)
+      autoDetectColumns(previewHeaders.value)
     } else {
       previewHeaders.value = allRows[0]?.map((_, i) => `Colonne ${i}`) || []
       rawPreview.value = allRows.slice(0, 5)
     }
+
+    const dateSamples = rawPreview.value.map(r => r[config.value.date_col])
+    const guessedDateFormat = detectDateFormat(dateSamples)
+    if (guessedDateFormat) config.value.date_format = guessedDateFormat
+
+    const amountColIdx = config.value.amount_mode === 'single' ? config.value.amount_col : config.value.credit_col
+    const amountSamples = rawPreview.value.map(r => r[amountColIdx])
+    const guessedDecimalSep = detectDecimalSep(amountSamples)
+    if (guessedDecimalSep) config.value.decimal_sep = guessedDecimalSep
   }
   step.value = 1
 }
@@ -644,20 +803,21 @@ async function parse() {
     const res = data.response_data
     transactions.value = res.transactions.map(t => {
       const defaultCategoryId = t.category_id ?? null
-      const defaultOpposingAccountId = (Number(t.amount) < 0
+      // t.opposing_account_id peut venir d'une règle de catégorisation apprise (voir
+      // backend rt_import.py) — sinon on retombe sur la contrepartie par défaut selon le signe.
+      const defaultOpposingAccountId = t.opposing_account_id || (Number(t.amount) < 0
         ? config.value.expense_opposing_account_id
         : config.value.income_opposing_account_id) || null
       return {
         ...t,
         category_id: defaultCategoryId,
         opposing_account_id: defaultOpposingAccountId,
-        // Suggestion d'origine (IA ou résolution automatique côté serveur pour le QIF) — permet de
-        // revenir en arrière si l'utilisateur a modifié à la main sans se souvenir de la valeur de départ.
+        // Suggestion d'origine (règle apprise ou résolution automatique côté serveur pour le QIF) —
+        // permet de revenir en arrière si l'utilisateur a modifié à la main sans se souvenir de la
+        // valeur de départ.
         original_category_id: defaultCategoryId,
         original_opposing_account_id: defaultOpposingAccountId,
-        newAccountSuggestion: null,
-        aiSuggested: false,
-        creatingAccount: false,
+        ruleSuggested: Boolean(t.category_id || t.opposing_account_id),
         addingCategory: false,
         newCategoryName: '',
         creatingCategory: false,
@@ -686,6 +846,7 @@ async function parse() {
       // Non bloquant : la liste de catégories reste simplement celle chargée au montage.
     }
 
+    saveProfileForAccount(config.value.account_id)
     restoredFileName.value = ''
     step.value = 2
   } catch (e) {
@@ -725,33 +886,6 @@ function selectNonDuplicates() {
   transactions.value.forEach(t => (t.selected = !t.is_duplicate))
 }
 
-async function categorizeWithAI() {
-  aiLoading.value = true
-  aiError.value = ''
-  try {
-    const descriptions = transactions.value.map(t => t.description || '')
-    const { data } = await axios.post('/api/ai/categorize', { descriptions })
-    const suggestions = data.response_data?.suggestions || []
-    suggestions.forEach(s => {
-      const tx = transactions.value[s.index]
-      if (!tx) return
-      if (s.category_id) tx.category_id = s.category_id
-      if (s.opposing_account_id) {
-        tx.opposing_account_id = s.opposing_account_id
-        tx.newAccountSuggestion = null
-      } else if (s.new_account) {
-        tx.opposing_account_id = null
-        tx.newAccountSuggestion = s.new_account
-      }
-      if (s.category_id || s.opposing_account_id || s.new_account) tx.aiSuggested = true
-    })
-  } catch (e) {
-    aiError.value = e?.response?.data?.response_data || e?.message || "Erreur lors de la catégorisation IA"
-  } finally {
-    aiLoading.value = false
-  }
-}
-
 async function createCategoryForTx(tx) {
   const name = (tx.newCategoryName || '').trim()
   if (!name) return
@@ -776,13 +910,12 @@ async function createCategoryForTx(tx) {
   }
 }
 
-// Annule les modifications manuelles (ou suggestions IA) d'une ligne — catégorie et compte de
-// contrepartie reviennent à la suggestion d'origine calculée à l'analyse du fichier.
+// Annule les modifications manuelles (ou suggestions de règle apprise) d'une ligne — catégorie et
+// compte de contrepartie reviennent à la suggestion d'origine calculée à l'analyse du fichier.
 function resetTxOverrides(tx) {
   tx.category_id = tx.original_category_id
   tx.opposing_account_id = tx.original_opposing_account_id
-  tx.aiSuggested = false
-  tx.newAccountSuggestion = null
+  tx.ruleSuggested = false
   tx.addingCategory = false
 }
 
@@ -801,7 +934,7 @@ function applyBulkCategory() {
   transactions.value.forEach(t => {
     if (!t.selected) return
     t.category_id = bulkCategoryId.value
-    t.aiSuggested = false
+    t.ruleSuggested = false
   })
 }
 
@@ -834,27 +967,6 @@ async function createBulkCategory() {
   }
 }
 
-async function createAccountFromTx(tx) {
-  tx.creatingAccount = true
-  try {
-    const { data } = await axios.post('/api/accounts', {
-      name: tx.newAccountSuggestion.name,
-      account_type: tx.newAccountSuggestion.cantisa_type,
-      currency_id: config.value.currency_id,
-    })
-    const created = data?.response_data
-    if (created) {
-      accounts.value.push(created)
-      tx.opposing_account_id = created.id
-      tx.newAccountSuggestion = null
-    }
-  } catch (e) {
-    aiError.value = e?.response?.data?.response_data || e?.message || 'Erreur création compte'
-  } finally {
-    tx.creatingAccount = false
-  }
-}
-
 async function createAccount(acc) {
   acc.creating = true
   try {
@@ -882,9 +994,9 @@ function reset() {
   transactions.value = []
   parseErrors.value = []
   accountsFound.value = []
-  aiError.value = ''
   error.value = ''
   result.value = { created: 0, skipped: 0 }
+  profileApplied.value = false
   if (fileInput.value) fileInput.value.value = ''
   restoredFileName.value = ''
   sessionStorage.removeItem(STORAGE_KEY)
@@ -1166,6 +1278,7 @@ onMounted(() => {
 /* Preview table */
 .preview-wrap { margin-bottom: 20px; }
 .hint { font-size: 13px; color: #9ca3af; margin: 0 0 8px; }
+.hint-ok { color: #6ee7b7; margin-top: 6px; }
 
 .table-scroll {
   overflow-x: auto;
@@ -1299,27 +1412,7 @@ onMounted(() => {
 
 .cat-select:focus { border-color: rgba(96, 165, 250, 0.5); }
 
-.ai-dot { font-size: 12px; flex-shrink: 0; }
-
-.new-acc-label {
-  font-size: 12px;
-  color: #c4b5fd;
-  background: rgba(139, 92, 246, 0.12);
-  border: 1px solid rgba(139, 92, 246, 0.3);
-  border-radius: 6px;
-  padding: 2px 6px;
-  white-space: nowrap;
-}
-
-.btn-ai {
-  background: linear-gradient(90deg, #7c3aed, #4f46e5);
-  border-color: transparent;
-  color: #fff;
-}
-
-.btn-ai:not(:disabled):hover {
-  background: linear-gradient(90deg, #6d28d9, #4338ca);
-}
+.rule-dot { font-size: 12px; flex-shrink: 0; }
 
 /* Badges */
 .badge {

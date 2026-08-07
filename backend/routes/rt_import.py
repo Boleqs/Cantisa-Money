@@ -1,5 +1,7 @@
 import csv
 import io
+import re
+import unicodedata
 from datetime import datetime
 from marshmallow import Schema, fields, ValidationError
 
@@ -15,6 +17,38 @@ from backend.utils.restricted_by_permission import restricted_by_permission
 IMPORT_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
 
 DATE_FORMATS = ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y', '%d/%m/%y', '%Y/%m/%d', '%m/%d/%y']
+
+# Longueur minimale d'un mot-clé normalisé pour être mémorisé/utilisé comme règle — évite qu'un
+# libellé trop court ou vidé par la normalisation (ex: uniquement des chiffres) ne matche tout.
+MIN_RULE_KEYWORD_LENGTH = 3
+
+
+def normalize_description(desc):
+    """Normalise un libellé de transaction en clé de règle stable : minuscules, sans accents, sans
+    chiffres (numéros de référence, dates) ni ponctuation — deux occurrences de la même transaction
+    récurrente (ex: "CB CARREFOUR 05/08" et "CB CARREFOUR 12/09") normalisent vers la même clé."""
+    if not desc:
+        return ''
+    s = unicodedata.normalize('NFKD', desc)
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = s.lower()
+    s = re.sub(r'\d+', ' ', s)
+    s = re.sub(r'[^a-z\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _match_rule(rules_by_keyword, description):
+    """Cherche une règle de catégorisation apprise pour ce libellé. Retourne (category_id,
+    opposing_account_id), chacun pouvant être None si la règle ne renseigne pas ce champ."""
+    key = normalize_description(description)
+    if not key or len(key) < MIN_RULE_KEYWORD_LENGTH:
+        return None, None
+    rule = rules_by_keyword.get(key)
+    if not rule:
+        return None, None
+    return (str(rule.category_id) if rule.category_id else None,
+            str(rule.opposing_account_id) if rule.opposing_account_id else None)
 
 
 class ConfirmImportSchema(Schema):
@@ -71,7 +105,7 @@ def _detect_format(content):
     return 'csv'
 
 
-def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transactions, Splits, Categories, DB):
+def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transactions, Splits, Categories, DB, rules_by_keyword):
     """Parse QIF content, return (transactions, errors, accounts_found).
 
     accounts_found: list of {name, qif_type, cantisa_type, description}
@@ -170,12 +204,17 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
                         ).first()
                         is_duplicate = existing is not None
 
+                    # Le champ QIF (catégorie explicite du fichier) est prioritaire ; la règle
+                    # apprise ne comble que ce que le fichier ne renseigne pas.
+                    category_id = resolve_category(current_tx.get('category'))
+                    rule_category_id, rule_opposing_id = _match_rule(rules_by_keyword, desc)
                     parsed.append({
                         'row': row_idx,
                         'date': tx_date.strftime('%Y-%m-%d'),
                         'description': desc,
                         'amount': amount,
-                        'category_id': resolve_category(current_tx.get('category')),
+                        'category_id': category_id or rule_category_id,
+                        'opposing_account_id': rule_opposing_id,
                         'qif_account': current_qif_account,
                         'is_duplicate': is_duplicate,
                         'selected': not is_duplicate,
@@ -202,12 +241,15 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
             tx_date = _parse_date(current_tx['date'], date_format)
             amount = _parse_amount(current_tx['amount'], decimal_sep)
             desc = current_tx.get('payee') or current_tx.get('memo') or ''
+            category_id = resolve_category(current_tx.get('category'))
+            rule_category_id, rule_opposing_id = _match_rule(rules_by_keyword, desc)
             parsed.append({
                 'row': row_idx,
                 'date': tx_date.strftime('%Y-%m-%d'),
                 'description': desc,
                 'amount': amount,
-                'category_id': resolve_category(current_tx.get('category')),
+                'category_id': category_id or rule_category_id,
+                'opposing_account_id': rule_opposing_id,
                 'qif_account': current_qif_account,
                 'is_duplicate': False,
                 'selected': True,
@@ -219,7 +261,7 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
 
 
 class ImportRoutes:
-    def __init__(self, app, DB, Transactions, Splits, Users, Categories):
+    def __init__(self, app, DB, Transactions, Splits, Users, Categories, ImportCategoryRules):
         ROUTE_PATH = f"{ROOT_PATH}/import"
 
         @app.route(f"{ROUTE_PATH}/parse", methods=['POST'])
@@ -242,6 +284,12 @@ class ImportRoutes:
             account_id = request.form.get('account_id') or None
             user_id = get_jwt_identity()
 
+            # Règles de catégorisation apprises lors de confirmations d'imports précédentes (voir
+            # confirm_import ci-dessous) — remplacent la catégorisation par IA.
+            rules_by_keyword = {
+                r.keyword: r for r in ImportCategoryRules.query.filter_by(user_id=user_id).all()
+            }
+
             # Auto-detect or honour explicit format
             fmt = request.form.get('format') or _detect_format(content)
 
@@ -249,7 +297,7 @@ class ImportRoutes:
             if fmt == 'qif':
                 parsed, errors, accounts_found = _parse_qif(
                     content, date_format, decimal_sep,
-                    account_id, user_id, Transactions, Splits, Categories, DB
+                    account_id, user_id, Transactions, Splits, Categories, DB, rules_by_keyword
                 )
                 # Persiste les catégories créées à la volée pendant le parsing.
                 DB.session.commit()
@@ -328,11 +376,14 @@ class ImportRoutes:
                         ).first()
                         is_duplicate = existing is not None
 
+                    rule_category_id, rule_opposing_id = _match_rule(rules_by_keyword, desc)
                     parsed.append({
                         'row': i,
                         'date': tx_date.strftime('%Y-%m-%d'),
                         'description': desc,
                         'amount': amount,
+                        'category_id': rule_category_id,
+                        'opposing_account_id': rule_opposing_id,
                         'is_duplicate': is_duplicate,
                         'selected': not is_duplicate,
                     })
@@ -374,9 +425,10 @@ class ImportRoutes:
                     tx_date = datetime.strptime(tx_data['date'], '%Y-%m-%d')
                     amount = float(tx_data['amount'])
                     # Contrepartie par défaut selon le signe (dépense/recette), sauf
-                    # override par transaction (choix manuel ou suggestion IA).
+                    # override par transaction (choix manuel ou suggestion d'une règle apprise).
                     default_opposing = expense_opposing_account_id if amount < 0 else income_opposing_account_id
                     tx_opposing = tx_data.get('opposing_account_id') or default_opposing
+                    category_id = tx_data.get('category_id') or None
 
                     tx = Transactions(
                         user_id=user_id,
@@ -385,7 +437,7 @@ class ImportRoutes:
                         effective_date=tx_date,
                         description=tx_data.get('description', ''),
                         is_cleared=True,
-                        category_id=tx_data.get('category_id') or None,
+                        category_id=category_id,
                     )
                     DB.session.add(tx)
                     DB.session.flush()
@@ -393,6 +445,29 @@ class ImportRoutes:
                     DB.session.add(Splits(tx_id=tx.id, account_id=account_id, quantity=amount))
                     DB.session.add(Splits(tx_id=tx.id, account_id=tx_opposing, quantity=-amount))
                     created += 1
+
+                    # Apprentissage de règle : mémorise la catégorie/contrepartie choisie pour ce
+                    # libellé, réappliquée automatiquement aux imports futurs (voir parse_import).
+                    # La contrepartie n'est mémorisée que si elle diffère de la contrepartie par
+                    # défaut du moment, sinon celle-ci serait figée comme règle pour tout le monde.
+                    explicit_opposing = tx_data.get('opposing_account_id') or None
+                    learned_opposing = (explicit_opposing
+                                        if explicit_opposing and str(explicit_opposing) != str(default_opposing)
+                                        else None)
+                    keyword = normalize_description(tx_data.get('description', ''))
+                    if keyword and len(keyword) >= MIN_RULE_KEYWORD_LENGTH and (category_id or learned_opposing):
+                        rule = ImportCategoryRules.query.filter_by(user_id=user_id, keyword=keyword).first()
+                        if rule:
+                            if category_id:
+                                rule.category_id = category_id
+                            if learned_opposing:
+                                rule.opposing_account_id = learned_opposing
+                            rule.updated_at = datetime.now()
+                        else:
+                            DB.session.add(ImportCategoryRules(
+                                user_id=user_id, keyword=keyword,
+                                category_id=category_id, opposing_account_id=learned_opposing,
+                            ))
 
                 DB.session.commit()
                 return json_response({'created': created, 'skipped': skipped}, HttpCode.CREATED)

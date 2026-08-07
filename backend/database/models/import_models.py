@@ -14,6 +14,7 @@ from .custom_reports import CustomReports
 from .dca_plans import DcaPlans
 from .financial_goals import FinancialGoals
 from .fx_rates import FxRates
+from .import_category_rules import ImportCategoryRules
 from .institutions import Institutions
 from .loans import Loans
 from .loan_installments import LoanInstallments

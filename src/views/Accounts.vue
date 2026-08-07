@@ -155,6 +155,7 @@
     :commodities="commodities"
     :parent-accounts="accounts"
     :institutions="institutions"
+    :type-options="TYPE_OPTIONS"
     @save="handleSave"
     @institution-created="institutions.push($event)"
   />
@@ -241,6 +242,14 @@ import { institutions, ensureInstitutionsLoaded } from "@/utils/institutions.js"
 const toast = useToast();
 
 const router = useRouter();
+
+// Income/Expense ont leur propre page dédiée (voir IncomeExpenseAccounts.vue) — pas de sens de
+// pouvoir les créer/modifier depuis la liste des comptes réels.
+const TYPE_OPTIONS = [
+  { value: "Current", label: "Current" },
+  { value: "Assets", label: "Assets" },
+  { value: "Equity", label: "Equity" },
+];
 
 const accounts = ref([]);
 const commodities = ref([]);

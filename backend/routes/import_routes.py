@@ -15,7 +15,6 @@ from .rt_reports import ReportsRoutes
 from .rt_roles import RolesRoutes
 from .rt_import import ImportRoutes
 from .rt_documents import DocumentsRoutes
-from .rt_ai import AIRoutes
 from .rt_reconcile import ReconcileRoutes
 from .rt_test import TestRoutes
 from .rt_markets import MarketsRoutes

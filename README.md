@@ -51,7 +51,6 @@ Comptes de démonstration créés au premier démarrage (base vide) : `John` / `
 
 Copier `.env.example` en `.env` à la racine pour personnaliser le déploiement (tout est optionnel,
 des valeurs par défaut raisonnables s'appliquent sinon) :
-- `ANTHROPIC_API_KEY` — active la catégorisation par IA
 - `FLASK_SECRET_KEY` / `PWD_PEPPER` / `POSTGRES_PASSWORD` — laisser vide : des valeurs aléatoires
   sont générées automatiquement et persistées ; à ne définir que pour imposer une valeur précise
 - `RESET_DB_ON_START=true` — repart d'une base vide + démo à chaque redémarrage (au lieu de

@@ -9,7 +9,6 @@ sqlalchemy
 alembic
 pyjwt
 marshmallow
-anthropic
 APScheduler
 python-dateutil
 fpdf2
