@@ -69,7 +69,7 @@ CommoditiesRoutes(app, DB, Users, Commodities, FxRates, UserSettings, Accounts, 
 AuthRoutes(app, DB, Users, UserRoles, limiter)
 AccountsRoutes(app, DB, Users, Accounts, Splits, Transactions, Commodities, FxRates, Institutions)
 TransactionsRoutes(app, DB, Transactions, Splits, TagsOnSplits, Users, Accounts, Categories, Commodities, FxRates)
-BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users, FxRates, Commodities, UserSettings)
+BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users, FxRates, Commodities, UserSettings, Transactions)
 CategoriesRoutes(app, DB, Categories, Users)
 InstitutionsRoutes(app, DB, Institutions, Users)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)

@@ -9,6 +9,7 @@ from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISS
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import convert_amount
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.utils.data_freshness import compute_freshness
 
 BUDGETS_PERM = VAR_PERMISSIONS_LIST['Planification']['id']
 RENEW_PERIODS = ('monthly', 'quarterly', 'yearly')
@@ -143,7 +144,7 @@ def _budget_to_dict(budget, BudgetAccounts, BudgetCategories, BudgetTags):
 
 class BudgetsRoutes:
     def __init__(self, app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Users,
-                 FxRates, Commodities, UserSettings):
+                 FxRates, Commodities, UserSettings, Transactions):
         ROUTE_PATH = f"{ROOT_PATH}/budgets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -186,6 +187,12 @@ class BudgetsRoutes:
             reconduction."""
             from dateutil.relativedelta import relativedelta
             user_id = get_jwt_identity()
+
+            # Un streak calculé sur un grand livre en retard daterait d'avant le trou d'import —
+            # même logique que /api/dashboard/stats, voir backend/utils/data_freshness.py.
+            if compute_freshness(user_id, Transactions)['stale']:
+                return json_response({'months': None, 'last_overrun': None, 'stale': True}, HttpCode.OK)
+
             monthly_budgets = Budgets.query.filter(
                 Budgets.user_id == user_id,
                 Budgets.renew_period == 'monthly',
@@ -212,7 +219,7 @@ class BudgetsRoutes:
                 months += 1
                 cursor -= relativedelta(months=1)
 
-            return json_response({'months': months, 'last_overrun': last_overrun}, HttpCode.OK)
+            return json_response({'months': months, 'last_overrun': last_overrun, 'stale': False}, HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()

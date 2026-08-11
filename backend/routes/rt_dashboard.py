@@ -10,6 +10,7 @@ from backend.utils.api_responses import json_response
 from backend.utils.market_price import get_fx_rate, get_fx_rate_series
 from backend.utils.wealth import get_portfolio_container_account_values
 from backend.utils.restricted_by_permission import restricted_by_permission
+from backend.utils.data_freshness import compute_freshness
 
 WEALTH_TYPES = ('Current', 'Assets', 'Equity')
 # Un mouvement n'est un vrai revenu/dépense que si la transaction touche effectivement un compte
@@ -180,6 +181,14 @@ class DashboardRoutes:
                     current_daily_avg = monthly_expenses / days_elapsed
                     if hist_daily_avg:
                         expenses_vs_avg_pct = round((current_daily_avg - hist_daily_avg) / hist_daily_avg * 100, 1)
+
+            # ── Fraîcheur du grand livre ────────────────────────────────────────
+            # Si l'utilisateur est en retard dans ses imports, une comparaison "de ce mois-ci" ou
+            # "vs moyenne" devient trompeuse plutôt qu'utile — on la masque (None) au lieu de
+            # l'afficher avec une confiance qu'elle n'a pas. Voir backend/utils/data_freshness.py.
+            freshness = compute_freshness(user_id, Transactions)
+            if freshness['stale']:
+                expenses_vs_avg_pct = None
 
             # ── Historique de solde (30 jours) ────────────────────────────────
             # Basé sur les comptes courants uniquement (liquidités du jour)
@@ -391,4 +400,5 @@ class DashboardRoutes:
                 'expenses_by_category': expenses_by_category,
                 'networth_history': networth_history,
                 'container_account_values': container_values,
+                'data_freshness': freshness,
             }, HttpCode.OK)

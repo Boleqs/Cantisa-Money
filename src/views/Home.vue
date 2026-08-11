@@ -8,11 +8,17 @@
         <p v-if="insight" class="hero-insight">{{ insight }}</p>
       </div>
       <div v-if="streakBadge" class="streak">
-        <div class="streak-badge" :class="{ warn: !streakBadge.good }">
-          <span class="streak-dot" :class="{ warn: !streakBadge.good }"></span> {{ streakBadge.text }}
+        <div class="streak-badge" :class="{ warn: !streakBadge.good && !streakBadge.neutral, neutral: streakBadge.neutral }">
+          <span class="streak-dot" :class="{ warn: !streakBadge.good && !streakBadge.neutral, neutral: streakBadge.neutral }"></span> {{ streakBadge.text }}
         </div>
         <span v-if="streakBadge.caption" class="streak-caption">{{ streakBadge.caption }}</span>
       </div>
+    </div>
+
+    <!-- Fraîcheur des données -->
+    <div v-if="freshnessWarning" class="freshness-banner">
+      <span class="freshness-icon">⚠</span>
+      <span>{{ freshnessWarning }}</span>
     </div>
 
     <!-- Briefing : patrimoine + à venir -->
@@ -145,6 +151,7 @@ import { hasPermission } from '@/utils/permissions.js'
 
 const user = ref(null)
 const kpis = ref(null)
+const dataFreshness = ref(null)
 const wealth = ref(null)
 const wealthHistory = ref([])
 const budgets = ref([])
@@ -252,6 +259,9 @@ function formatMonthLabel(ym) {
 
 const streakBadge = computed(() => {
   if (!streak.value) return null
+  if (streak.value.stale) {
+    return { text: 'Données pas à jour', good: false, neutral: true }
+  }
   if (streak.value.months === 0) {
     if (!streak.value.last_overrun) return null
     return { text: `Dépassement le mois dernier (${streak.value.last_overrun.name})`, good: false }
@@ -260,6 +270,16 @@ const streakBadge = computed(() => {
     ? `Dernier dépassement : ${streak.value.last_overrun.name}, ${formatMonthLabel(streak.value.last_overrun.month)}`
     : null
   return { text: `${streak.value.months} mois sans dépassement`, caption, good: true }
+})
+
+// ── Bandeau de fraîcheur : GET /api/dashboard/stats.data_freshness ───────
+const freshnessWarning = computed(() => {
+  if (!dataFreshness.value?.stale) return ''
+  const { last_transaction_date, days_since } = dataFreshness.value
+  if (!last_transaction_date) return "Aucune transaction enregistrée pour l'instant."
+  const dateLabel = new Date(last_transaction_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
+  return `Vos données ne sont peut-être pas à jour — dernière transaction importée le ${dateLabel}` +
+    (days_since ? ` (il y a ${days_since} jour${days_since > 1 ? 's' : ''}).` : '.')
 })
 
 const insight = computed(() => {
@@ -346,7 +366,10 @@ async function load() {
   const byKey = Object.fromEntries(keys.map((k, i) => [k, results[i]]))
 
   if (byKey.me?.status === 'fulfilled') user.value = byKey.me.value.data?.response_data
-  if (byKey.stats?.status === 'fulfilled') kpis.value = byKey.stats.value.data?.response_data?.kpis
+  if (byKey.stats?.status === 'fulfilled') {
+    kpis.value = byKey.stats.value.data?.response_data?.kpis
+    dataFreshness.value = byKey.stats.value.data?.response_data?.data_freshness
+  }
   if (byKey.wealth?.status === 'fulfilled') wealth.value = byKey.wealth.value.data?.response_data?.kpis
   if (byKey.wealthHistory?.status === 'fulfilled') wealthHistory.value = Array.isArray(byKey.wealthHistory.value.data?.response_data) ? byKey.wealthHistory.value.data.response_data : []
   if (byKey.budgets?.status === 'fulfilled') budgets.value = Array.isArray(byKey.budgets.value.data?.response_data) ? byKey.budgets.value.data.response_data : []
@@ -404,9 +427,22 @@ onMounted(load)
   font-size: 13px; font-weight: 700; white-space: nowrap;
 }
 .streak-badge.warn { background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.35); color: #fde68a; }
+.streak-badge.neutral { background: rgba(148, 163, 184, 0.14); border-color: rgba(148, 163, 184, 0.3); color: #cbd5e1; }
 .streak-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
 .streak-dot.warn { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.18); }
+.streak-dot.neutral { background: #94a3b8; box-shadow: 0 0 0 3px rgba(148,163,184,0.18); }
 .streak-caption { font-size: 12px; color: #6b7280; text-align: right; }
+
+.freshness-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fde68a;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13.5px;
+}
+.freshness-icon { font-size: 14px; flex-shrink: 0; }
 
 @media (max-width: 640px) {
   .streak { align-items: flex-start; }
