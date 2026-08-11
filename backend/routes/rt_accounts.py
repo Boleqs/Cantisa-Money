@@ -29,7 +29,7 @@ TAX_TREATMENT_VALUES = ('taxable_income', 'deductible', 'real_estate_income', 'r
 
 class AddAccountSchema(Schema):
     name = fields.String(required=True)
-    description = fields.String(required=True)
+    description = fields.String(load_default=None, allow_none=True)
     currency_id = fields.String(required=True)
     parent_id = fields.UUID()
     institution_id = fields.UUID(load_default=None, allow_none=True)
@@ -48,7 +48,7 @@ class AddAccountSchema(Schema):
 class UpdateAccountSchema(Schema):
     account_id = fields.UUID(required=True)
     name = fields.String(required=True)
-    description = fields.String(required=True)
+    description = fields.String(load_default=None, allow_none=True)
     currency_id = fields.String(required=True)
     parent_id = fields.UUID()
     institution_id = fields.UUID(load_default=None, allow_none=True)

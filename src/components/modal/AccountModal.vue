@@ -22,8 +22,8 @@
           </div>
 
           <div class="field field-full">
-            <label>Description *</label>
-            <input v-model="form.description" required />
+            <label>Description</label>
+            <input v-model="form.description" />
           </div>
 
           <div class="field">

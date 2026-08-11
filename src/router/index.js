@@ -281,8 +281,14 @@ function requestRefresh() {
         // l'access token (csrf_access_token) qu'axios envoie par défaut sur toute autre requête
         // (voir xsrfCookieName ci-dessus) — sans ce header explicite, flask-jwt-extended rejette
         // l'appel en 401 "CSRF double submit tokens do not match" avant même de vérifier le token.
+        // withXSRFToken: false est indispensable ici : sinon le mécanisme XSRF automatique d'axios
+        // (xsrfCookieName='csrf_access_token', actif par défaut sur toute requête) écrase le header
+        // qu'on vient de fixer avec la valeur du cookie de l'ACCESS token, donc un mismatch — c'est
+        // ce qui causait le blocage sur page vide à l'expiration : /auth/refresh échouait presque
+        // toujours en 401 malgré un refresh token valide, jusqu'à ce qu'une course gagne par hasard.
         refreshPromise = axios.post('/api/auth/refresh', {}, {
             headers: { 'X-CSRF-TOKEN': getCookie('csrf_refresh_token') },
+            withXSRFToken: false,
         }).finally(() => { refreshPromise = null })
     }
     return refreshPromise

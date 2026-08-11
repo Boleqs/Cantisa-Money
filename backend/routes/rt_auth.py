@@ -41,7 +41,6 @@ class AuthRoutes:
         def check_auth():
             try:
                 token = get_jwt()
-                print(get_jwt())
                 if not token:
                     return json_response("Not logged in", HttpCode.NOT_FOUND)
 
@@ -49,8 +48,7 @@ class AuthRoutes:
                     return json_response("Loggin expired", HttpCode.FORBIDDEN)
                 else:
                     return json_response("Logged in", HttpCode.OK)
-            except Exception as e:
-                print(e)
+            except Exception:
                 return json_response("Not logged in", HttpCode.FORBIDDEN)
 
         @app.route(f"{ROUTE_PATH}/refresh", methods=["POST"])
