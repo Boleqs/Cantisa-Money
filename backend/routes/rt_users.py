@@ -78,7 +78,7 @@ class UsersRoutes:
 
         @app.route(ROUTE_PATH, methods=['POST'])
         @jwt_required()
-        @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Delete users']['id'])
+        @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Administration']['id'])
         def add_user():
             try:
                 data = CreateUserSchema().load(request.json or {})
@@ -110,7 +110,7 @@ class UsersRoutes:
 
         @app.route(ROUTE_PATH, methods=['DELETE'])
         @jwt_required()
-        @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Delete users']['id'])
+        @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Administration']['id'])
         def delete_user():
             from uuid import UUID
             user_id_str = request.args.get('user_id')
@@ -134,7 +134,7 @@ class UsersRoutes:
 
         @app.route(f"{ROUTE_PATH}/role", methods=['PATCH'])
         @jwt_required()
-        @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Delete users']['id'])
+        @restricted_by_permission(Users, VAR_PERMISSIONS_LIST['Administration']['id'])
         def change_user_role():
             try:
                 data = ChangeRoleSchema().load(request.json or {})
@@ -164,7 +164,7 @@ class UsersRoutes:
             caller_id = get_jwt_identity()
             caller = Users.query.filter(Users.id == caller_id).first()
             # Autorisé si admin ou réinitialise son propre MDP
-            is_admin = caller.check_permission(VAR_PERMISSIONS_LIST['Delete users']['id'])
+            is_admin = caller.check_permission(VAR_PERMISSIONS_LIST['Administration']['id'])
             is_self = str(data['user_id']) == str(caller_id)
             if not is_admin and not is_self:
                 return json_response('Unauthorized', HttpCode.FORBIDDEN)

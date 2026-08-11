@@ -173,6 +173,47 @@ class BudgetsRoutes:
                 HttpCode.OK
             )
 
+        @app.route(f"{ROUTE_PATH}/streak", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, BUDGETS_PERM)
+        def get_budget_streak():
+            """Nombre de mois civils consécutifs (le mois en cours exclu, puisqu'il n'est pas
+            terminé et déjà couvert par l'état live des budgets sur l'Accueil) sans qu'aucun budget
+            mensuel récurrent n'ait dépassé son enveloppe. S'appuie sur l'historique déjà produit
+            par renew_due_budgets() (scheduler.py) : chaque reconduction crée une NOUVELLE ligne
+            plutôt que d'écraser l'ancienne (old.renewed = True), donc l'historique existe déjà sans
+            table dédiée — regroupé par (user_id, name), le nom étant recopié tel quel à chaque
+            reconduction."""
+            from dateutil.relativedelta import relativedelta
+            user_id = get_jwt_identity()
+            monthly_budgets = Budgets.query.filter(
+                Budgets.user_id == user_id,
+                Budgets.renew_period == 'monthly',
+            ).all()
+            by_month = {}
+            for b in monthly_budgets:
+                by_month.setdefault(b.start_date.strftime('%Y-%m'), []).append(b)
+
+            cursor = datetime.now().replace(day=1) - relativedelta(months=1)
+            months = 0
+            last_overrun = None
+            while True:
+                key = cursor.strftime('%Y-%m')
+                month_budgets = by_month.get(key)
+                if not month_budgets:
+                    break
+                over = next(
+                    (b for b in month_budgets if b.amount_allocated and float(b.amount_spent) >= float(b.amount_allocated)),
+                    None
+                )
+                if over:
+                    last_overrun = {'month': key, 'name': over.name}
+                    break
+                months += 1
+                cursor -= relativedelta(months=1)
+
+            return json_response({'months': months, 'last_overrun': last_overrun}, HttpCode.OK)
+
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()
         @restricted_by_permission(Users, BUDGETS_PERM)

@@ -22,8 +22,8 @@ class JsonResponseType:
     VALUES = [SUCCESS, FAILURE]
 
 
-VAR_PERMISSIONS_LIST = {'Delete users': {'id': uuid.UUID('00000000-cafe-4c9d-8ab3-b35d0bd54397'),
-                                         'description': 'Allow to delete any user'},
+VAR_PERMISSIONS_LIST = {'Administration': {'id': uuid.UUID('00000000-cafe-4c9d-8ab3-b35d0bd54397'),
+                                         'description': "Administration de l'instance : utilisateurs, rôles, sauvegarde, intégrations externes"},
 
                         # Permissions regroupées par besoin fonctionnel : chaque groupe réunit les
                         # modules qui n'ont pas de sens isolément (ex. gérer des comptes nécessite

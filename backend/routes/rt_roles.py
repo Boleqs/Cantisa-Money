@@ -11,7 +11,7 @@ from backend.config import (HttpCode,
 from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
 
-ADMIN_PERM = VAR_PERMISSIONS_LIST['Delete users']['id']
+ADMIN_PERM = VAR_PERMISSIONS_LIST['Administration']['id']
 
 
 class CreateRoleSchema(Schema):

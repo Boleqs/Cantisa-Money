@@ -136,6 +136,51 @@ class DashboardRoutes:
                 ).group_by(Commodities.short_name).all()
                 monthly_expenses = abs(sum(float(total) * rate_to_target(code) for code, total in expenses_rows))
 
+            # ── Dépenses du mois vs moyenne des mois précédents (Accueil) ──────
+            # Comparaison normalisée par jour (dépenses/jour du mois en cours, partiel, vs
+            # dépenses/jour moyennes des mois précédents) plutôt qu'un total brut contre un total
+            # brut : comparer un mois en cours (partiel) à des mois complets sous-estimerait
+            # systématiquement le mois en cours. Moyenne calculée uniquement sur les mois qui ont
+            # effectivement des transactions (pas sur 6 mois fixes) pour ne pas diluer la moyenne
+            # d'un compte récent avec des mois "vides" antérieurs à sa création.
+            expenses_vs_avg_pct = None
+            if wealth_ids:
+                exp_window_start = _month_start(today.year, today.month - 6)
+                exp_hist_rows = DB.session.query(
+                    func.date_trunc('month', cast(Transactions.post_date, PG_DATE)).label('month'),
+                    Commodities.short_name,
+                    func.coalesce(func.sum(Splits.quantity), 0)
+                ).join(Transactions, Splits.tx_id == Transactions.id
+                ).join(Accounts, Splits.account_id == Accounts.id
+                ).join(Commodities, Accounts.currency_id == Commodities.id
+                ).filter(
+                    Transactions.user_id == user_id,
+                    Splits.account_id.in_(wealth_ids),
+                    Transactions.post_date >= exp_window_start,
+                    Transactions.post_date < month_start,
+                    Splits.quantity < 0,
+                    Transactions.id.in_(real_flow_tx)
+                ).group_by(
+                    func.date_trunc('month', cast(Transactions.post_date, PG_DATE)), Commodities.short_name
+                ).all()
+
+                exp_by_month = {}
+                for m, code, total in exp_hist_rows:
+                    key = str(m)[:7]
+                    exp_by_month[key] = exp_by_month.get(key, 0.0) + abs(float(total)) * rate_to_target(code)
+
+                hist_days = sum(
+                    (_month_start(today.year, today.month - i + 1) - _month_start(today.year, today.month - i)).days
+                    for i in range(1, 7)
+                    if str(_month_start(today.year, today.month - i))[:7] in exp_by_month
+                )
+                if hist_days and exp_by_month:
+                    hist_daily_avg = sum(exp_by_month.values()) / hist_days
+                    days_elapsed = max((today - month_start).days + 1, 1)
+                    current_daily_avg = monthly_expenses / days_elapsed
+                    if hist_daily_avg:
+                        expenses_vs_avg_pct = round((current_daily_avg - hist_daily_avg) / hist_daily_avg * 100, 1)
+
             # ── Historique de solde (30 jours) ────────────────────────────────
             # Basé sur les comptes courants uniquement (liquidités du jour)
             opening_by_code = {}
@@ -339,6 +384,7 @@ class DashboardRoutes:
                     'assets_balance': round(assets_balance, 2),
                     'monthly_income': round(monthly_income, 2),
                     'monthly_expenses': round(monthly_expenses, 2),
+                    'expenses_vs_avg_pct': expenses_vs_avg_pct,
                     'net_worth': round(net_worth, 2),
                 },
                 'balance_history': balance_history,

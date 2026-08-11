@@ -81,6 +81,7 @@ DcaRoutes(app, DB, DcaPlans, Assets, AssetPossession, AssetDisposal, Commodities
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users, Categories, ImportCategoryRules)
+BankSyncRoutes(app, DB, BankConnections, Accounts, Institutions, Transactions, Splits, ImportCategoryRules, Users)
 DocumentsRoutes(app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
@@ -357,30 +358,38 @@ def assign_permissions_to_roles():
 
     for perm in all_perms:
         # Admin : toutes les permissions. Standard user : tous les modules métier sauf
-        # "Delete users" (gestion des comptes réservée à l'admin).
+        # "Administration" (gestion des utilisateurs/rôles/intégrations réservée à l'admin).
         DB.session.add(RolePermissions(role_id=admin_role_id, permission_id=perm.id))
-        if perm.name != "Delete users":
+        if perm.name != "Administration":
             DB.session.add(RolePermissions(role_id=standard_role_id, permission_id=perm.id))
     DB.session.commit()
 
 
 def ensure_permissions_up_to_date():
-    """Ajoute les Permissions/RolePermissions manquantes vs VAR_PERMISSIONS_LIST sans toucher à
-    l'existant. Contrairement à insert_permissions()/assign_permissions_to_roles(), tourne à
-    CHAQUE démarrage (pas seulement sur base vide) — sinon une permission ajoutée après le seed
-    initial (ex: 'Fiscalité') n'atteint jamais les installations déjà en place."""
+    """Ajoute les Permissions/RolePermissions manquantes vs VAR_PERMISSIONS_LIST, et resynchronise
+    name/description des permissions déjà en base si elles ont changé côté code (ex: renommage —
+    l'id, utilisé par tous les contrôles d'accès, ne change jamais donc les assignations de rôles
+    restent valides). Contrairement à insert_permissions()/assign_permissions_to_roles(), tourne à
+    CHAQUE démarrage (pas seulement sur base vide) — sinon un changement fait après le seed initial
+    (ex: ajout de 'Fiscalité', renommage de 'Delete users' en 'Administration') n'atteint jamais les
+    installations déjà en place."""
     admin_role = Roles.query.filter(Roles.name == "Global administrator").first()
     standard_role = Roles.query.filter(Roles.name == "Standard user").first()
     if not admin_role or not standard_role:
         return
-    existing_ids = {p.id for p in Permissions.query.all()}
+    existing_by_id = {p.id: p for p in Permissions.query.all()}
     changed = False
     for name, meta in VAR_PERMISSIONS_LIST.items():
-        if meta['id'] not in existing_ids:
+        existing = existing_by_id.get(meta['id'])
+        if not existing:
             DB.session.add(Permissions(id=meta['id'], name=name, description=meta['description']))
             DB.session.add(RolePermissions(role_id=admin_role.id, permission_id=meta['id']))
-            if name != "Delete users":
+            if name != "Administration":
                 DB.session.add(RolePermissions(role_id=standard_role.id, permission_id=meta['id']))
+            changed = True
+        elif existing.name != name or existing.description != meta['description']:
+            existing.name = name
+            existing.description = meta['description']
             changed = True
     if changed:
         DB.session.commit()

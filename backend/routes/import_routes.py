@@ -14,6 +14,7 @@ from .rt_dca import DcaRoutes
 from .rt_reports import ReportsRoutes
 from .rt_roles import RolesRoutes
 from .rt_import import ImportRoutes
+from .rt_bank_sync import BankSyncRoutes
 from .rt_documents import DocumentsRoutes
 from .rt_reconcile import ReconcileRoutes
 from .rt_test import TestRoutes

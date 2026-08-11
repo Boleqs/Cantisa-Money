@@ -14,7 +14,7 @@ import {
     faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
     faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
     faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
-    faArrowRightArrowLeft
+    faArrowRightArrowLeft, faPlug
 } from '@fortawesome/free-solid-svg-icons';
 
 export default {
@@ -37,7 +37,7 @@ export default {
         }
     },
     setup() {
-        const isAdmin = computed(() => hasPermission('Delete users'))
+        const isAdmin = computed(() => hasPermission('Administration'))
         return {
             collapsed, toggleSidebar, sidebarWidth, hasPermission, isAdmin,
             faHouse, faGaugeHigh, faBuildingColumns, faListUl, faRightLeft, faFileImport,
@@ -46,7 +46,7 @@ export default {
             faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
             faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
             faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
-            faArrowRightArrowLeft
+            faArrowRightArrowLeft, faPlug
         }
     }
 }
@@ -118,10 +118,11 @@ export default {
               <SidebarLink to="/categories" :icon="faFolderTree">Catégories</SidebarLink>
               <SidebarLink to="/tags" :icon="faTag">Tags</SidebarLink>
             </SidebarGroup>
-            <SidebarGroup v-if="isAdmin" label="Administration" :icon="faUserShield" :paths="['/admin/users', '/admin/roles', '/admin/backup']">
+            <SidebarGroup v-if="isAdmin" label="Administration" :icon="faUserShield" :paths="['/admin/users', '/admin/roles', '/admin/backup', '/admin/integrations']">
               <SidebarLink :icon="faUsers" to="/admin/users">Utilisateurs</SidebarLink>
               <SidebarLink :icon="faUserLock" to="/admin/roles">Rôles &amp; Permissions</SidebarLink>
               <SidebarLink :icon="faDatabase" to="/admin/backup">Sauvegarde</SidebarLink>
+              <SidebarLink :icon="faPlug" to="/admin/integrations">Intégrations</SidebarLink>
             </SidebarGroup>
         </div>
 

@@ -1,6 +1,7 @@
 from .base import Base
 from .accounts import Accounts
 from .asset_possession import AssetPossession
+from .bank_connections import BankConnections
 from .asset_disposal import AssetDisposal
 from .asset_valuations import AssetValuations
 from .assets import Assets

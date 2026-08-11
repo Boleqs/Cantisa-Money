@@ -100,6 +100,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/bank-sync/callback',
+        name: 'BankSyncCallback',
+        component: () => import('../views/BankSyncCallback.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/tags',
         name: 'Tags',
         component: () => import('../views/Tags.vue'),
@@ -181,6 +187,12 @@ const routes = [
         path: '/admin/backup',
         name: 'AdminBackup',
         component: () => import('../views/AdminBackup.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/admin/integrations',
+        name: 'AdminIntegrations',
+        component: () => import('../views/AdminIntegrations.vue'),
         meta: { requiresAuth: true }
     },
     {
