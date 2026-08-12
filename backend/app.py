@@ -92,7 +92,7 @@ ForecastRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commod
                Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, Users, FinancialGoals)
 GoalsRoutes(app, DB, FinancialGoals, Users)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
-OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories)
+OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories, Tags)
 TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,
           Transactions, Splits, Accounts, Commodities, FxRates, UserSettings,
           AssetDisposal, AssetPossession, Assets, Tags, TagsOnSplits)

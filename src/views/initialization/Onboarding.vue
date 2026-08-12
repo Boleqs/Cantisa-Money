@@ -54,11 +54,19 @@
             @click="mode = 'preset'"
           >
             <div class="choice-title">📋 Modèle standard</div>
-            <div class="choice-desc">Un plan de comptes de départ tout prêt.</div>
+            <div class="choice-desc">
+              Un plan de comptes complet façon GnuCash : les comptes répondent à « à qui ? »
+              (employeur, bailleur, assureur…), les catégories à « pourquoi ? » et les tags à
+              « quoi ? ».
+            </div>
             <ul class="preview-list">
-              <li v-for="a in presetAccounts" :key="a.name">{{ a.name }} <span class="muted">({{ a.account_type }})</span></li>
+              <li v-for="a in presetBaseAccounts" :key="a.name">{{ a.name }} <span class="muted">({{ a.account_type }})</span></li>
+              <li v-for="g in presetAccountGroups" :key="g.root">
+                {{ g.root }} <span class="muted">({{ g.total }} comptes — {{ g.children.join(', ') }})</span>
+              </li>
             </ul>
-            <div class="preview-cats">+ catégories : {{ presetCategories.join(', ') }}</div>
+            <div class="preview-cats">+ catégories (pourquoi) : {{ presetCategories.join(', ') }}</div>
+            <div class="preview-cats">+ tags (quoi) : {{ presetTags.join(', ') }}</div>
           </button>
 
           <button
@@ -125,14 +133,25 @@ const mode = ref('preset')
 const manualAccountName = ref('')
 const manualAccountType = ref('Current')
 
-// Doit rester synchronisé avec PRESET_ACCOUNTS/PRESET_CATEGORIES dans backend/routes/rt_onboarding.py
-const presetAccounts = [
+// Doit rester synchronisé avec PRESET_ACCOUNTS/PRESET_CATEGORIES/PRESET_TAGS dans
+// backend/routes/rt_onboarding.py — juste un résumé pour l'aperçu (35 comptes au total serait
+// illisible en liste plate ici, donc regroupés par racine Revenus/Dépenses).
+const presetBaseAccounts = [
   { name: 'Compte courant', account_type: 'Current' },
   { name: 'Épargne', account_type: 'Assets' },
-  { name: 'Salaires', account_type: 'Income' },
-  { name: 'Dépenses courantes', account_type: 'Expense' },
 ]
-const presetCategories = ['Alimentation', 'Transport', 'Loisirs', 'Santé', 'Logement']
+const presetAccountGroups = [
+  {
+    root: 'Revenus', total: 11,
+    children: ['Employeur(s)', 'Clients', 'Établissement bancaire', 'Locataire(s)', 'Organismes sociaux', 'Administration fiscale', 'Particuliers'],
+  },
+  {
+    root: 'Dépenses', total: 22,
+    children: ['Bailleur / Agence immobilière', 'Syndic', "Fournisseur d'énergie", 'Opérateur télécom', 'Assureurs', 'Banque (frais)', 'Administrations', 'Supermarchés', 'Restaurants', 'Transporteurs', 'Professionnels de santé', 'Établissements scolaires', 'Commerces', 'Particuliers'],
+  },
+]
+const presetCategories = ['Logement', 'Alimentation', 'Transport', 'Santé', 'Assurances', 'Impôts et taxes', 'Loisirs & sorties', 'Habillement', 'Éducation', 'Famille & enfants', 'Cadeaux & dons', 'Salaire', 'Revenus financiers', 'Remboursements', 'Autres revenus']
+const presetTags = ['Alimentaire', 'Vêtements', 'Électronique / High-tech', 'Carburant', 'Facture / Abonnement', 'Loyer', 'Titre de transport', 'Loisir / Divertissement', 'Santé / Médicaments', 'Matériel / Équipement', 'Service / Prestation', 'Cadeau']
 
 function goToStep2() {
   error.value = ''
@@ -280,8 +299,9 @@ async function submit() {
 .choice-card.selected { border-color: #2563eb; background: rgba(37, 99, 235, 0.08); }
 .choice-title { font-size: 14px; font-weight: 700; }
 .choice-desc { font-size: 12px; color: #9ca3af; }
-.preview-list { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: #cbd5e1; }
-.preview-cats { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.preview-list { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: #cbd5e1; max-height: 130px; overflow-y: auto; }
+.preview-list li { margin-bottom: 3px; line-height: 1.4; }
+.preview-cats { font-size: 11px; color: #6b7280; margin-top: 4px; line-height: 1.5; }
 .muted { color: #6b7280; }
 
 .actions-row { display: flex; gap: 10px; margin-top: 4px; }
