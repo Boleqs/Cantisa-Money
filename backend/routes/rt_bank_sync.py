@@ -402,8 +402,12 @@ class BankSyncRoutes:
                     'date': tx_date,
                     'description': desc,
                     'amount': amount,
-                    'category_id': rule_category_id,
-                    'opposing_account_id': rule_opposing_id,
+                    # La règle apprise reste une suggestion (suggested_*) tant que l'utilisateur ne
+                    # l'applique pas explicitement côté frontend — voir rt_import.py::parse_import.
+                    'category_id': None,
+                    'opposing_account_id': None,
+                    'suggested_category_id': rule_category_id,
+                    'suggested_opposing_account_id': rule_opposing_id,
                     'is_duplicate': is_duplicate,
                     'selected': not is_duplicate,
                 })

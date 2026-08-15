@@ -158,31 +158,40 @@
         <!-- Accounts & currency (both formats) -->
         <div class="form-group">
           <label class="form-label">Compte cible (compte bancaire)</label>
-          <select v-model="config.account_id" class="form-select">
-            <option value="">— Sélectionner —</option>
-            <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-              {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
-            </option>
-          </select>
+          <div class="select-row">
+            <select v-model="config.account_id" class="form-select">
+              <option value="">— Sélectionner —</option>
+              <option v-for="acc in realAccounts" :key="acc.id" :value="acc.id">
+                {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
+              </option>
+            </select>
+            <button type="button" class="btn btn-sm" title="Créer un nouveau compte" @click="openAccountModal('config-target')">+</button>
+          </div>
           <p v-if="profileApplied" class="hint hint-ok">✓ Configuration du dernier import de ce compte réappliquée (modifiable ci-dessous).</p>
         </div>
         <div class="form-group">
           <label class="form-label">Compte de contrepartie — Dépenses</label>
-          <select v-model="config.expense_opposing_account_id" class="form-select">
-            <option value="">— Sélectionner —</option>
-            <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-              {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
-            </option>
-          </select>
+          <div class="select-row">
+            <select v-model="config.expense_opposing_account_id" class="form-select">
+              <option value="">— Sélectionner —</option>
+              <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
+                {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
+              </option>
+            </select>
+            <button type="button" class="btn btn-sm" title="Créer un compte Dépenses" @click="openAccountModal('config-expense')">+</button>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Compte de contrepartie — Recettes</label>
-          <select v-model="config.income_opposing_account_id" class="form-select">
-            <option value="">— Sélectionner —</option>
-            <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-              {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
-            </option>
-          </select>
+          <div class="select-row">
+            <select v-model="config.income_opposing_account_id" class="form-select">
+              <option value="">— Sélectionner —</option>
+              <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
+                {{ accountDisplayLabel(acc, accounts) }} ({{ acc.account_type }})
+              </option>
+            </select>
+            <button type="button" class="btn btn-sm" title="Créer un compte Recettes" @click="openAccountModal('config-income')">+</button>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Devise</label>
@@ -264,6 +273,12 @@
         </div>
       </div>
 
+      <div class="search-row">
+        <span class="search-icon">🔍</span>
+        <input v-model="txSearch" class="form-input search-input" type="text" placeholder="Filtrer les transactions affichées (libellé, date, montant)…" />
+        <span v-if="txSearch" class="hint">{{ filteredTransactions.length }} / {{ transactions.length }} affichée(s)</span>
+      </div>
+
       <div class="import-stats">
         <div class="stat">
           <span class="stat-val">{{ transactions.length }}</span>
@@ -284,6 +299,7 @@
       </div>
 
       <div class="review-controls">
+        <span class="controls-label">Importer :</span>
         <button class="btn btn-sm" @click="selectAll(true)">Tout sélectionner</button>
         <button class="btn btn-sm" @click="selectAll(false)">Tout désélectionner</button>
         <button class="btn btn-sm" @click="selectNonDuplicates">Ignorer les doublons</button>
@@ -293,6 +309,12 @@
           :disabled="!hasAnyOverride"
           @click="resetAllOverrides"
         >↺ Réinitialiser catégories/contreparties</button>
+      </div>
+
+      <div class="review-controls">
+        <span class="controls-label">Sélection en masse ({{ bulkTargetCount }} coché(es)) :</span>
+        <button class="btn btn-sm" title="Coche toutes les transactions actuellement affichées (filtre inclus)" @click="selectAllBulkTarget(true)">Tout cocher (filtré)</button>
+        <button class="btn btn-sm" @click="selectAllBulkTarget(false)">Tout décocher</button>
 
         <span class="controls-sep"></span>
 
@@ -321,18 +343,39 @@
             <button class="btn btn-sm" title="Nouvelle catégorie" @click="bulkAddingCategory = true; bulkNewCategoryName = ''">+</button>
             <button
               class="btn btn-sm btn-primary"
-              :disabled="!bulkCategoryId || selectedCount === 0"
+              :disabled="!bulkCategoryId || bulkTargetCount === 0"
               @click="applyBulkCategory"
-            >Appliquer à {{ selectedCount }} sélectionnée(s)</button>
+            >Appliquer catégorie à {{ bulkTargetCount }} ligne(s)</button>
           </template>
         </div>
+
+        <div class="bulk-cat-group">
+          <select v-model="bulkOpposingAccountId" class="cat-select">
+            <option :value="null">Contrepartie…</option>
+            <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ accountDisplayLabel(acc, accounts) }}</option>
+          </select>
+          <button class="btn btn-sm" title="Créer un compte de contrepartie" @click="openAccountModal('bulk-opposing')">+</button>
+          <button
+            class="btn btn-sm btn-primary"
+            :disabled="!bulkOpposingAccountId || bulkTargetCount === 0"
+            @click="applyBulkOpposingAccount"
+          >Appliquer contrepartie à {{ bulkTargetCount }} ligne(s)</button>
+        </div>
+
+        <button
+          class="btn btn-sm"
+          title="Applique toutes les suggestions de règles apprises en attente"
+          :disabled="!hasAnyPendingSuggestion"
+          @click="applyAllRuleSuggestions"
+        >🔁 Appliquer toutes les suggestions de règles</button>
       </div>
 
       <div class="table-scroll">
         <table class="tx-table">
           <thead>
             <tr>
-              <th></th>
+              <th title="Cocher pour les modifications en masse">Édition</th>
+              <th title="Importer cette transaction">Importer</th>
               <th>Date</th>
               <th>Libellé</th>
               <th class="amount-col">Montant</th>
@@ -344,19 +387,19 @@
           </thead>
           <tbody>
             <tr
-              v-for="tx in transactions"
+              v-for="tx in filteredTransactions"
               :key="tx.row"
               :class="{ 'row-dup': tx.is_duplicate, 'row-deselected': !tx.selected }"
             >
-              <td><input type="checkbox" v-model="tx.selected" /></td>
+              <td><input type="checkbox" v-model="tx.bulkTarget" title="Cible des modifications en masse" /></td>
+              <td><input type="checkbox" v-model="tx.selected" title="Importer cette transaction" /></td>
               <td>{{ fmtDate(tx.date) }}</td>
               <td class="desc-cell">{{ tx.description }}</td>
               <td class="amount-col" :class="tx.amount >= 0 ? 'pos' : 'neg'">
                 {{ fmtAmount(tx.amount) }}
               </td>
               <td class="cat-cell">
-                <span v-if="tx.ruleSuggested && tx.category_id" class="rule-dot" title="Suggéré d'après vos imports précédents">🔁</span>
-                <template v-if="tx.addingCategory">
+                <div v-if="tx.addingCategory" class="field-row">
                   <input
                     v-model="tx.newCategoryName"
                     class="cat-select"
@@ -372,28 +415,45 @@
                     @click="createCategoryForTx(tx)"
                   >✓</button>
                   <button class="btn btn-sm" style="padding:2px 6px;font-size:11px" @click="tx.addingCategory = false">✕</button>
-                </template>
+                </div>
                 <template v-else>
-                  <select v-model="tx.category_id" class="cat-select" @change="tx.ruleSuggested = false">
-                    <option :value="null">—</option>
-                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                  <div class="field-row">
+                    <select v-model="tx.category_id" class="cat-select">
+                      <option :value="null">—</option>
+                      <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                    </select>
+                    <button
+                      class="btn btn-sm"
+                      style="padding:2px 6px;font-size:11px"
+                      title="Nouvelle catégorie"
+                      @click="tx.addingCategory = true; tx.newCategoryName = ''"
+                    >+</button>
+                  </div>
+                  <div v-if="tx.suggested_category_id && tx.suggested_category_id !== tx.category_id" class="rule-chip">
+                    🔁 Règle : {{ categoryNameById(tx.suggested_category_id) }}
+                    <button class="btn btn-sm" style="padding:1px 6px;font-size:11px" @click="applyRowSuggestion(tx, 'category')">Appliquer</button>
+                  </div>
+                </template>
+              </td>
+              <td class="opp-cell">
+                <div class="field-row">
+                  <select v-model="tx.opposing_account_id" class="cat-select">
+                    <option :value="null">— (défaut)</option>
+                    <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
+                      {{ accountDisplayLabel(acc, accounts) }}
+                    </option>
                   </select>
                   <button
                     class="btn btn-sm"
                     style="padding:2px 6px;font-size:11px"
-                    title="Nouvelle catégorie"
-                    @click="tx.addingCategory = true; tx.newCategoryName = ''"
+                    title="Nouveau compte de contrepartie"
+                    @click="openAccountModal('row-opposing', tx)"
                   >+</button>
-                </template>
-              </td>
-              <td class="opp-cell">
-                <span v-if="tx.ruleSuggested && tx.opposing_account_id" class="rule-dot" title="Suggéré d'après vos imports précédents">🔁</span>
-                <select v-model="tx.opposing_account_id" class="cat-select" @change="tx.ruleSuggested = false">
-                  <option :value="null">— (défaut)</option>
-                  <option v-for="acc in accounts" :key="acc.id" :value="acc.id">
-                    {{ accountDisplayLabel(acc, accounts) }}
-                  </option>
-                </select>
+                </div>
+                <div v-if="tx.suggested_opposing_account_id && tx.suggested_opposing_account_id !== tx.opposing_account_id" class="rule-chip">
+                  🔁 Règle : {{ accountLabelById(tx.suggested_opposing_account_id, accounts) }}
+                  <button class="btn btn-sm" style="padding:1px 6px;font-size:11px" @click="applyRowSuggestion(tx, 'opposing')">Appliquer</button>
+                </div>
               </td>
               <td>
                 <span v-if="tx.is_duplicate" class="badge warn">Doublon</span>
@@ -449,6 +509,19 @@
       </div>
     </section>
   </div>
+
+  <AccountModal
+    v-model="showAccountModal"
+    mode="create"
+    :account="null"
+    :commodities="commodities"
+    :parent-accounts="accountModalParentAccounts"
+    :institutions="institutions"
+    :type-options="accountModalTypeOptions"
+    :default-account-type="accountModalDefaultType"
+    @save="handleAccountModalSave"
+    @institution-created="institutions.push($event)"
+  />
 </template>
 
 <script setup>
@@ -457,8 +530,12 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { formatDate } from '@/utils/dateFormat.js'
 import { dateFormat } from '@/utils/settings.js'
-import { accountDisplayLabel } from '@/utils/accountDisplay.js'
-import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
+import { accountDisplayLabel, accountLabelById } from '@/utils/accountDisplay.js'
+import { institutions, ensureInstitutionsLoaded } from '@/utils/institutions.js'
+import { isRealAccount, isIncomeExpenseAccount } from '@/utils/accountTypes.js'
+import { normalizeSearch } from '@/utils/search.js'
+import { useToast } from '@/utils/toast'
+import AccountModal from '@/components/modal/AccountModal.vue'
 
 // Format de date par défaut proposé pour le parsing du fichier importé, dérivé du réglage
 // utilisateur (Paramétrage > Format de date) plutôt que codé en dur sur le format US — celui-ci
@@ -470,6 +547,7 @@ function defaultDateFormat() {
 }
 
 const router = useRouter()
+const toast = useToast()
 
 const STORAGE_KEY = 'cantisa_import_wizard_v1'
 const PROFILE_PREFIX = 'cantisa_import_profile_'
@@ -504,6 +582,17 @@ const bulkCategoryId = ref(null)
 const bulkAddingCategory = ref(false)
 const bulkNewCategoryName = ref('')
 const bulkCreatingCategory = ref(false)
+const bulkOpposingAccountId = ref(null)
+
+// Recherche : filtre uniquement l'affichage du tableau de révision, ne modifie pas ce qui sera
+// importé (tx.selected) — voir filteredTransactions plus bas.
+const txSearch = ref('')
+
+// Modal partagé de création de compte à la volée (compte cible, contreparties Dépenses/Recettes
+// en Configuration, contrepartie par ligne et contrepartie en masse en Révision) — accountModalTarget
+// détermine où assigner le compte créé au retour de la modal.
+const showAccountModal = ref(false)
+const accountModalTarget = ref(null) // { kind: 'config-target'|'config-expense'|'config-income'|'row-opposing'|'bulk-opposing', tx }
 
 const config = ref({
   delimiter: ';',
@@ -524,6 +613,56 @@ const config = ref({
 
 const selectedCount = computed(() => transactions.value.filter(t => t.selected).length)
 const duplicateCount = computed(() => transactions.value.filter(t => t.is_duplicate).length)
+
+// Comptes réels de l'utilisateur (Current/Assets/Equity, hors comptes Equity auto-générés) —
+// seul le compte cible (compte bancaire importé) doit être restreint à ces types : les
+// contreparties peuvent légitimement être un virement vers un autre compte réel.
+const realAccounts = computed(() => accounts.value.filter(isRealAccount))
+
+// Recherche (libellé, date affichée, montant) — n'affecte que l'affichage du tableau, pas
+// `transactions` (source de vérité pour l'import et les stats).
+const filteredTransactions = computed(() => {
+  const q = normalizeSearch(txSearch.value)
+  if (!q) return transactions.value
+  return transactions.value.filter(t => {
+    const blob = normalizeSearch([t.description, fmtDate(t.date), String(t.amount)].join(' '))
+    return blob.includes(q)
+  })
+})
+
+const bulkTargetCount = computed(() => transactions.value.filter(t => t.bulkTarget).length)
+
+const hasAnyPendingSuggestion = computed(() =>
+  transactions.value.some(t =>
+    (t.suggested_category_id && t.suggested_category_id !== t.category_id) ||
+    (t.suggested_opposing_account_id && t.suggested_opposing_account_id !== t.opposing_account_id)
+  )
+)
+
+const REAL_TYPE_OPTIONS = [
+  { value: 'Current', label: 'Current' },
+  { value: 'Assets', label: 'Assets' },
+  { value: 'Equity', label: 'Equity' },
+]
+const INCOME_EXPENSE_TYPE_OPTIONS = [
+  { value: 'Income', label: 'Income (Revenus)' },
+  { value: 'Expense', label: 'Expense (Dépenses)' },
+]
+
+const accountModalTypeOptions = computed(() =>
+  accountModalTarget.value?.kind === 'config-target' ? REAL_TYPE_OPTIONS : INCOME_EXPENSE_TYPE_OPTIONS
+)
+const accountModalDefaultType = computed(() => {
+  const kind = accountModalTarget.value?.kind
+  if (kind === 'config-income') return 'Income'
+  if (kind === 'config-target') return 'Current'
+  return 'Expense'
+})
+const accountModalParentAccounts = computed(() =>
+  accountModalTarget.value?.kind === 'config-target'
+    ? realAccounts.value
+    : accounts.value.filter(isIncomeExpenseAccount)
+)
 
 // ── Profils d'import mémorisés par compte ──────────────────────────────────
 // Un compte bancaire donné a quasi toujours le même relevé (même banque, même mise en page) :
@@ -802,22 +941,31 @@ async function parse() {
     const { data } = await axios.post('/api/import/parse', fd)
     const res = data.response_data
     transactions.value = res.transactions.map(t => {
-      const defaultCategoryId = t.category_id ?? null
-      // t.opposing_account_id peut venir d'une règle de catégorisation apprise (voir
-      // backend rt_import.py) — sinon on retombe sur la contrepartie par défaut selon le signe.
-      const defaultOpposingAccountId = t.opposing_account_id || (Number(t.amount) < 0
+      // category_id/opposing_account_id ne portent que la valeur explicite du fichier (champ L du
+      // QIF ; jamais renseigné en CSV) — une suggestion de règle apprise (suggested_category_id/
+      // suggested_opposing_account_id, voir backend rt_import.py) reste distincte et n'est copiée
+      // dans le champ réel que sur clic explicite (voir applyRowSuggestion), jamais automatiquement.
+      const fileCategoryId = t.category_id ?? null
+      // La contrepartie par défaut selon le signe (Dépenses/Recettes configurées à l'étape
+      // précédente) reste pré-remplie : ce n'est pas une règle apprise silencieuse, c'est la
+      // config explicite choisie par l'utilisateur à l'étape Configuration.
+      const defaultOpposingAccountId = (Number(t.amount) < 0
         ? config.value.expense_opposing_account_id
         : config.value.income_opposing_account_id) || null
       return {
         ...t,
-        category_id: defaultCategoryId,
+        category_id: fileCategoryId,
         opposing_account_id: defaultOpposingAccountId,
-        // Suggestion d'origine (règle apprise ou résolution automatique côté serveur pour le QIF) —
-        // permet de revenir en arrière si l'utilisateur a modifié à la main sans se souvenir de la
+        suggested_category_id: t.suggested_category_id ?? null,
+        suggested_opposing_account_id: t.suggested_opposing_account_id ?? null,
+        // Valeur d'origine (fichier / config par défaut) — permet de revenir en arrière si
+        // l'utilisateur a modifié à la main ou appliqué une suggestion sans se souvenir de la
         // valeur de départ.
-        original_category_id: defaultCategoryId,
+        original_category_id: fileCategoryId,
         original_opposing_account_id: defaultOpposingAccountId,
-        ruleSuggested: Boolean(t.category_id || t.opposing_account_id),
+        // Cible des modifications en masse (catégorie/contrepartie), distincte de `selected`
+        // (qui détermine si la ligne est importée) — voir applyBulkCategory/applyBulkOpposingAccount.
+        bulkTarget: false,
         addingCategory: false,
         newCategoryName: '',
         creatingCategory: false,
@@ -915,7 +1063,6 @@ async function createCategoryForTx(tx) {
 function resetTxOverrides(tx) {
   tx.category_id = tx.original_category_id
   tx.opposing_account_id = tx.original_opposing_account_id
-  tx.ruleSuggested = false
   tx.addingCategory = false
 }
 
@@ -929,13 +1076,105 @@ const hasAnyOverride = computed(() =>
   )
 )
 
+// Coche/décoche la cible des modifications en masse sur les transactions actuellement affichées
+// (filtrées par la recherche) — voir filteredTransactions.
+function selectAllBulkTarget(val) {
+  filteredTransactions.value.forEach(t => (t.bulkTarget = val))
+}
+
+function categoryNameById(id) {
+  return categories.value.find(c => String(c.id) === String(id))?.name || ''
+}
+
+// Copie une suggestion de règle apprise dans le champ réel — n'a lieu que sur clic explicite de
+// l'utilisateur (bouton "Appliquer" de la puce), jamais automatiquement.
+function applyRowSuggestion(tx, field) {
+  if (field === 'category') {
+    tx.category_id = tx.suggested_category_id
+  } else {
+    tx.opposing_account_id = tx.suggested_opposing_account_id
+  }
+}
+
+function applyAllRuleSuggestions() {
+  let n = 0
+  transactions.value.forEach(t => {
+    if (t.suggested_category_id && t.suggested_category_id !== t.category_id) {
+      t.category_id = t.suggested_category_id
+      n++
+    }
+    if (t.suggested_opposing_account_id && t.suggested_opposing_account_id !== t.opposing_account_id) {
+      t.opposing_account_id = t.suggested_opposing_account_id
+      n++
+    }
+  })
+  toast.success(`${n} suggestion(s) de règle appliquée(s).`)
+}
+
 function applyBulkCategory() {
   if (!bulkCategoryId.value) return
+  let n = 0
   transactions.value.forEach(t => {
-    if (!t.selected) return
+    if (!t.bulkTarget) return
     t.category_id = bulkCategoryId.value
-    t.ruleSuggested = false
+    n++
   })
+  toast.success(`Catégorie appliquée à ${n} transaction(s).`)
+}
+
+function applyBulkOpposingAccount() {
+  if (!bulkOpposingAccountId.value) return
+  let n = 0
+  transactions.value.forEach(t => {
+    if (!t.bulkTarget) return
+    t.opposing_account_id = bulkOpposingAccountId.value
+    n++
+  })
+  toast.success(`Contrepartie appliquée à ${n} transaction(s).`)
+}
+
+// Ouvre le modal partagé de création de compte à la volée — `kind` détermine où assigner le
+// compte créé au retour (voir handleAccountModalSave), `tx` n'est renseigné que pour une création
+// depuis une ligne du tableau de révision (contrepartie de cette ligne précise).
+function openAccountModal(kind, tx = null) {
+  accountModalTarget.value = { kind, tx }
+  showAccountModal.value = true
+}
+
+async function handleAccountModalSave(form) {
+  try {
+    const { data } = await axios.post('/api/accounts', {
+      name: form.name,
+      description: form.description,
+      currency_id: form.currency_id,
+      parent_id: form.parent_id || undefined,
+      institution_id: form.institution_id || null,
+      account_type: form.account_type || 'Current',
+      account_subtype: form.account_subtype || undefined,
+      is_virtual: form.is_virtual,
+      is_hidden: form.is_hidden,
+      code: form.code || undefined,
+      tax_treatment: form.tax_treatment || null,
+      opening_balance: form.opening_balance ? Number(form.opening_balance) : undefined,
+      opening_balance_date: form.opening_balance_date || undefined,
+    })
+    const created = data?.response_data
+    if (!created) return
+    accounts.value.push(created)
+    const target = accountModalTarget.value
+    if (target) {
+      switch (target.kind) {
+        case 'config-target': config.value.account_id = created.id; break
+        case 'config-expense': config.value.expense_opposing_account_id = created.id; break
+        case 'config-income': config.value.income_opposing_account_id = created.id; break
+        case 'row-opposing': if (target.tx) target.tx.opposing_account_id = created.id; break
+        case 'bulk-opposing': bulkOpposingAccountId.value = created.id; break
+      }
+    }
+    toast.success(`Compte « ${created.name} » créé.`)
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur lors de la création du compte'
+  }
 }
 
 async function createBulkCategory() {
@@ -1275,6 +1514,9 @@ onMounted(() => {
 
 @media (max-width: 640px) { .config-grid { grid-template-columns: 1fr; } }
 
+.select-row { display: flex; gap: 8px; align-items: center; }
+.select-row .form-select { flex: 1; }
+
 /* Preview table */
 .preview-wrap { margin-bottom: 20px; }
 .hint { font-size: 13px; color: #9ca3af; margin: 0 0 8px; }
@@ -1365,6 +1607,12 @@ onMounted(() => {
 
 .muted-text { font-size: 12px; color: #6b7280; font-style: italic; }
 
+/* Search */
+.search-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; position: relative; }
+.search-row .search-icon { position: absolute; left: 12px; opacity: 0.7; pointer-events: none; }
+.search-row .search-input { padding-left: 32px; max-width: 420px; }
+.search-row .hint { margin: 0; }
+
 /* Stats */
 .import-stats { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 
@@ -1386,6 +1634,7 @@ onMounted(() => {
 
 /* Review controls */
 .review-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.controls-label { font-size: 12px; color: #9ca3af; margin-right: 2px; }
 .controls-sep { width: 1px; align-self: stretch; background: rgba(148, 163, 184, 0.2); margin: 0 2px; }
 .bulk-cat-group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
@@ -1397,7 +1646,9 @@ onMounted(() => {
 .neg { color: #fca5a5; }
 
 .cat-cell,
-.opp-cell { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.opp-cell { vertical-align: top; }
+
+.field-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
 .cat-select {
   background: rgba(15, 23, 42, 0.7);
@@ -1412,7 +1663,19 @@ onMounted(() => {
 
 .cat-select:focus { border-color: rgba(96, 165, 250, 0.5); }
 
-.rule-dot { font-size: 12px; flex-shrink: 0; }
+.rule-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #c4b5fd;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: rgba(139, 92, 246, 0.08);
+  border-radius: 6px;
+  padding: 3px 6px;
+  margin-top: 4px;
+}
 
 /* Badges */
 .badge {

@@ -202,6 +202,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/import/rules',
+        name: 'ImportRules',
+        component: () => import('../views/ImportRules.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/reconcile',
         name: 'Reconcile',
         component: () => import('../views/Reconcile.vue'),

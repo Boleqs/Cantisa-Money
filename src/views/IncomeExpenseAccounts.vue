@@ -96,6 +96,7 @@
             v-for="acc in group.items"
             :key="acc.id"
             class="acc-row"
+            :style="{ '--depth': acc._depth }"
             :class="{ 'is-child': acc._depth > 0 }"
           >
             <div class="acc-id">
@@ -107,7 +108,7 @@
                   :aria-label="isParentCollapsed(acc.id) ? 'Déplier les sous-comptes' : 'Replier les sous-comptes'"
                   @click="toggleParent(acc.id)"
                 >{{ isParentCollapsed(acc.id) ? '▸' : '▾' }}</button>
-                <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ accountDisplayLabel(acc, accounts) }}</h3>
+                <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc._depth === 0 ? accountDisplayLabel(acc, accounts) : acc.name }}</h3>
                 <span v-if="acc.code" class="code">#{{ acc.code }}</span>
                 <span class="acc-badge currency">{{ currencyShort(acc.currency_id) }}</span>
                 <span v-if="acc.account_subtype" class="acc-badge">{{ acc.account_subtype }}</span>
@@ -183,6 +184,7 @@ import { useToast } from "@/utils/toast";
 import { normalizeSearch } from "@/utils/search.js";
 import { accountDisplayLabel } from "@/utils/accountDisplay.js";
 import { ensureInstitutionsLoaded } from "@/utils/institutions.js";
+import { isIncomeExpenseAccount } from "@/utils/accountTypes.js";
 
 const toast = useToast();
 const router = useRouter();
@@ -239,9 +241,7 @@ const groupByLabel = computed(() => GROUP_BY_LABELS[groupBy.value] || "par type"
 // Comptes Income/Expense uniquement — sert de base à la fois à l'affichage (via filteredAccounts)
 // et au choix du compte parent dans le modal (un sous-compte de catégorie doit avoir un parent de
 // la même famille).
-const incomeExpenseAccounts = computed(() =>
-  accounts.value.filter((a) => a.account_type === "Income" || a.account_type === "Expense")
-);
+const incomeExpenseAccounts = computed(() => accounts.value.filter(isIncomeExpenseAccount));
 
 const parentIds = computed(
   () => new Set(incomeExpenseAccounts.value.filter((a) => a.parent_id).map((a) => String(a.parent_id)))
@@ -523,6 +523,18 @@ const filteredAccounts = computed(() => {
     });
 });
 
+// Type du compte racine du sous-arbre auquel appartient `acc` — sert à regrouper par type sans
+// casser un sous-arbre dont un enfant a un type différent de son parent (voir groupedAccounts).
+function rootAccountType(acc, byId) {
+  let current = acc;
+  const seen = new Set();
+  while (current.parent_id && byId.has(String(current.parent_id)) && !seen.has(String(current.id))) {
+    seen.add(String(current.id));
+    current = byId.get(String(current.parent_id));
+  }
+  return current.account_type || "Other";
+}
+
 function buildTreeFlat(items) {
   const itemIds = new Set(items.map((a) => String(a.id)));
   const byParent = new Map();
@@ -578,9 +590,10 @@ const groupedAccounts = computed(() => {
       }));
   }
 
+  const byFilteredId = new Map(filteredAccounts.value.map((a) => [String(a.id), a]));
   const map = new Map();
   for (const acc of filteredAccounts.value) {
-    const t = acc.account_type || "Other";
+    const t = rootAccountType(acc, byFilteredId);
     if (!map.has(t)) map.set(t, []);
     map.get(t).push(acc);
   }
@@ -856,15 +869,26 @@ const groupedAccounts = computed(() => {
   background: rgba(148, 163, 184, 0.04);
 }
 .acc-row.is-child {
-  padding-left: 40px;
+  padding-left: calc(28px + var(--depth) * 28px);
   position: relative;
 }
 .acc-row.is-child::before {
-  content: "└";
+  content: "";
   position: absolute;
-  left: 18px;
-  color: rgba(148, 163, 184, 0.35);
-  font-size: 13px;
+  left: calc(var(--depth) * 28px + 10px);
+  top: 0;
+  height: 50%;
+  width: 2px;
+  background: rgba(96, 165, 250, 0.45);
+}
+.acc-row.is-child::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--depth) * 28px + 10px);
+  top: 50%;
+  width: 16px;
+  height: 2px;
+  background: rgba(96, 165, 250, 0.45);
 }
 
 .acc-id {

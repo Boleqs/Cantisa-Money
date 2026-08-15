@@ -227,12 +227,20 @@
                         <option :value="null">—</option>
                         <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                       </select>
+                      <div v-if="tx.suggested_category_id && tx.suggested_category_id !== tx.category_id" class="rule-chip">
+                        🔁 Règle : {{ categoryNameById(tx.suggested_category_id) }}
+                        <button class="btn btn-sm" @click="applyRowSuggestion(tx, 'category')">Appliquer</button>
+                      </div>
                     </td>
                     <td>
                       <select v-model="tx.opposing_account_id" class="form-select form-select-sm">
                         <option :value="null">— (défaut)</option>
                         <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ accountDisplayLabel(acc, accounts) }}</option>
                       </select>
+                      <div v-if="tx.suggested_opposing_account_id && tx.suggested_opposing_account_id !== tx.opposing_account_id" class="rule-chip">
+                        🔁 Règle : {{ accountLabelById(tx.suggested_opposing_account_id, accounts) }}
+                        <button class="btn btn-sm" @click="applyRowSuggestion(tx, 'opposing')">Appliquer</button>
+                      </div>
                     </td>
                     <td><span v-if="tx.is_duplicate" class="badge warn">Doublon</span></td>
                   </tr>
@@ -567,6 +575,20 @@ async function sync(c) {
   }
 }
 
+function categoryNameById(id) {
+  return categories.value.find(c => String(c.id) === String(id))?.name || ''
+}
+
+// Copie une suggestion de règle apprise (rt_bank_sync.py::sync) dans le champ réel — n'a lieu que
+// sur clic explicite de l'utilisateur, jamais automatiquement (même logique qu'Import.vue).
+function applyRowSuggestion(tx, field) {
+  if (field === 'category') {
+    tx.category_id = tx.suggested_category_id
+  } else {
+    tx.opposing_account_id = tx.suggested_opposing_account_id
+  }
+}
+
 // Réutilise le profil d'import mémorisé par Import.vue pour ce compte (mêmes clés localStorage) —
 // évite de redemander les contreparties dépenses/recettes si l'utilisateur a déjà importé
 // manuellement ce compte auparavant.
@@ -732,6 +754,20 @@ onMounted(() => reload())
   font-size: 14px;
 }
 .form-select-sm { padding: 4px 6px; font-size: 12px; }
+
+.rule-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #c4b5fd;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: rgba(139, 92, 246, 0.08);
+  border-radius: 6px;
+  padding: 3px 6px;
+  margin-top: 4px;
+}
 
 .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 .step-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }

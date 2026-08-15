@@ -213,8 +213,13 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
                         'date': tx_date.strftime('%Y-%m-%d'),
                         'description': desc,
                         'amount': amount,
-                        'category_id': category_id or rule_category_id,
-                        'opposing_account_id': rule_opposing_id,
+                        # category_id ne porte que la valeur explicite du fichier (champ L du QIF) —
+                        # la suggestion de règle apprise reste séparée (suggested_*) tant que
+                        # l'utilisateur ne l'a pas explicitement appliquée côté frontend.
+                        'category_id': category_id,
+                        'opposing_account_id': None,
+                        'suggested_category_id': rule_category_id,
+                        'suggested_opposing_account_id': rule_opposing_id,
                         'qif_account': current_qif_account,
                         'is_duplicate': is_duplicate,
                         'selected': not is_duplicate,
@@ -248,8 +253,10 @@ def _parse_qif(content, date_format, decimal_sep, account_id, user_id, Transacti
                 'date': tx_date.strftime('%Y-%m-%d'),
                 'description': desc,
                 'amount': amount,
-                'category_id': category_id or rule_category_id,
-                'opposing_account_id': rule_opposing_id,
+                'category_id': category_id,
+                'opposing_account_id': None,
+                'suggested_category_id': rule_category_id,
+                'suggested_opposing_account_id': rule_opposing_id,
                 'qif_account': current_qif_account,
                 'is_duplicate': False,
                 'selected': True,
@@ -382,8 +389,13 @@ class ImportRoutes:
                         'date': tx_date.strftime('%Y-%m-%d'),
                         'description': desc,
                         'amount': amount,
-                        'category_id': rule_category_id,
-                        'opposing_account_id': rule_opposing_id,
+                        # Le CSV n'a jamais de catégorie explicite dans le fichier lui-même — seule
+                        # une règle apprise peut suggérer une catégorie/contrepartie, et elle reste
+                        # une suggestion (suggested_*) tant que l'utilisateur ne l'applique pas.
+                        'category_id': None,
+                        'opposing_account_id': None,
+                        'suggested_category_id': rule_category_id,
+                        'suggested_opposing_account_id': rule_opposing_id,
                         'is_duplicate': is_duplicate,
                         'selected': not is_duplicate,
                     })
@@ -474,3 +486,57 @@ class ImportRoutes:
             except Exception as e:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/rules", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, IMPORT_PERM)
+        def list_import_rules():
+            user_id = get_jwt_identity()
+            rules = ImportCategoryRules.query.filter_by(user_id=user_id) \
+                .order_by(ImportCategoryRules.updated_at.desc()).all()
+            return json_response([{
+                'id': str(r.id),
+                'keyword': r.keyword,
+                'category_id': str(r.category_id) if r.category_id else None,
+                'opposing_account_id': str(r.opposing_account_id) if r.opposing_account_id else None,
+                'created_at': r.created_at.isoformat(),
+                'updated_at': r.updated_at.isoformat(),
+            } for r in rules], HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/rules/<rule_id>", methods=['PATCH'])
+        @jwt_required()
+        @restricted_by_permission(Users, IMPORT_PERM)
+        def update_import_rule(rule_id):
+            user_id = get_jwt_identity()
+            rule = ImportCategoryRules.query.filter_by(id=rule_id, user_id=user_id).first()
+            if not rule:
+                return json_response('Règle introuvable', HttpCode.NOT_FOUND)
+            data = request.json or {}
+            # Clé absente du body = champ inchangé ; clé présente avec valeur null = champ effacé
+            # volontairement (ex: retirer la contrepartie apprise sans toucher à la catégorie).
+            if 'category_id' in data:
+                rule.category_id = data['category_id'] or None
+            if 'opposing_account_id' in data:
+                rule.opposing_account_id = data['opposing_account_id'] or None
+            rule.updated_at = datetime.now()
+            DB.session.commit()
+            return json_response({
+                'id': str(rule.id),
+                'keyword': rule.keyword,
+                'category_id': str(rule.category_id) if rule.category_id else None,
+                'opposing_account_id': str(rule.opposing_account_id) if rule.opposing_account_id else None,
+                'created_at': rule.created_at.isoformat(),
+                'updated_at': rule.updated_at.isoformat(),
+            }, HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/rules/<rule_id>", methods=['DELETE'])
+        @jwt_required()
+        @restricted_by_permission(Users, IMPORT_PERM)
+        def delete_import_rule(rule_id):
+            user_id = get_jwt_identity()
+            rule = ImportCategoryRules.query.filter_by(id=rule_id, user_id=user_id).first()
+            if not rule:
+                return json_response('Règle introuvable', HttpCode.NOT_FOUND)
+            DB.session.delete(rule)
+            DB.session.commit()
+            return json_response('OK', HttpCode.OK)

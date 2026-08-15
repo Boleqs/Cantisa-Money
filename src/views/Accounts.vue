@@ -96,6 +96,7 @@
             v-for="acc in group.items"
             :key="acc.id"
             class="acc-row"
+            :style="{ '--depth': acc._depth }"
             :class="{ 'is-child': acc._depth > 0 }"
           >
             <div class="acc-id">
@@ -107,7 +108,7 @@
                   :aria-label="isParentCollapsed(acc.id) ? 'Déplier les sous-comptes' : 'Replier les sous-comptes'"
                   @click="toggleParent(acc.id)"
                 >{{ isParentCollapsed(acc.id) ? '▸' : '▾' }}</button>
-                <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ accountDisplayLabel(acc, accounts) }}</h3>
+                <h3 class="name account-link" @click="router.push(`/accounts/${acc.id}`)">{{ acc._depth === 0 ? accountDisplayLabel(acc, accounts) : acc.name }}</h3>
                 <span v-if="acc.code" class="code">#{{ acc.code }}</span>
                 <span class="acc-badge currency">{{ currencyShort(acc.currency_id) }}</span>
                 <span v-if="acc.account_subtype" class="acc-badge">{{ acc.account_subtype }}</span>
@@ -238,6 +239,7 @@ import { normalizeSearch } from "@/utils/search.js";
 import { formatDate } from "@/utils/dateFormat.js";
 import { accountDisplayLabel } from "@/utils/accountDisplay.js";
 import { institutions, ensureInstitutionsLoaded } from "@/utils/institutions.js";
+import { isRealAccount } from "@/utils/accountTypes.js";
 
 const toast = useToast();
 
@@ -754,8 +756,7 @@ const filteredAccounts = computed(() => {
     // contrepartie d'ouverture de crédit (subtype 'loan') ou de solde initial de reprise (subtype
     // 'opening_balance'), sont auto-générés/gérés exclusivement par leur flux dédié (Crédits, ou
     // le bouton "Solde initial" ci-dessous) — les manipuler ici court-circuiterait ce flux.
-    .filter((a) => a.account_type !== "Income" && a.account_type !== "Expense" && a.account_type !== "Liability")
-    .filter((a) => !(a.account_type === "Equity" && ["loan", "opening_balance"].includes(a.account_subtype)))
+    .filter(isRealAccount)
     .filter((a) => (showHidden.value ? true : !a.is_hidden))
     .filter((a) => (showVirtual.value ? true : !a.is_virtual))
     .filter((a) => {
@@ -772,6 +773,19 @@ const filteredAccounts = computed(() => {
       return blob.includes(q);
     });
 });
+
+// Type du compte racine du sous-arbre auquel appartient `acc` (remonte la chaîne parent_id via
+// `byId`) — sert à regrouper par type sans casser un sous-arbre dont un enfant a un type différent
+// de son parent (voir groupedAccounts).
+function rootAccountType(acc, byId) {
+  let current = acc;
+  const seen = new Set();
+  while (current.parent_id && byId.has(String(current.parent_id)) && !seen.has(String(current.id))) {
+    seen.add(String(current.id));
+    current = byId.get(String(current.parent_id));
+  }
+  return current.account_type || "Other";
+}
 
 // Construit un tableau ordonné en profondeur (DFS) avec la propriété _depth
 function buildTreeFlat(items) {
@@ -864,10 +878,14 @@ const groupedAccounts = computed(() => {
     });
   }
 
-  // Regrouper par type
+  // Regrouper par type — au sens du type du compte RACINE de chaque sous-arbre, pas du type
+  // individuel de chaque compte : un enfant dont le type diffère de son parent (ex: sous-compte
+  // Current d'un Livret A Assets) doit rester rattaché visuellement à son parent plutôt que de se
+  // retrouver orphelin (donc affiché à plat, sans indentation) dans le mauvais groupe.
+  const byFilteredId = new Map(filteredAccounts.value.map((a) => [String(a.id), a]));
   const map = new Map();
   for (const acc of filteredAccounts.value) {
-    const t = acc.account_type || "Other";
+    const t = rootAccountType(acc, byFilteredId);
     if (!map.has(t)) map.set(t, []);
     map.get(t).push(acc);
   }
@@ -1155,15 +1173,28 @@ const groupedAccounts = computed(() => {
   background: rgba(148, 163, 184, 0.04);
 }
 .acc-row.is-child {
-  padding-left: 40px;
+  padding-left: calc(28px + var(--depth) * 28px);
   position: relative;
 }
 .acc-row.is-child::before {
-  content: "└";
+  /* Trait vertical descendant du haut de la ligne jusqu'au coude — démarcation visuelle du niveau
+     d'imbrication, plus lisible qu'un simple glyphe "└" en petits caractères. */
+  content: "";
   position: absolute;
-  left: 18px;
-  color: rgba(148, 163, 184, 0.35);
-  font-size: 13px;
+  left: calc(var(--depth) * 28px + 10px);
+  top: 0;
+  height: 50%;
+  width: 2px;
+  background: rgba(96, 165, 250, 0.45);
+}
+.acc-row.is-child::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--depth) * 28px + 10px);
+  top: 50%;
+  width: 16px;
+  height: 2px;
+  background: rgba(96, 165, 250, 0.45);
 }
 
 .acc-id {
