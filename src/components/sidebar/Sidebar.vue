@@ -14,7 +14,7 @@ import {
     faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
     faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
     faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
-    faArrowRightArrowLeft, faPlug, faWandMagicSparkles
+    faArrowRightArrowLeft, faPlug, faWandMagicSparkles, faEarthAmericas
 } from '@fortawesome/free-solid-svg-icons';
 
 export default {
@@ -47,7 +47,7 @@ export default {
             faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
             faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
             faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
-            faArrowRightArrowLeft, faPlug
+            faArrowRightArrowLeft, faPlug, faEarthAmericas
         }
     }
 }
@@ -84,8 +84,9 @@ export default {
               <SidebarSectionTitle label="Gestion financière"/>
               <SidebarLink v-if="hasPermission('Patrimoine')" to="/patrimoine" :icon="faSackDollar">Vue d'ensemble</SidebarLink>
               <SidebarLink v-if="hasPermission('Crédits')" to="/credits" :icon="faHandHoldingDollar">Crédits</SidebarLink>
-              <SidebarGroup v-if="hasPermission('Patrimoine')" label="Portfolio" :icon="faChartLine" :paths="['/portfolio', '/patrimoine/prediction', '/dca']">
+              <SidebarGroup v-if="hasPermission('Patrimoine')" label="Portfolio" :icon="faChartLine" :paths="['/portfolio', '/portfolio/geographie', '/patrimoine/prediction', '/dca']">
                 <SidebarLink to="/portfolio" :icon="faLayerGroup">Liste des actifs</SidebarLink>
+                <SidebarLink to="/portfolio/geographie" :icon="faEarthAmericas">Répartition géographique</SidebarLink>
                 <SidebarLink to="/patrimoine/prediction" :icon="faChartArea">Prédiction</SidebarLink>
                 <SidebarLink to="/dca" :icon="faCoins">Investissement programmé</SidebarLink>
               </SidebarGroup>

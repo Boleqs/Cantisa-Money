@@ -19,7 +19,7 @@
       <button :class="['tab', { active: tab === 'category' }]" @click="tab = 'category'">Par catégorie</button>
       <button :class="['tab', { active: tab === 'tag' }]"      @click="tab = 'tag'; loadTag()">Par tag</button>
       <button :class="['tab', { active: tab === 'account' }]"  @click="tab = 'account'">Par compte</button>
-      <button :class="['tab', { active: tab === 'savings' }]"  @click="tab = 'savings'">Épargne</button>
+      <button :class="['tab', { active: tab === 'savings' }]"  @click="tab = 'savings'; loadSavings()">Épargne</button>
       <button v-if="hasPermission('Planification')" :class="['tab', { active: tab === 'budgets' }]" @click="tab = 'budgets'; loadBudgets()">Budgets</button>
       <button v-if="hasPermission('Planification')" :class="['tab', { active: tab === 'subscriptions' }]" @click="tab = 'subscriptions'; loadSubscriptions()">Abonnements</button>
       <button v-if="hasPermission('Patrimoine')" :class="['tab', { active: tab === 'wealth' }]" @click="tab = 'wealth'; loadWealth()">Patrimoine</button>
@@ -72,32 +72,20 @@
           </div>
         </div>
 
-        <!-- SVG: Net mensuel -->
-        <div class="card">
-          <div class="card-title">Net mensuel</div>
-          <div class="svg-wrap">
-            <svg :viewBox="`0 0 ${SW} ${SH}`" preserveAspectRatio="none" class="chart-svg">
-              <!-- Baseline -->
-              <line :x1="SP.l" :y1="midY" :x2="SW - SP.r" :y2="midY"
-                stroke="rgba(148,163,184,0.3)" stroke-width="1" />
-              <!-- Bars -->
-              <g v-for="(b, i) in netBars" :key="i">
-                <rect :x="b.x" :y="b.y" :width="b.w" :height="b.h" :fill="b.color" rx="2" />
-              </g>
-              <!-- Y labels -->
-              <text :x="SP.l - 4" :y="SP.t + 8"         text-anchor="end" class="svg-label">{{ fmtShort(netMax) }}</text>
-              <text :x="SP.l - 4" :y="SH - SP.b + 4"    text-anchor="end" class="svg-label">{{ fmtShort(-netMax) }}</text>
-              <text :x="SP.l - 4" :y="midY + 4"          text-anchor="end" class="svg-label">0</text>
-              <!-- X labels -->
-              <text v-for="(b, i) in netBars" :key="'lbl'+i"
-                :x="b.x + b.w / 2" :y="SH - 2"
-                text-anchor="middle" class="svg-label">{{ monthly[i].label.slice(0, 3) }}</text>
-            </svg>
-          </div>
-          <div class="legend">
-            <span class="legend-dot income-dot"></span> Excédent
-            <span class="legend-dot expense-dot"></span> Déficit
-          </div>
+        <!-- Net mensuel -->
+        <LineGraph
+          title="Net mensuel"
+          :labels="monthly.map(m => m.label.slice(0, 3))"
+          :values="monthly.map(m => m.net)"
+          dataset-label="Net"
+          type="bar"
+          :bar-colors="monthly.map(m => m.net >= 0 ? '#34d399' : '#f87171')"
+          :format-value="fmtAmountShort"
+          :show-last-value="false"
+        />
+        <div class="legend">
+          <span class="legend-dot income-dot"></span> Excédent
+          <span class="legend-dot expense-dot"></span> Déficit
         </div>
 
         <!-- Table -->
@@ -315,31 +303,38 @@
 
     <!-- ── ÉPARGNE ─────────────────────────────────────────────────────── -->
     <div v-if="tab === 'savings'">
-      <div v-if="loading" class="empty">Chargement…</div>
-      <div v-else-if="!validSavings.length" class="empty">Pas assez de données.</div>
+      <div class="filters">
+        <label>Du <input type="month" v-model="savingsFilter.start" /></label>
+        <label>Au <input type="month" v-model="savingsFilter.end" /></label>
+        <button class="btn btn-primary" @click="loadSavings">Appliquer</button>
+        <button class="btn" @click="resetSavingsFilter">1 an (défaut)</button>
+      </div>
+
+      <div v-if="loadingSavings" class="empty">Chargement…</div>
+      <div v-else-if="!validSavingsRange.length" class="empty">Pas assez de données.</div>
       <template v-else>
 
         <div class="kpi-row">
           <div class="kpi-card">
             <div class="kpi-label">Taux moyen</div>
-            <div class="kpi-value" :class="avgSavingsRate >= 0 ? 'pos' : 'neg'">
-              {{ avgSavingsRate !== null ? avgSavingsRate.toFixed(1) + ' %' : '—' }}
+            <div class="kpi-value" :class="avgSavingsRateRange >= 0 ? 'pos' : 'neg'">
+              {{ avgSavingsRateRange !== null ? avgSavingsRateRange.toFixed(1) + ' %' : '—' }}
             </div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Meilleur mois</div>
-            <div class="kpi-value pos">{{ bestMonth ? bestMonth.label + ' (' + bestMonth.savings_rate.toFixed(1) + '%)' : '—' }}</div>
+            <div class="kpi-value pos">{{ bestMonthRange ? bestMonthRange.label + ' (' + bestMonthRange.savings_rate.toFixed(1) + '%)' : '—' }}</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-label">Pire mois</div>
-            <div class="kpi-value neg">{{ worstMonth ? worstMonth.label + ' (' + worstMonth.savings_rate.toFixed(1) + '%)' : '—' }}</div>
+            <div class="kpi-value neg">{{ worstMonthRange ? worstMonthRange.label + ' (' + worstMonthRange.savings_rate.toFixed(1) + '%)' : '—' }}</div>
           </div>
         </div>
 
         <!-- Taux d'épargne -->
         <LineGraph
           title="Évolution du taux d'épargne"
-          :labels="monthly.map(m => m.label)"
+          :labels="savingsMonthly.map(m => m.label)"
           :series="savingsChartSeries"
           :format-value="v => Math.round(v) + ' %'"
           :show-last-value="false"
@@ -359,7 +354,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="m in [...monthly].reverse()" :key="m.month">
+              <tr v-for="m in [...savingsMonthly].reverse()" :key="m.month">
                 <td>{{ m.label }}</td>
                 <td class="num">{{ fmtAmount(m.income) }}</td>
                 <td class="num">{{ fmtAmount(m.expenses) }}</td>
@@ -876,6 +871,7 @@ const toast = useToast()
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const monthly   = ref([])
+const savingsMonthly = ref([]) // onglet Épargne : plage indépendante de `monthly` (onglet Mensuel, fixe 12 mois)
 const catData   = ref({ by_category: [], total: 0 })
 const accData   = ref({ by_account: [] })
 const tagData   = ref({ by_tag: [], total: 0 })
@@ -891,8 +887,25 @@ const loadingTag = ref(false)
 const loadingBudgets = ref(false)
 const loadingSubs    = ref(false)
 const loadingWealth  = ref(false)
+const loadingSavings = ref(false)
 const error      = ref('')
 const tab        = ref('monthly')
+
+// ── Plage de dates (mois entiers) de l'onglet Épargne — défaut : 12 derniers mois pleins et clos,
+// même règle que le défaut backend (mois en cours exclu). Recalculée ici plutôt que d'attendre la
+// réponse de l'API pour pré-remplir les <input type="month"> dès l'affichage de l'onglet.
+function addMonths(y, m, delta) { // m 1-indexé
+  const total = y * 12 + (m - 1) + delta
+  return { y: Math.floor(total / 12), m: (total % 12) + 1 }
+}
+function monthStr({ y, m }) { return `${y}-${String(m).padStart(2, '0')}` }
+function defaultSavingsRange() {
+  const now = new Date()
+  const end = addMonths(now.getFullYear(), now.getMonth() + 1, -1) // dernier mois plein et clos
+  const start = addMonths(end.y, end.m, -11) // 12 mois au total
+  return { start: monthStr(start), end: monthStr(end) }
+}
+const savingsFilter = ref(defaultSavingsRange())
 
 const today      = new Date().toISOString().slice(0, 10)
 const monthStart = today.slice(0, 8) + '01'
@@ -1089,13 +1102,6 @@ async function deleteSavedReport(r) {
 // ── Colors ─────────────────────────────────────────────────────────────────────
 const DONUT_COLORS = ['#3b82f6','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#84cc16','#14b8a6']
 
-// ── SVG constants ──────────────────────────────────────────────────────────────
-const SW = 600
-const SH = 160
-const SP = { t: 16, b: 22, l: 44, r: 30 }
-const innerW = SW - SP.l - SP.r
-const innerH = SH - SP.t - SP.b
-
 // ── Formatters ─────────────────────────────────────────────────────────────────
 function fmtAmount(v) {
   // Pas de style: 'currency' — Intl choisirait un symbole localisé (ex: "$US" pour USD en fr-FR)
@@ -1108,12 +1114,6 @@ function fmtAmountShort(v) {
   const short = Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toString()
   return short + ' ' + currency.value
 }
-function fmtShort(v) {
-  const n = Number(v || 0)
-  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k'
-  return Math.round(n).toString()
-}
-
 // ── Monthly computed ───────────────────────────────────────────────────────────
 const totalIncome   = computed(() => monthly.value.reduce((s, m) => s + m.income, 0))
 const totalExpenses = computed(() => monthly.value.reduce((s, m) => s + m.expenses, 0))
@@ -1128,30 +1128,19 @@ const avgSavingsRate = computed(() => {
 const bestMonth  = computed(() => validSavings.value.reduce((best, m) => !best || m.savings_rate > best.savings_rate ? m : best, null))
 const worstMonth = computed(() => validSavings.value.reduce((worst, m) => !worst || m.savings_rate < worst.savings_rate ? m : worst, null))
 
+// Onglet Épargne : plage de dates propre à cet onglet (savingsMonthly, indépendant de `monthly`
+// qui reste figé aux 12 derniers mois pour l'onglet Mensuel) — voir loadSavings().
+const validSavingsRange  = computed(() => savingsMonthly.value.filter(m => m.savings_rate !== null))
+const avgSavingsRateRange = computed(() => {
+  if (!validSavingsRange.value.length) return null
+  return validSavingsRange.value.reduce((s, m) => s + m.savings_rate, 0) / validSavingsRange.value.length
+})
+const bestMonthRange  = computed(() => validSavingsRange.value.reduce((best, m) => !best || m.savings_rate > best.savings_rate ? m : best, null))
+const worstMonthRange = computed(() => validSavingsRange.value.reduce((worst, m) => !worst || m.savings_rate < worst.savings_rate ? m : worst, null))
+
 function barHeight(val, max) {
   return Math.max(Math.round((val / max) * 110), 2)
 }
-
-// ── Net bar chart ─────────────────────────────────────────────────────────────
-const netMax = computed(() => Math.max(...monthly.value.map(m => Math.abs(m.net)), 1))
-const midY   = computed(() => SP.t + innerH / 2)
-
-const netBars = computed(() => {
-  const n = monthly.value.length
-  if (!n) return []
-  const slotW = innerW / n
-  const bw = slotW * 0.55
-  return monthly.value.map((m, i) => {
-    const x = SP.l + i * slotW + (slotW - bw) / 2
-    const h = Math.max((Math.abs(m.net) / netMax.value) * (innerH / 2), 1)
-    return {
-      x, w: bw,
-      y: m.net >= 0 ? midY.value - h : midY.value,
-      h,
-      color: m.net >= 0 ? '#34d399' : '#f87171',
-    }
-  })
-})
 
 // ── Donut chart ───────────────────────────────────────────────────────────────
 const CIRC = 2 * Math.PI * 70
@@ -1278,8 +1267,8 @@ const maxAbsNet = computed(() =>
 // Chart.js gère nativement les trous (mois sans donnée, savings_rate === null) en coupant la
 // ligne — pas besoin de recalculer un index dédié comme avec l'ancien SVG dessiné à la main.
 const savingsChartSeries = computed(() => [
-  { label: "Taux d'épargne", values: monthly.value.map(m => m.savings_rate), color: '#34d399' },
-  { label: 'Objectif (20%)', values: monthly.value.map(() => 20), color: '#fbbf24' },
+  { label: "Taux d'épargne", values: savingsMonthly.value.map(m => m.savings_rate), color: '#34d399' },
+  { label: 'Objectif (20%)', values: savingsMonthly.value.map(() => 20), color: '#fbbf24' },
 ])
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
@@ -1294,6 +1283,26 @@ async function loadMonthly() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadSavings() {
+  loadingSavings.value = true
+  error.value = ''
+  try {
+    const res = await axios.get('/api/reports/monthly', {
+      params: { start: savingsFilter.value.start, end: savingsFilter.value.end }
+    })
+    savingsMonthly.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    loadingSavings.value = false
+  }
+}
+
+function resetSavingsFilter() {
+  savingsFilter.value = defaultSavingsRange()
+  loadSavings()
 }
 
 async function loadCategory() {
@@ -1406,6 +1415,7 @@ async function reload() {
   await loadMonthly()
   await Promise.all([loadCategory(), loadAccount()])
   if (tab.value === 'tag') await loadTag()
+  if (tab.value === 'savings') await loadSavings()
   if (tab.value === 'budgets') await loadBudgets()
   if (tab.value === 'subscriptions') await loadSubscriptions()
   if (tab.value === 'wealth' || tab.value === 'portfolio') await loadWealth()
@@ -1502,11 +1512,6 @@ onMounted(() => reload())
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 .income-dot  { background: #34d399; }
 .expense-dot { background: #f87171; }
-
-/* SVG charts */
-.svg-wrap { width: 100%; }
-.chart-svg { width: 100%; height: 160px; overflow: visible; }
-.svg-label { font-size: 9px; fill: #6b7280; }
 
 /* Table */
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }

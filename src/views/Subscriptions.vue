@@ -63,6 +63,7 @@
               <span v-if="s.executing">…</span>
               <span v-else>▶</span>
             </button>
+            <button class="btn-action" @click="openPriceHistory(s)" title="Historique des prix">📈</button>
             <button class="btn-action" @click="openEdit(s)">✎</button>
             <button class="btn-action btn-danger" @click="deleteSubscription(s)">✕</button>
           </td>
@@ -148,12 +149,68 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal historique des prix -->
+    <div v-if="showPriceHistoryModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal modal-history" :class="{ 'modal-shake': shaking }">
+        <h2>Historique des prix — {{ priceHistoryTarget?.name }}</h2>
+
+        <div v-if="priceHistory.length < 2" class="no-data">Pas assez de données pour tracer une courbe.</div>
+        <LineGraph
+          v-else
+          title="Prix"
+          :labels="priceHistory.map(h => h.effective_date)"
+          :values="priceHistory.map(h => h.amount)"
+          dataset-label="Prix"
+          color="#22c55e"
+          :format-value="v => fmtAmount(v, priceHistoryTarget?.from_account_id)"
+          :show-last-value="false"
+          height="160px"
+        />
+
+        <table v-if="priceHistory.length" class="sub-table">
+          <thead><tr><th>Date d'effet</th><th>Montant</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="h in [...priceHistory].reverse()" :key="h.id">
+              <td class="muted">{{ h.effective_date }}</td>
+              <td>{{ fmtAmount(h.amount, priceHistoryTarget?.from_account_id) }}</td>
+              <td class="actions">
+                <button class="btn-action" @click="openEditPriceHistory(h)">✎</button>
+                <button class="btn-action btn-danger" @click="deletePriceHistoryEntry(h)">✕</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="valuation-form">
+          <input v-model="priceHistoryForm.effective_date" type="date" />
+          <input v-model.number="priceHistoryForm.amount" type="number" step="0.01" min="0" placeholder="Montant" />
+          <button
+            class="btn btn-primary"
+            :disabled="!priceHistoryForm.effective_date || priceHistoryForm.amount == null"
+            @click="savePriceHistory"
+          >{{ priceHistoryEditTarget ? 'Modifier' : 'Ajouter' }}</button>
+          <button v-if="priceHistoryEditTarget" class="btn" @click="cancelEditPriceHistory">Annuler</button>
+        </div>
+
+        <p class="field-hint">
+          Une entrée datée dans le passé corrige les prochains rattrapages d'échéances manquées à
+          cette date ; une entrée future prend effet automatiquement à sa date. Les transactions déjà
+          créées ne sont pas modifiées rétroactivement.
+        </p>
+
+        <div class="modal-actions">
+          <button class="btn" @click="closePriceHistory">Fermer</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import LineGraph from '../components/graphs/LineGraph.vue'
 import { useModalShake, useEscapeClose } from '@/utils/modalUX'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { useToast } from '@/utils/toast'
@@ -185,8 +242,21 @@ const form = ref({
   from_account_id: '', to_account_id: '', category_id: '', is_forecast_only: false,
 })
 
+const showPriceHistoryModal = ref(false)
+const priceHistoryTarget = ref(null)
+const priceHistory = ref([])
+const priceHistoryForm = ref({ effective_date: null, amount: null })
+const priceHistoryEditTarget = ref(null)
+
 const { shaking, shake } = useModalShake()
-useEscapeClose(() => { if (showModal.value) showModal.value = false }, shake, () => showModal.value)
+useEscapeClose(
+  () => {
+    if (showModal.value) showModal.value = false
+    else if (showPriceHistoryModal.value) closePriceHistory()
+  },
+  shake,
+  () => showModal.value
+)
 
 const scheduleValid = computed(() => {
   if (form.value.schedule_type === 'monthly') return form.value.day_of_month >= 1 && form.value.day_of_month <= 31
@@ -351,6 +421,86 @@ async function deleteSubscription(s) {
     await axios.delete('/api/subscriptions', { params: { subscription_id: s.id } })
     await reload()
     toast.success(`Abonnement « ${s.name} » supprimé.`)
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+async function openPriceHistory(s) {
+  priceHistoryTarget.value = s
+  showPriceHistoryModal.value = true
+  await loadPriceHistory()
+}
+
+function closePriceHistory() {
+  showPriceHistoryModal.value = false
+  priceHistoryTarget.value = null
+  priceHistory.value = []
+  cancelEditPriceHistory()
+}
+
+async function loadPriceHistory() {
+  if (!priceHistoryTarget.value) return
+  try {
+    const res = await axios.get('/api/subscriptions/price-history', { params: { subscription_id: priceHistoryTarget.value.id } })
+    priceHistory.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+function openEditPriceHistory(h) {
+  priceHistoryEditTarget.value = h
+  priceHistoryForm.value = { effective_date: h.effective_date, amount: h.amount }
+}
+
+function cancelEditPriceHistory() {
+  priceHistoryEditTarget.value = null
+  priceHistoryForm.value = { effective_date: null, amount: null }
+}
+
+async function savePriceHistory() {
+  try {
+    if (priceHistoryEditTarget.value) {
+      await axios.patch('/api/subscriptions/price-history', {
+        price_history_id: priceHistoryEditTarget.value.id,
+        effective_date: priceHistoryForm.value.effective_date,
+        amount: priceHistoryForm.value.amount,
+      })
+    } else {
+      await axios.post('/api/subscriptions/price-history', {
+        subscription_id: priceHistoryTarget.value.id,
+        effective_date: priceHistoryForm.value.effective_date,
+        amount: priceHistoryForm.value.amount,
+      })
+    }
+    cancelEditPriceHistory()
+    await loadPriceHistory()
+    await reload()
+    if (priceHistoryTarget.value) {
+      priceHistoryTarget.value = subscriptions.value.find(x => x.id === priceHistoryTarget.value.id) || priceHistoryTarget.value
+    }
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+async function deletePriceHistoryEntry(h) {
+  const ok = await confirmDialog({
+    title: "Supprimer l'entrée d'historique",
+    message: `Supprimer le prix du ${h.effective_date} ?`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await axios.delete('/api/subscriptions/price-history', { params: { price_history_id: h.id } })
+    await loadPriceHistory()
+    await reload()
+    if (priceHistoryTarget.value) {
+      priceHistoryTarget.value = subscriptions.value.find(x => x.id === priceHistoryTarget.value.id) || priceHistoryTarget.value
+    }
+    toast.success('Entrée supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
@@ -552,4 +702,14 @@ onMounted(() => reload())
   border-color: transparent;
   color: #fff;
 }
+
+.modal-history { width: 640px; }
+.no-data { font-size: 13px; color: #6b7280; padding: 12px 0; }
+.sub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sub-table th { padding: 6px 24px; color: #6b7280; font-weight: 400; text-align: left; }
+.sub-table td { padding: 6px 24px; border-bottom: 1px solid rgba(148,163,184,0.05); }
+.valuation-form { display: flex; gap: 8px; align-items: center; }
+.valuation-form input[type="date"] { flex: 1; }
+.valuation-form input[type="number"] { width: 140px; }
+.field-hint { margin: 8px 0 0; font-size: 12px; color: #6b7280; line-height: 1.6; }
 </style>

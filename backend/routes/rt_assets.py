@@ -11,6 +11,7 @@ from backend.utils.api_responses import json_response
 from backend.utils.market_price import fetch_live_price, convert_amount, get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
 from backend.utils.portfolio_ops import resolve_current_value, resolve_purchase_price, resolve_split_amounts, format_qty
+from backend.utils.asset_geography import compute_country_breakdown
 
 VALID_ASSET_TYPES = ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')
 ASSETS_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
@@ -220,6 +221,61 @@ class AssetsRoutes:
                 d['possessions'] = [_possession_to_dict(p, disposals_by_possession.get(p.id, [])) for p in possessions]
                 result.append(d)
             return json_response(result, HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/geography", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def get_assets_geography():
+            """Répartition géographique du portefeuille actions/ETF, à partir de Yahoo Finance :
+            pays direct pour une action, extrapolation du top 10 holdings pour un ETF (Yahoo ne
+            fournit jamais la composition complète d'un fonds) — voir asset_geography.py."""
+            user_id = get_jwt_identity()
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            target_currency = settings.currency if settings else 'EUR'
+            commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+
+            assets = Assets.query.filter(
+                Assets.user_id == user_id, Assets.asset_type.in_(('Stock', 'ETF'))).all()
+
+            positions = []
+            for a in assets:
+                possessions = AssetPossession.query.filter(AssetPossession.asset_id == a.id).all()
+                possession_ids = [p.id for p in possessions]
+                disposals = (AssetDisposal.query.filter(AssetDisposal.possession_id.in_(possession_ids)).all()
+                             if possession_ids else [])
+                disposed_by_possession = {}
+                for disp in disposals:
+                    disposed_by_possession.setdefault(disp.possession_id, []).append(disp)
+
+                total_qty = float(sum(p.quantity - sum(d.quantity for d in disposed_by_possession.get(p.id, []))
+                                       for p in possessions))
+                if total_qty <= 0:
+                    continue
+                total_value = total_qty * float(a.value_per_unit or 0)
+                native_commodity = commodities_by_id.get(a.commodity_id)
+                native_code = native_commodity.short_name if native_commodity else target_currency
+                rate = 1.0 if native_code == target_currency else (get_fx_rate(native_code, target_currency, FxRates) or 1.0)
+                positions.append({'symbol': a.symbol, 'asset_type': a.asset_type, 'value': total_value * rate})
+
+            breakdown = compute_country_breakdown(positions)
+            by_country = breakdown['by_country']
+            unmapped_value = breakdown['unmapped_value']
+            total_known_value = sum(by_country.values())
+            grand_total = total_known_value + unmapped_value
+
+            countries = sorted((
+                {'country': country, 'value': round(value, 2),
+                 'percent': round(value / total_known_value * 100, 2) if total_known_value else 0}
+                for country, value in by_country.items()
+            ), key=lambda c: c['percent'], reverse=True)
+
+            return json_response({
+                'countries': countries,
+                'total_known_value': round(total_known_value, 2),
+                'unmapped_value': round(unmapped_value, 2),
+                'unmapped_percent': round(unmapped_value / grand_total * 100, 2) if grand_total else 0,
+                'display_currency': target_currency,
+            }, HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}", methods=['POST'])
         @jwt_required()

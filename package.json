@@ -17,8 +17,10 @@
     "@vue/devtools-api": "^8.0.2",
     "axios": "^1.8.1",
     "chart.js": "^4.5.1",
+    "topojson-client": "^3.1.0",
     "vue": "^3.5.13",
-    "vue-router": "^4.6.3"
+    "vue-router": "^4.6.3",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",

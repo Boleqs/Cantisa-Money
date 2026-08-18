@@ -55,6 +55,23 @@ const props = defineProps({
     default: '#6366f1'
   },
   /**
+   * Type de graphique. 'bar' est utile pour une série signée (ex: net mensuel positif/négatif) —
+   * combiné à `barColors` pour une couleur par barre plutôt qu'une couleur de série unique.
+   */
+  type: {
+    type: String,
+    default: 'line',
+    validator: (v) => ['line', 'bar'].includes(v)
+  },
+  /**
+   * Mode simple + type='bar' uniquement : couleur par barre (même longueur que `values`),
+   * prioritaire sur `color`. Ex: vert/rouge selon le signe de chaque valeur.
+   */
+  barColors: {
+    type: Array,
+    default: () => []
+  },
+  /**
    * Mode multi-courbes (prioritaire sur values/datasetLabel/color) : [{ label, values, color }, ...],
    * toutes alignées sur `labels`. La légende Chart.js s'affiche automatiquement dans ce mode.
    */
@@ -106,8 +123,15 @@ const lastValue = computed(() => {
 const buildChart = () => {
   if (!canvasRef.value || !hasData.value) return
 
+  const isBar = props.type === 'bar'
+
   const datasets = isMulti.value
-    ? props.series.map(s => ({
+    ? props.series.map(s => (isBar ? {
+        label: s.label,
+        data: s.values,
+        backgroundColor: s.colors?.length ? s.colors : s.color,
+        borderRadius: 3,
+      } : {
         label: s.label,
         data: s.values,
         borderColor: s.color,
@@ -117,7 +141,13 @@ const buildChart = () => {
         pointRadius: 2,
         pointHoverRadius: 4
       }))
-    : [{
+    : [isBar ? {
+        label: props.datasetLabel,
+        data: props.values,
+        backgroundColor: props.barColors.length ? props.barColors : props.color,
+        borderRadius: 3,
+        maxBarThickness: 28,
+      } : {
         label: props.datasetLabel,
         data: props.values,
         borderColor: props.color,
@@ -144,7 +174,7 @@ const buildChart = () => {
   }
 
   chartInstance.value = new Chart(canvasRef.value.getContext('2d'), {
-    type: 'line',
+    type: props.type,
     data: {
       labels: props.labels,
       datasets
@@ -202,7 +232,7 @@ onBeforeUnmount(() => {
 
 // si les données changent → on reconstruit
 watch(
-  () => [props.labels, props.values, props.color, props.series],
+  () => [props.labels, props.values, props.color, props.series, props.type, props.barColors],
   () => {
     buildChart()
   },

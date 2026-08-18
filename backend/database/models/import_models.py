@@ -22,6 +22,7 @@ from .loan_installments import LoanInstallments
 from .loan_rate_revisions import LoanRateRevisions
 from .splits import Splits
 from .subscriptions import Subscriptions
+from .subscription_price_history import SubscriptionPriceHistory
 from .tags import Tags
 from .tags_on_split import TagsOnSplits
 from .tax_regime import TaxRegime

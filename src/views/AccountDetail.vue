@@ -200,6 +200,28 @@ const showModal = ref(false)
 const modalMode = ref('create')
 const selectedTx = ref(null)
 
+// /api/transactions pagine côté backend (200 par page max) — la vue détail de compte n'a pas
+// de pagination dans son UI et doit donc afficher tout l'historique du compte : on boucle sur
+// les pages plutôt que de se limiter à la première (bug constaté le 2026-08-16 : un compte avec
+// plus de 50 transactions en perdait silencieusement la fin, page 1 par défaut jamais dépassée).
+async function fetchAllAccountTransactions() {
+  const perPage = 200
+  const first = await axios.get('/api/transactions', { params: { account_id: accountId, page: 1, per_page: perPage } })
+  const rd = first.data?.response_data
+  const all = Array.isArray(rd?.transactions) ? rd.transactions.slice() : []
+  const pages = rd?.pages || 1
+  const fetches = []
+  for (let p = 2; p <= pages; p++) {
+    fetches.push(axios.get('/api/transactions', { params: { account_id: accountId, page: p, per_page: perPage } }))
+  }
+  const rest = await Promise.all(fetches)
+  for (const res of rest) {
+    const page = res.data?.response_data
+    if (Array.isArray(page?.transactions)) all.push(...page.transactions)
+  }
+  return { transactions: all, total: rd?.total ?? all.length }
+}
+
 async function reload() {
   loading.value = true
   error.value = ''
@@ -207,7 +229,7 @@ async function reload() {
     const calls = [
       axios.get('/api/accounts', { params: { account_id: accountId } }),
       axios.get('/api/accounts'),
-      axios.get('/api/transactions', { params: { account_id: accountId } }),
+      fetchAllAccountTransactions(),
       axios.get('/api/categories'),
       axios.get('/api/commodities'),
       ensureInstitutionsLoaded(),
@@ -219,12 +241,11 @@ async function reload() {
       calls.push(axios.get('/api/assets'))
       calls.push(axios.get('/api/wealth/account-values', { params: { currency: defaultCurrency.value } }))
     }
-    const [accRes, allAccRes, txRes, catRes, comRes, assetsRes, accountValuesRes] = await Promise.all(calls)
+    const [accRes, allAccRes, txData, catRes, comRes, assetsRes, accountValuesRes] = await Promise.all(calls)
     account.value = accRes.data?.response_data ?? null
     allAccounts.value = Array.isArray(allAccRes.data?.response_data) ? allAccRes.data.response_data : []
-    const rd = txRes.data?.response_data
-    transactions.value = Array.isArray(rd?.transactions) ? rd.transactions : []
-    txTotal.value = rd?.total ?? transactions.value.length
+    transactions.value = txData.transactions
+    txTotal.value = txData.total
     categories.value = Array.isArray(catRes.data?.response_data) ? catRes.data.response_data : []
     commodities.value = Array.isArray(comRes.data?.response_data) ? comRes.data.response_data : []
     assets.value = Array.isArray(assetsRes?.data?.response_data) ? assetsRes.data.response_data : []

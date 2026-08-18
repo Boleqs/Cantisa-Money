@@ -3,10 +3,24 @@ from datetime import datetime, timedelta, date
 from apscheduler.schedulers.background import BackgroundScheduler
 
 
-def _execute_subscription(sub, exec_date, DB, Transactions, Splits, Accounts):
+def _price_at(SubscriptionPriceHistory, sub, exec_date):
+    """Prix en vigueur à exec_date : dernière entrée d'historique dont effective_date <= exec_date,
+    repli sur sub.amount (abonnement pas encore migré / historique introuvable)."""
+    if SubscriptionPriceHistory is None:
+        return sub.amount
+    h = (SubscriptionPriceHistory.query
+         .filter(SubscriptionPriceHistory.subscription_id == sub.id,
+                 SubscriptionPriceHistory.effective_date <= exec_date)
+         .order_by(SubscriptionPriceHistory.effective_date.desc())
+         .first())
+    return h.amount if h else sub.amount
+
+
+def _execute_subscription(sub, exec_date, DB, Transactions, Splits, Accounts, SubscriptionPriceHistory=None):
     from_account = Accounts.query.filter_by(id=sub.from_account_id).first()
     if not from_account:
         return
+    amount = _price_at(SubscriptionPriceHistory, sub, exec_date)
     exec_dt = datetime.combine(exec_date, datetime.min.time())
     tx = Transactions(
         user_id=sub.user_id,
@@ -19,13 +33,15 @@ def _execute_subscription(sub, exec_date, DB, Transactions, Splits, Accounts):
     )
     DB.session.add(tx)
     DB.session.flush()
-    DB.session.add(Splits(tx_id=tx.id, account_id=sub.from_account_id, quantity=-sub.amount))
-    DB.session.add(Splits(tx_id=tx.id, account_id=sub.to_account_id, quantity=sub.amount))
+    DB.session.add(Splits(tx_id=tx.id, account_id=sub.from_account_id, quantity=-amount))
+    DB.session.add(Splits(tx_id=tx.id, account_id=sub.to_account_id, quantity=amount))
     sub.last_executed_at = exec_dt
 
 
-def execute_due_subscriptions(app, DB, Subscriptions, Transactions, Splits, Accounts):
-    """Crée les transactions pour tous les abonnements échus. Appelé par le scheduler."""
+def execute_due_subscriptions(app, DB, Subscriptions, Transactions, Splits, Accounts, SubscriptionPriceHistory=None):
+    """Crée les transactions pour tous les abonnements échus. Appelé par le scheduler.
+    Chaque échéance de rattrapage est facturée au prix qui était réellement en vigueur à sa date
+    (via SubscriptionPriceHistory), pas au prix courant de l'abonnement — voir _price_at()."""
     from utils.recurrence import next_occurrence
     with app.app_context():
         today = date.today()
@@ -36,15 +52,15 @@ def execute_due_subscriptions(app, DB, Subscriptions, Transactions, Splits, Acco
             ref = sub.last_executed_at.date() if sub.last_executed_at else sub.created_at.date()
             next_due = next_occurrence(sub.schedule_type, sub.day_of_month, sub.month_of_year, sub.weekdays, ref)
             while next_due <= today:
-                _execute_subscription(sub, next_due, DB, Transactions, Splits, Accounts)
+                _execute_subscription(sub, next_due, DB, Transactions, Splits, Accounts, SubscriptionPriceHistory)
                 next_due = next_occurrence(
                     sub.schedule_type, sub.day_of_month, sub.month_of_year, sub.weekdays, next_due)
         DB.session.commit()
 
 
-def execute_one_subscription(sub, exec_date, DB, Transactions, Splits, Accounts):
+def execute_one_subscription(sub, exec_date, DB, Transactions, Splits, Accounts, SubscriptionPriceHistory=None):
     """Exécute un abonnement unique pour une date donnée (appel manuel)."""
-    _execute_subscription(sub, exec_date, DB, Transactions, Splits, Accounts)
+    _execute_subscription(sub, exec_date, DB, Transactions, Splits, Accounts, SubscriptionPriceHistory)
     DB.session.commit()
 
 
@@ -319,7 +335,8 @@ def backfill_wealth_history_job(app, DB, Accounts, Assets, AssetPossession, Asse
 
 def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
                      AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
-                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, DcaPlans):
+                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, DcaPlans,
+                     SubscriptionPriceHistory=None):
     scheduler = BackgroundScheduler(daemon=True)
     scheduler.add_job(
         func=cleanup_pending_documents,
@@ -331,7 +348,7 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
     )
     scheduler.add_job(
         func=execute_due_subscriptions,
-        args=[app, DB, Subscriptions, Transactions, Splits, Accounts],
+        args=[app, DB, Subscriptions, Transactions, Splits, Accounts, SubscriptionPriceHistory],
         trigger='interval',
         hours=1,
         id='subscriptions_job',

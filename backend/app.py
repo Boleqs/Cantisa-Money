@@ -73,7 +73,7 @@ BudgetsRoutes(app, DB, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Us
 CategoriesRoutes(app, DB, Categories, Users)
 InstitutionsRoutes(app, DB, Institutions, Users)
 TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)
-SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts)
+SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts, SubscriptionPriceHistory)
 DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings,
                  Assets, AssetPossession, AssetDisposal)
 AssetsRoutes(app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings)
@@ -463,7 +463,8 @@ if IS_MAIN_PROCESS:
 
     start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Assets, Commodities, FxRates,
                      AssetPossession, AssetDisposal, WealthSnapshot, UserSettings, TransactionDocuments, AssetValuations,
-                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, DcaPlans)
+                     Loans, LoanInstallments, Budgets, BudgetAccounts, BudgetCategories, BudgetTags, DcaPlans,
+                     SubscriptionPriceHistory)
 
 uuid.uuid4()
 if __name__ == '__main__':

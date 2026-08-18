@@ -57,14 +57,41 @@ class ReportsRoutes:
             today = date.today()
             target_currency = _target_currency(user_id)
 
+            # Plage de mois optionnelle (YYYY-MM, bornes incluses) — ex: rapport Épargne, qui laisse
+            # l'utilisateur choisir sa période au mois entier. Sans les deux paramètres, on retombe
+            # sur le défaut historique : 12 mois pleins et clos, mois en cours exclu (sinon ses
+            # revenus/dépenses partiels faussent le net et le taux d'épargne affichés, pas comparable
+            # aux mois précédents).
+            start_param = request.args.get('start')
+            end_param = request.args.get('end')
             months = []
-            for i in range(11, -1, -1):
-                m = today.month - i
-                y = today.year
-                while m <= 0:
-                    m += 12
-                    y -= 1
-                months.append((y, m))
+            if start_param and end_param:
+                try:
+                    start_y, start_m = (int(p) for p in start_param.split('-'))
+                    end_y, end_m = (int(p) for p in end_param.split('-'))
+                except ValueError:
+                    return json_response("Paramètres 'start'/'end' invalides (format attendu : YYYY-MM)", HttpCode.BAD_REQUEST)
+                if not (1 <= start_m <= 12 and 1 <= end_m <= 12):
+                    return json_response("Paramètres 'start'/'end' invalides (format attendu : YYYY-MM)", HttpCode.BAD_REQUEST)
+                y, m = start_y, start_m
+                if (y, m) > (end_y, end_m):
+                    return json_response("'start' doit précéder 'end'", HttpCode.BAD_REQUEST)
+                while (y, m) <= (end_y, end_m):
+                    months.append((y, m))
+                    if len(months) > 60:
+                        return json_response("Plage trop large (60 mois maximum)", HttpCode.BAD_REQUEST)
+                    m += 1
+                    if m > 12:
+                        m = 1
+                        y += 1
+            else:
+                for i in range(12, 0, -1):
+                    m = today.month - i
+                    y = today.year
+                    while m <= 0:
+                        m += 12
+                        y -= 1
+                    months.append((y, m))
 
             # Comptes virtuels/cachés exclus : ils ne représentent pas de l'argent réel.
             all_accounts = Accounts.query.filter(

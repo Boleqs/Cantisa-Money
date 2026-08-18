@@ -47,6 +47,26 @@ class DeleteSubscriptionSchema(Schema):
     subscription_id = fields.UUID(required=True)
 
 
+class GetPriceHistorySchema(Schema):
+    subscription_id = fields.UUID(required=True)
+
+
+class AddPriceHistorySchema(Schema):
+    subscription_id = fields.UUID(required=True)
+    effective_date = fields.Date(required=True)
+    amount = fields.Decimal(required=True, as_string=False)
+
+
+class UpdatePriceHistorySchema(Schema):
+    price_history_id = fields.UUID(required=True)
+    effective_date = fields.Date(required=True)
+    amount = fields.Decimal(required=True, as_string=False)
+
+
+class DeletePriceHistorySchema(Schema):
+    price_history_id = fields.UUID(required=True)
+
+
 def _schedule_kwargs(data):
     """Valide la cohérence schedule_type / champs fournis. Lève ValueError si incohérent,
     sinon retourne les kwargs prêts à passer au modèle (champs non pertinents mis à None)."""
@@ -107,8 +127,38 @@ def _sub_to_dict(s):
     }
 
 
+def _price_history_to_dict(h):
+    return {
+        'id': str(h.id),
+        'subscription_id': str(h.subscription_id),
+        'effective_date': h.effective_date.isoformat(),
+        'amount': float(h.amount),
+        'created_at': h.created_at.isoformat() if h.created_at else None,
+    }
+
+
+def _price_for_date(SubscriptionPriceHistory, subscription_id, on_date):
+    """Dernière entrée d'historique dont effective_date <= on_date, ou None si aucune (l'appelant
+    retombe alors sur Subscriptions.amount)."""
+    h = (SubscriptionPriceHistory.query
+         .filter(SubscriptionPriceHistory.subscription_id == subscription_id,
+                 SubscriptionPriceHistory.effective_date <= on_date)
+         .order_by(SubscriptionPriceHistory.effective_date.desc())
+         .first())
+    return h.amount if h else None
+
+
+def _sync_subscription_amount(SubscriptionPriceHistory, sub):
+    """Subscriptions.amount reflète le prix effectif AUJOURD'HUI (pas juste la dernière ligne
+    insérée : une entrée d'historique datée dans le futur ne doit pas s'appliquer avant sa date)."""
+    price = _price_for_date(SubscriptionPriceHistory, sub.id, date.today())
+    if price is not None:
+        sub.amount = price
+
+
 class SubscriptionsRoutes:
-    def __init__(self, app, DB, Subscriptions, Users, Transactions=None, Splits=None, Accounts=None):
+    def __init__(self, app, DB, Subscriptions, Users, Transactions=None, Splits=None, Accounts=None,
+                 SubscriptionPriceHistory=None):
         ROUTE_PATH = f"{ROOT_PATH}/subscriptions"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -164,6 +214,11 @@ class SubscriptionsRoutes:
                     **schedule_kwargs,
                 )
                 DB.session.add(s)
+                DB.session.flush()
+                if SubscriptionPriceHistory is not None:
+                    DB.session.add(SubscriptionPriceHistory(
+                        user_id=s.user_id, subscription_id=s.id,
+                        effective_date=date.today(), amount=data['amount']))
                 DB.session.commit()
                 return json_response(_sub_to_dict(s), HttpCode.CREATED)
             except Exception as error:
@@ -191,7 +246,23 @@ class SubscriptionsRoutes:
                 return json_response(str(err), HttpCode.BAD_REQUEST)
             try:
                 s.name = data['name']
-                s.amount = data['amount']
+                # Le montant ne s'écrase plus directement : un changement passe par l'historique de
+                # prix (upsert d'une entrée datée d'aujourd'hui), pour que le rattrapage du scheduler
+                # sache quel prix appliquer à quelle échéance passée — voir _price_for_date/scheduler.py.
+                if SubscriptionPriceHistory is not None and float(data['amount']) != float(s.amount):
+                    today = date.today()
+                    existing = SubscriptionPriceHistory.query.filter_by(
+                        subscription_id=s.id, effective_date=today).first()
+                    if existing:
+                        existing.amount = data['amount']
+                    else:
+                        DB.session.add(SubscriptionPriceHistory(
+                            user_id=s.user_id, subscription_id=s.id,
+                            effective_date=today, amount=data['amount']))
+                    DB.session.flush()
+                    _sync_subscription_amount(SubscriptionPriceHistory, s)
+                else:
+                    s.amount = data['amount']
                 s.from_account_id = data['from_account_id']
                 s.to_account_id = data['to_account_id']
                 s.category_id = data.get('category_id')
@@ -247,8 +318,115 @@ class SubscriptionsRoutes:
 
             try:
                 from backend.scheduler import execute_one_subscription
-                execute_one_subscription(s, date.today(), DB, Transactions, Splits, Accounts)
+                execute_one_subscription(s, date.today(), DB, Transactions, Splits, Accounts, SubscriptionPriceHistory)
                 return json_response(_sub_to_dict(s), HttpCode.CREATED)
             except Exception as error:
                 DB.session.rollback()
                 return json_response(str(error), HttpCode.SERVER_ERROR)
+
+        # ── Historique de prix ───────────────────────────────────────────────
+
+        @app.route(f"{ROUTE_PATH}/price-history", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
+        def get_price_history():
+            try:
+                data = GetPriceHistorySchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            s = Subscriptions.query.filter(
+                Subscriptions.id == data['subscription_id'], Subscriptions.user_id == user_id).first()
+            if not s:
+                return json_response('Subscription not found', HttpCode.NOT_FOUND)
+            history = (SubscriptionPriceHistory.query
+                       .filter_by(subscription_id=s.id)
+                       .order_by(SubscriptionPriceHistory.effective_date).all())
+            return json_response([_price_history_to_dict(h) for h in history], HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/price-history", methods=['POST'])
+        @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
+        def add_price_history():
+            try:
+                data = AddPriceHistorySchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            s = Subscriptions.query.filter(
+                Subscriptions.id == data['subscription_id'], Subscriptions.user_id == user_id).first()
+            if not s:
+                return json_response('Subscription not found', HttpCode.NOT_FOUND)
+            if SubscriptionPriceHistory.query.filter_by(
+                    subscription_id=s.id, effective_date=data['effective_date']).first():
+                return json_response('Une entrée existe déjà à cette date', HttpCode.CONFLICT)
+            try:
+                h = SubscriptionPriceHistory(
+                    user_id=user_id, subscription_id=s.id,
+                    effective_date=data['effective_date'], amount=data['amount'])
+                DB.session.add(h)
+                DB.session.flush()
+                _sync_subscription_amount(SubscriptionPriceHistory, s)
+                DB.session.commit()
+                return json_response(_price_history_to_dict(h), HttpCode.CREATED)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/price-history", methods=['PATCH'])
+        @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
+        def update_price_history():
+            try:
+                data = UpdatePriceHistorySchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            h = SubscriptionPriceHistory.query.filter(
+                SubscriptionPriceHistory.id == data['price_history_id'],
+                SubscriptionPriceHistory.user_id == user_id).first()
+            if not h:
+                return json_response('Price history entry not found', HttpCode.NOT_FOUND)
+            conflict = SubscriptionPriceHistory.query.filter(
+                SubscriptionPriceHistory.subscription_id == h.subscription_id,
+                SubscriptionPriceHistory.effective_date == data['effective_date'],
+                SubscriptionPriceHistory.id != h.id).first()
+            if conflict:
+                return json_response('Une entrée existe déjà à cette date', HttpCode.CONFLICT)
+            try:
+                h.effective_date = data['effective_date']
+                h.amount = data['amount']
+                DB.session.flush()
+                s = Subscriptions.query.filter_by(id=h.subscription_id, user_id=user_id).first()
+                _sync_subscription_amount(SubscriptionPriceHistory, s)
+                DB.session.commit()
+                return json_response(_price_history_to_dict(h), HttpCode.OK)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/price-history", methods=['DELETE'])
+        @jwt_required()
+        @restricted_by_permission(Users, SUBSCRIPTIONS_PERM)
+        def delete_price_history():
+            try:
+                data = DeletePriceHistorySchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            h = SubscriptionPriceHistory.query.filter(
+                SubscriptionPriceHistory.id == data['price_history_id'],
+                SubscriptionPriceHistory.user_id == user_id).first()
+            if not h:
+                return json_response('Price history entry not found', HttpCode.NOT_FOUND)
+            subscription_id = h.subscription_id
+            try:
+                DB.session.delete(h)
+                DB.session.flush()
+                s = Subscriptions.query.filter_by(id=subscription_id, user_id=user_id).first()
+                _sync_subscription_amount(SubscriptionPriceHistory, s)
+                DB.session.commit()
+                return json_response('Price history entry deleted', HttpCode.OK)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)

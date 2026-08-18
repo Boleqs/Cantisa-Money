@@ -136,6 +136,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/portfolio/geographie',
+        name: 'PortfolioGeography',
+        component: () => import('../views/PortfolioGeography.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/dca',
         name: 'Dca',
         component: () => import('../views/DCA.vue'),
