@@ -63,10 +63,44 @@ def _doc_zip_path(doc_id, original_filename):
     return f"documents/{doc_id}_{safe_name}"
 
 
+# ── Remapping des références UUID à l'intérieur d'un config JSONB opaque ────
+# (CustomReports.config.filters) : le backend ne les interprète pas autrement, mais elles
+# pointent vers des comptes/catégories/tags dont l'id local change à chaque import — sans ce
+# remapping, un rapport personnalisé restauré filtrerait sur des ids qui n'existent plus.
+_CUSTOM_REPORT_ID_FIELDS = {'account_id': 'account', 'category_id': 'category', 'tag_id': 'tag'}
+
+
+def _remap_custom_report_filters(filters, maps):
+    remapped = []
+    for f in filters or []:
+        field = f.get('field')
+        map_key = _CUSTOM_REPORT_ID_FIELDS.get(field)
+        if map_key is None:
+            remapped.append(f)
+            continue
+        m = maps[map_key]
+        value = f.get('value')
+        # str() : les ids locaux résolus via map_account/map_category/map_tag sont des uuid.UUID
+        # (colonnes UUID SQLAlchemy), non sérialisables tels quels dans une colonne JSONB.
+        if isinstance(value, list):
+            new_value = [str(m[v]) for v in value if v in m]
+            if not new_value:
+                continue
+        else:
+            if value not in m:
+                continue
+            new_value = str(m[value])
+        remapped.append({**f, 'value': new_value})
+    return remapped
+
+
 def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                       BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
-                      TransactionDocuments, Institutions=None):
+                      TransactionDocuments, Institutions=None, SubscriptionPriceHistory=None,
+                      DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None, TaxHouseholdIncome=None,
+                      FinancialGoals=None, ImportCategoryRules=None, Watchlist=None, CustomReports=None,
+                      Loans=None, LoanInstallments=None, LoanRateRevisions=None):
     commodities = Commodities.query.filter_by(user_id=user_id).all()
     accounts = Accounts.query.filter_by(user_id=user_id).all()
     institutions = Institutions.query.filter_by(user_id=user_id).all() if Institutions is not None else []
@@ -78,10 +112,29 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
     budget_categories = BudgetCategories.query.filter(BudgetCategories.budget_id.in_(budget_ids)).all() if budget_ids else []
     budget_tags = BudgetTags.query.filter(BudgetTags.budget_id.in_(budget_ids)).all() if budget_ids else []
     subscriptions = Subscriptions.query.filter_by(user_id=user_id).all()
+    sub_ids = [s.id for s in subscriptions]
+    sub_price_history = (SubscriptionPriceHistory.query.filter(SubscriptionPriceHistory.subscription_id.in_(sub_ids)).all()
+                          if SubscriptionPriceHistory is not None and sub_ids else [])
     assets = Assets.query.filter_by(user_id=user_id).all()
     asset_possessions = AssetPossession.query.filter_by(user_id=user_id).all()
     asset_disposals = AssetDisposal.query.filter_by(user_id=user_id).all()
     asset_valuations = AssetValuations.query.filter_by(user_id=user_id).all()
+    dca_plans = DcaPlans.query.filter_by(user_id=user_id).all() if DcaPlans is not None else []
+    tax_regimes = TaxRegime.query.filter_by(user_id=user_id).all() if TaxRegime is not None else []
+    household_profiles = TaxHouseholdProfile.query.filter_by(user_id=user_id).all() if TaxHouseholdProfile is not None else []
+    household_ids = [h.id for h in household_profiles]
+    household_incomes = (TaxHouseholdIncome.query.filter(TaxHouseholdIncome.household_profile_id.in_(household_ids)).all()
+                          if TaxHouseholdIncome is not None and household_ids else [])
+    financial_goals = FinancialGoals.query.filter_by(user_id=user_id).all() if FinancialGoals is not None else []
+    import_category_rules = ImportCategoryRules.query.filter_by(user_id=user_id).all() if ImportCategoryRules is not None else []
+    watchlist = Watchlist.query.filter_by(user_id=user_id).all() if Watchlist is not None else []
+    custom_reports = CustomReports.query.filter_by(user_id=user_id).all() if CustomReports is not None else []
+    loans = Loans.query.filter_by(user_id=user_id).all() if Loans is not None else []
+    loan_ids = [l.id for l in loans]
+    loan_rate_revisions = (LoanRateRevisions.query.filter(LoanRateRevisions.loan_id.in_(loan_ids)).all()
+                            if LoanRateRevisions is not None and loan_ids else [])
+    loan_installments = (LoanInstallments.query.filter(LoanInstallments.loan_id.in_(loan_ids)).all()
+                          if LoanInstallments is not None and loan_ids else [])
     transactions = Transactions.query.filter_by(user_id=user_id).all()
     tx_ids = [t.id for t in transactions]
     splits = Splits.query.filter(Splits.tx_id.in_(tx_ids)).all() if tx_ids else []
@@ -129,6 +182,10 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'from_account_id': _u(s.from_account_id), 'to_account_id': _u(s.to_account_id),
             'category_id': _u(s.category_id), 'is_forecast_only': s.is_forecast_only,
         } for s in subscriptions],
+        'subscription_price_history': [{
+            'id': _u(h.id), 'subscription_id': _u(h.subscription_id), 'effective_date': _dt(h.effective_date),
+            'amount': _n(h.amount),
+        } for h in sub_price_history],
         'assets': [{
             'id': _u(a.id), 'symbol': a.symbol, 'name': a.name, 'asset_type': a.asset_type, 'sector': a.sector,
             'commodity_id': _u(a.commodity_id), 'value_per_unit': _n(a.value_per_unit),
@@ -153,6 +210,63 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'id': _u(v.id), 'asset_id': _u(v.asset_id), 'valuation_date': _dt(v.valuation_date),
             'value_per_unit': _n(v.value_per_unit),
         } for v in asset_valuations],
+        'dca_plans': [{
+            'id': _u(p.id), 'name': p.name, 'asset_id': _u(p.asset_id),
+            'source_account_id': _u(p.source_account_id), 'dest_account_id': _u(p.dest_account_id),
+            'amount': _n(p.amount), 'schedule_type': p.schedule_type, 'day_of_month': p.day_of_month,
+            'month_of_year': p.month_of_year, 'weekdays': p.weekdays, 'start_date': _dt(p.start_date),
+            'end_date': _dt(p.end_date), 'is_forecast_only': p.is_forecast_only,
+            'last_executed_at': _dt(p.last_executed_at),
+        } for p in dca_plans],
+        'tax_regime': [{
+            'id': _u(r.id), 'name': r.name, 'country_code': r.country_code, 'tax_year': r.tax_year,
+            'config': r.config, 'is_active': r.is_active, 'is_verified': r.is_verified,
+        } for r in tax_regimes],
+        'tax_household_profile': [{
+            'id': _u(h.id), 'tax_year': h.tax_year, 'adults': h.adults, 'dependents': h.dependents,
+            'dependents_disabled': h.dependents_disabled, 'parent_isole': h.parent_isole, 'notes': h.notes,
+        } for h in household_profiles],
+        'tax_household_income': [{
+            'id': _u(i.id), 'household_profile_id': _u(i.household_profile_id), 'label': i.label,
+            'amount': _n(i.amount), 'income_type': i.income_type,
+        } for i in household_incomes],
+        'financial_goals': [{
+            'id': _u(g.id), 'name': g.name, 'goal_type': g.goal_type, 'target_amount': _n(g.target_amount),
+            'target_date': _dt(g.target_date), 'end_date': _dt(g.end_date),
+        } for g in financial_goals],
+        'import_category_rules': [{
+            'id': _u(r.id), 'keyword': r.keyword, 'category_id': _u(r.category_id),
+            'opposing_account_id': _u(r.opposing_account_id),
+        } for r in import_category_rules],
+        'watchlist': [{'id': _u(w.id), 'ticker': w.ticker} for w in watchlist],
+        'custom_reports': [{
+            'id': _u(r.id), 'name': r.name, 'config': r.config,
+        } for r in custom_reports],
+        'loans': [{
+            'id': _u(l.id), 'name': l.name, 'principal': _n(l.principal), 'annual_rate': _n(l.annual_rate),
+            'term_months': l.term_months, 'start_date': _dt(l.start_date), 'payment_day': l.payment_day,
+            'payment_account_id': _u(l.payment_account_id),
+            'interest_expense_account_id': _u(l.interest_expense_account_id),
+            'insurance_expense_account_id': _u(l.insurance_expense_account_id),
+            'insurance_monthly_amount': _n(l.insurance_monthly_amount),
+            'liability_account_id': _u(l.liability_account_id),
+            'equity_opening_account_id': _u(l.equity_opening_account_id),
+            'opening_transaction_id': _u(l.opening_transaction_id), 'category_id': _u(l.category_id),
+            'auto_debit': l.auto_debit, 'is_existing_loan': l.is_existing_loan, 'is_closed': l.is_closed,
+            'closed_at': _dt(l.closed_at),
+        } for l in loans],
+        'loan_rate_revisions': [{
+            'id': _u(r.id), 'loan_id': _u(r.loan_id), 'effective_date': _dt(r.effective_date),
+            'new_annual_rate': _n(r.new_annual_rate), 'recalc_mode': r.recalc_mode,
+        } for r in loan_rate_revisions],
+        'loan_installments': [{
+            'id': _u(i.id), 'loan_id': _u(i.loan_id), 'installment_number': i.installment_number,
+            'due_date': _dt(i.due_date), 'principal_portion': _n(i.principal_portion),
+            'interest_portion': _n(i.interest_portion), 'insurance_portion': _n(i.insurance_portion),
+            'total_amount': _n(i.total_amount), 'remaining_principal_after': _n(i.remaining_principal_after),
+            'is_paid': i.is_paid, 'paid_at': _dt(i.paid_at), 'transaction_id': _u(i.transaction_id),
+            'rate_revision_id': _u(i.rate_revision_id),
+        } for i in loan_installments],
         'transactions': [{
             'id': _u(t.id), 'currency_id': _u(t.currency_id), 'post_date': _dt(t.post_date),
             'effective_date': _dt(t.effective_date), 'description': t.description,
@@ -202,7 +316,10 @@ def _resolve(cache, key, finder, creator, DB):
 def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                       BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                       AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings,
-                      TransactionDocuments, apply_settings=False, Institutions=None):
+                      TransactionDocuments, apply_settings=False, Institutions=None,
+                      SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None,
+                      TaxHouseholdIncome=None, FinancialGoals=None, ImportCategoryRules=None, Watchlist=None,
+                      CustomReports=None, Loans=None, LoanInstallments=None, LoanRateRevisions=None):
     report = {}
 
     def bump(entity, created):
@@ -215,6 +332,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     map_commodity, map_account, map_category, map_tag = {}, {}, {}, {}
     map_budget, map_subscription, map_asset, map_tx = {}, {}, {}, {}
     map_possession, map_institution = {}, {}
+    map_household_profile, map_loan, map_loan_rate_revision = {}, {}, {}
 
     # ── Institutions (clé : nom) ─────────────────────────────────────────────
     if Institutions is not None:
@@ -403,6 +521,25 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             map_subscription[row['id']] = obj.id
             bump('subscriptions', True)
 
+    # ── SubscriptionPriceHistory (clé : abonnement + date d'effet) ──────────
+    if SubscriptionPriceHistory is not None:
+        existing_sph = SubscriptionPriceHistory.query.filter_by(user_id=user_id).all()
+        cache_sph = {(h.subscription_id, h.effective_date) for h in existing_sph}
+        for row in payload.get('subscription_price_history', []):
+            sub_local = map_subscription.get(row.get('subscription_id'))
+            if not sub_local:
+                continue
+            eff_date = _parse_date(row.get('effective_date'))
+            key = (sub_local, eff_date)
+            if key in cache_sph:
+                bump('subscription_price_history', False)
+            else:
+                DB.session.add(SubscriptionPriceHistory(
+                    user_id=user_id, subscription_id=sub_local, effective_date=eff_date,
+                    amount=row.get('amount', 0)))
+                cache_sph.add(key)
+                bump('subscription_price_history', True)
+
     # ── Assets (clé : nom + type + devise) ───────────────────────────────────
     existing_assets = Assets.query.filter_by(user_id=user_id).all()
     cache_asset = {(a.name, a.asset_type, a.commodity_id): a for a in existing_assets}
@@ -506,6 +643,158 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             bump('asset_disposals', True)
     DB.session.flush()
 
+    # ── DcaPlans (clé : nom) ──────────────────────────────────────────────────
+    if DcaPlans is not None:
+        cache_dca = {p.name: p for p in DcaPlans.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('dca_plans', []):
+            existing = cache_dca.get(row['name'])
+            if existing:
+                bump('dca_plans', False)
+            else:
+                asset_local = map_asset.get(row.get('asset_id'))
+                source_local = map_account.get(row.get('source_account_id'))
+                dest_local = map_account.get(row.get('dest_account_id'))
+                if not (asset_local and source_local and dest_local):
+                    report.setdefault('errors', []).append(f"Plan DCA '{row.get('name')}' ignoré (référence introuvable)")
+                    continue
+                obj = DcaPlans(
+                    user_id=user_id, name=row['name'], asset_id=asset_local, source_account_id=source_local,
+                    dest_account_id=dest_local, amount=row.get('amount', 0),
+                    schedule_type=row.get('schedule_type', 'monthly'), day_of_month=row.get('day_of_month'),
+                    month_of_year=row.get('month_of_year'), weekdays=row.get('weekdays'),
+                    start_date=_parse_date(row.get('start_date')), end_date=_parse_date(row.get('end_date')),
+                    is_forecast_only=row.get('is_forecast_only', False),
+                    last_executed_at=_parse_dt(row.get('last_executed_at')))
+                DB.session.add(obj)
+                cache_dca[row['name']] = obj
+                bump('dca_plans', True)
+        DB.session.flush()
+
+    # ── TaxRegime (clé : nom) ─────────────────────────────────────────────────
+    if TaxRegime is not None:
+        cache_tax_regime = {r.name: r for r in TaxRegime.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('tax_regime', []):
+            existing = cache_tax_regime.get(row['name'])
+            if existing:
+                bump('tax_regime', False)
+            else:
+                obj = TaxRegime(
+                    user_id=user_id, name=row['name'], country_code=row.get('country_code', 'FR'),
+                    tax_year=row['tax_year'], config=row.get('config', {}),
+                    is_active=row.get('is_active', False), is_verified=row.get('is_verified', False))
+                DB.session.add(obj)
+                cache_tax_regime[row['name']] = obj
+                bump('tax_regime', True)
+        DB.session.flush()
+
+    # ── TaxHouseholdProfile (clé : année fiscale) + TaxHouseholdIncome ───────
+    if TaxHouseholdProfile is not None:
+        cache_household = {h.tax_year: h for h in TaxHouseholdProfile.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('tax_household_profile', []):
+            existing = cache_household.get(row['tax_year'])
+            if existing:
+                map_household_profile[row['id']] = existing.id
+                bump('tax_household_profile', False)
+            else:
+                obj = TaxHouseholdProfile(
+                    user_id=user_id, tax_year=row['tax_year'], adults=row.get('adults', 1),
+                    dependents=row.get('dependents', 0), dependents_disabled=row.get('dependents_disabled', 0),
+                    parent_isole=row.get('parent_isole', False), notes=row.get('notes'))
+                DB.session.add(obj)
+                DB.session.flush()
+                cache_household[row['tax_year']] = obj
+                map_household_profile[row['id']] = obj.id
+                bump('tax_household_profile', True)
+        DB.session.flush()
+
+        if TaxHouseholdIncome is not None:
+            existing_incomes = TaxHouseholdIncome.query.filter(
+                TaxHouseholdIncome.household_profile_id.in_(list(map_household_profile.values()))
+            ).all() if map_household_profile else []
+            cache_income = {(i.household_profile_id, i.label, _dec(i.amount), i.income_type) for i in existing_incomes}
+            for row in payload.get('tax_household_income', []):
+                profile_local = map_household_profile.get(row.get('household_profile_id'))
+                if not profile_local:
+                    continue
+                key = (profile_local, row['label'], _dec(row.get('amount')), row.get('income_type', 'other'))
+                if key in cache_income:
+                    bump('tax_household_income', False)
+                else:
+                    DB.session.add(TaxHouseholdIncome(
+                        household_profile_id=profile_local, label=row['label'], amount=row.get('amount', 0),
+                        income_type=row.get('income_type', 'other')))
+                    cache_income.add(key)
+                    bump('tax_household_income', True)
+            DB.session.flush()
+
+    # ── FinancialGoals (clé heuristique : nom + échéance + montant) ─────────
+    if FinancialGoals is not None:
+        existing_goals = FinancialGoals.query.filter_by(user_id=user_id).all()
+        target_dt_by_row = {}
+        cache_goal = set()
+        for g in existing_goals:
+            cache_goal.add((g.name, g.target_date, _dec(g.target_amount)))
+        for row in payload.get('financial_goals', []):
+            target_date = _parse_dt(row.get('target_date'))
+            key = (row['name'], target_date, _dec(row.get('target_amount')))
+            if key in cache_goal:
+                bump('financial_goals', False)
+            else:
+                DB.session.add(FinancialGoals(
+                    user_id=user_id, name=row['name'], goal_type=row.get('goal_type', 'one_time'),
+                    target_amount=row.get('target_amount', 0), target_date=target_date,
+                    end_date=_parse_dt(row.get('end_date'))))
+                cache_goal.add(key)
+                bump('financial_goals', True)
+        DB.session.flush()
+
+    # ── ImportCategoryRules (clé : mot-clé) ──────────────────────────────────
+    if ImportCategoryRules is not None:
+        cache_rule = {r.keyword: r for r in ImportCategoryRules.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('import_category_rules', []):
+            existing = cache_rule.get(row['keyword'])
+            if existing:
+                bump('import_category_rules', False)
+            else:
+                DB.session.add(ImportCategoryRules(
+                    user_id=user_id, keyword=row['keyword'],
+                    category_id=map_category.get(row.get('category_id')),
+                    opposing_account_id=map_account.get(row.get('opposing_account_id'))))
+                cache_rule[row['keyword']] = row
+                bump('import_category_rules', True)
+        DB.session.flush()
+
+    # ── Watchlist (clé : ticker) ──────────────────────────────────────────────
+    if Watchlist is not None:
+        cache_watchlist = {w.ticker for w in Watchlist.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('watchlist', []):
+            if row['ticker'] in cache_watchlist:
+                bump('watchlist', False)
+            else:
+                DB.session.add(Watchlist(user_id=user_id, ticker=row['ticker']))
+                cache_watchlist.add(row['ticker'])
+                bump('watchlist', True)
+        DB.session.flush()
+
+    # ── CustomReports (clé heuristique : nom) ────────────────────────────────
+    # config.filters peut référencer des account_id/category_id/tag_id de l'export — remappés vers
+    # les ids locaux (map_account/map_category/map_tag déjà résolus ci-dessus), sinon un rapport
+    # restauré filtrerait sur des ids qui n'existent plus dans cette instance.
+    if CustomReports is not None:
+        cache_custom_report = {r.name: r for r in CustomReports.query.filter_by(user_id=user_id).all()}
+        maps = {'account': map_account, 'category': map_category, 'tag': map_tag}
+        for row in payload.get('custom_reports', []):
+            existing = cache_custom_report.get(row['name'])
+            if existing:
+                bump('custom_reports', False)
+            else:
+                config = dict(row.get('config') or {})
+                config['filters'] = _remap_custom_report_filters(config.get('filters'), maps)
+                DB.session.add(CustomReports(user_id=user_id, name=row['name'], config=config))
+                cache_custom_report[row['name']] = row
+                bump('custom_reports', True)
+        DB.session.flush()
+
     # ── Transactions + Splits + TagsOnSplits ─────────────────────────────────
     # Clé de correspondance (comme l'import CSV/QIF, étendue à toute la transaction plutôt qu'un
     # seul split) : même date + même description + même multiset de (compte local, montant) sur
@@ -593,6 +882,100 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
         else:
             bump('tags_on_split', False)
 
+    # ── Loans + LoanRateRevisions + LoanInstallments ─────────────────────────
+    # Importés après les transactions : Loans.opening_transaction_id référence l'écriture
+    # d'ouverture du crédit, qui doit déjà exister localement (map_tx) pour être remappée.
+    if Loans is not None:
+        cache_loan = {l.name: l for l in Loans.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('loans', []):
+            existing = cache_loan.get(row['name'])
+            if existing:
+                map_loan[row['id']] = existing.id
+                bump('loans', False)
+            else:
+                payment_acc = map_account.get(row.get('payment_account_id'))
+                interest_acc = map_account.get(row.get('interest_expense_account_id'))
+                liability_acc = map_account.get(row.get('liability_account_id'))
+                if not (payment_acc and interest_acc and liability_acc):
+                    report.setdefault('errors', []).append(f"Prêt '{row.get('name')}' ignoré (compte introuvable)")
+                    continue
+                obj = Loans(
+                    user_id=user_id, name=row['name'], principal=row.get('principal', 0),
+                    annual_rate=row.get('annual_rate', 0), term_months=row.get('term_months', 1),
+                    start_date=_parse_date(row.get('start_date')), payment_day=row.get('payment_day', 1),
+                    payment_account_id=payment_acc, interest_expense_account_id=interest_acc,
+                    insurance_expense_account_id=map_account.get(row.get('insurance_expense_account_id')),
+                    insurance_monthly_amount=row.get('insurance_monthly_amount'),
+                    liability_account_id=liability_acc,
+                    equity_opening_account_id=map_account.get(row.get('equity_opening_account_id')),
+                    opening_transaction_id=map_tx.get(row.get('opening_transaction_id')),
+                    category_id=map_category.get(row.get('category_id')),
+                    auto_debit=row.get('auto_debit', False), is_existing_loan=row.get('is_existing_loan', False),
+                    is_closed=row.get('is_closed', False), closed_at=_parse_dt(row.get('closed_at')))
+                DB.session.add(obj)
+                DB.session.flush()
+                cache_loan[row['name']] = obj
+                map_loan[row['id']] = obj.id
+                bump('loans', True)
+        DB.session.flush()
+
+        if LoanRateRevisions is not None:
+            existing_revisions = LoanRateRevisions.query.filter(
+                LoanRateRevisions.loan_id.in_(list(map_loan.values()))
+            ).all() if map_loan else []
+            cache_revision = {}
+            for r in existing_revisions:
+                cache_revision.setdefault((r.loan_id, r.effective_date, _dec(r.new_annual_rate)), r)
+            for row in payload.get('loan_rate_revisions', []):
+                loan_local = map_loan.get(row.get('loan_id'))
+                if not loan_local:
+                    continue
+                eff_date = _parse_date(row.get('effective_date'))
+                key = (loan_local, eff_date, _dec(row.get('new_annual_rate')))
+                existing = cache_revision.get(key)
+                if existing:
+                    map_loan_rate_revision[row['id']] = existing.id
+                    bump('loan_rate_revisions', False)
+                else:
+                    obj = LoanRateRevisions(
+                        loan_id=loan_local, effective_date=eff_date,
+                        new_annual_rate=row.get('new_annual_rate', 0),
+                        recalc_mode=row.get('recalc_mode', 'keep_term'))
+                    DB.session.add(obj)
+                    DB.session.flush()
+                    cache_revision[key] = obj
+                    map_loan_rate_revision[row['id']] = obj.id
+                    bump('loan_rate_revisions', True)
+            DB.session.flush()
+
+        if LoanInstallments is not None:
+            existing_installments = LoanInstallments.query.filter(
+                LoanInstallments.loan_id.in_(list(map_loan.values()))
+            ).all() if map_loan else []
+            cache_installment = {(i.loan_id, i.installment_number) for i in existing_installments}
+            for row in payload.get('loan_installments', []):
+                loan_local = map_loan.get(row.get('loan_id'))
+                if not loan_local:
+                    continue
+                key = (loan_local, row['installment_number'])
+                if key in cache_installment:
+                    bump('loan_installments', False)
+                else:
+                    DB.session.add(LoanInstallments(
+                        loan_id=loan_local, installment_number=row['installment_number'],
+                        due_date=_parse_date(row.get('due_date')),
+                        principal_portion=row.get('principal_portion', 0),
+                        interest_portion=row.get('interest_portion', 0),
+                        insurance_portion=row.get('insurance_portion', 0),
+                        total_amount=row.get('total_amount', 0),
+                        remaining_principal_after=row.get('remaining_principal_after', 0),
+                        is_paid=row.get('is_paid', False), paid_at=_parse_dt(row.get('paid_at')),
+                        transaction_id=map_tx.get(row.get('transaction_id')),
+                        rate_revision_id=map_loan_rate_revision.get(row.get('rate_revision_id'))))
+                    cache_installment.add(key)
+                    bump('loan_installments', True)
+            DB.session.flush()
+
     # ── TransactionDocuments (clé : transaction + empreinte du fichier) ─────
     existing_docs = TransactionDocuments.query.filter_by(user_id=user_id, status='confirmed').all()
     cache_doc = {(d.tx_id, hashlib.sha256(d.file_data).hexdigest()) for d in existing_docs}
@@ -639,7 +1022,10 @@ class BackupRoutes:
     def __init__(self, app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
                  BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
                  AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments,
-                 Institutions=None):
+                 Institutions=None, SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None,
+                 TaxHouseholdProfile=None, TaxHouseholdIncome=None, FinancialGoals=None,
+                 ImportCategoryRules=None, Watchlist=None, CustomReports=None, Loans=None,
+                 LoanInstallments=None, LoanRateRevisions=None):
         ROUTE_PATH = f"{ROOT_PATH}/backup"
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
@@ -649,7 +1035,10 @@ class BackupRoutes:
             data, doc_files = export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budgets,
                                     BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions, Assets,
                                     AssetPossession, AssetDisposal, AssetValuations, Transactions, Splits,
-                                    TagsOnSplits, UserSettings, TransactionDocuments, Institutions)
+                                    TagsOnSplits, UserSettings, TransactionDocuments, Institutions,
+                                    SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
+                                    TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist,
+                                    CustomReports, Loans, LoanInstallments, LoanRateRevisions)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr('data.json', json_lib.dumps(data, ensure_ascii=False, indent=2))
@@ -695,7 +1084,13 @@ class BackupRoutes:
                                           Budgets, BudgetAccounts, BudgetCategories, BudgetTags, Subscriptions,
                                           Assets, AssetPossession, AssetDisposal, AssetValuations, Transactions,
                                           Splits, TagsOnSplits, UserSettings, TransactionDocuments,
-                                          apply_settings=apply_settings, Institutions=Institutions)
+                                          apply_settings=apply_settings, Institutions=Institutions,
+                                          SubscriptionPriceHistory=SubscriptionPriceHistory, DcaPlans=DcaPlans,
+                                          TaxRegime=TaxRegime, TaxHouseholdProfile=TaxHouseholdProfile,
+                                          TaxHouseholdIncome=TaxHouseholdIncome, FinancialGoals=FinancialGoals,
+                                          ImportCategoryRules=ImportCategoryRules, Watchlist=Watchlist,
+                                          CustomReports=CustomReports, Loans=Loans,
+                                          LoanInstallments=LoanInstallments, LoanRateRevisions=LoanRateRevisions)
                 DB.session.commit()
                 return json_response(report, HttpCode.OK)
             except Exception as e:

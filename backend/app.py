@@ -99,7 +99,9 @@ TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Ca
 BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, BudgetAccounts,
              BudgetCategories, BudgetTags, Subscriptions, Assets, AssetPossession, AssetDisposal,
              AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments,
-             Institutions)
+             Institutions, SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
+             TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist, CustomReports,
+             Loans, LoanInstallments, LoanRateRevisions)
 CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
                      Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 
