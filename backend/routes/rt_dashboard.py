@@ -78,7 +78,14 @@ class DashboardRoutes:
             current_ids = [a.id for a in all_accounts if a.account_type == 'Current']
             # wealth_ids : comptes représentatifs de la valeur réelle (Current + Assets + Equity)
             wealth_ids = [a.id for a in all_accounts if a.account_type in WEALTH_TYPES]
-            ie_ids = [a.id for a in all_accounts if a.account_type in INCOME_EXPENSE_TYPES]
+            # ie_ids : PAS dérivé de all_accounts (filtré is_virtual/is_hidden) — un compte
+            # Income/Expense virtuel ou masqué reste une vraie catégorie de flux, le masquer pour le
+            # ranger ne doit pas faire disparaître son historique des KPI (même correction que
+            # rt_reports.py::get_monthly_report).
+            ie_ids = [a.id for a in Accounts.query.filter(
+                Accounts.user_id == user_id,
+                Accounts.account_type.in_(INCOME_EXPENSE_TYPES),
+            ).all()]
             real_flow_tx = DB.session.query(Splits.tx_id).filter(Splits.account_id.in_(ie_ids)).distinct()
 
             # ── KPIs ──────────────────────────────────────────────────────────

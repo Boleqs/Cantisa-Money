@@ -289,8 +289,15 @@ function buildParams() {
   return params
 }
 
+// Deux champs de filtre changés coup sur coup (ex: date_from puis date_to pour cibler un mois)
+// déclenchent chacun leur propre rechargement — si la réponse de la 1ère requête (filtre encore
+// incomplet) arrive après celle de la 2ème (filtre final), elle écraserait le résultat correct par
+// des données obsolètes. On ignore donc toute réponse qui n'est plus la dernière requête envoyée.
+let fetchToken = 0
 async function fetchTransactions() {
+  const token = ++fetchToken
   const txRes = await axios.get('/api/transactions', { params: buildParams() })
+  if (token !== fetchToken) return
   const rd = txRes.data?.response_data
   transactions.value = Array.isArray(rd?.transactions) ? rd.transactions : []
   total.value = rd?.total ?? 0

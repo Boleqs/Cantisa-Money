@@ -153,9 +153,13 @@ def _tx_to_dict(tx, Splits, TagsOnSplits):
 def _apply_tx_filters(query, params, DB, Transactions, Splits, TagsOnSplits):
     """Applique les filtres communs sur une query Transactions."""
     if params.get('account_id'):
-        query = query.join(Splits, Splits.tx_id == Transactions.id).filter(
-            Splits.account_id == params['account_id']
-        )
+        # Sous-select IN plutôt qu'un JOIN direct : une transaction peut avoir plusieurs splits sur
+        # le même compte (ex: vente d'actions en plusieurs lots, dépense éclatée en plusieurs
+        # lignes) — un JOIN dupliquerait la ligne Transactions autant de fois qu'il y a de splits
+        # correspondants, faussant `total` et faisant "manger" des places de pagination par la même
+        # transaction répétée, au détriment d'autres transactions distinctes.
+        sub = DB.session.query(Splits.tx_id).filter(Splits.account_id == params['account_id'])
+        query = query.filter(Transactions.id.in_(sub))
     if params.get('search'):
         query = query.filter(unaccent_contains(Transactions.description, params['search']))
     if params.get('is_cleared') is not None:

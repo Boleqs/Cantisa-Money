@@ -93,15 +93,22 @@ class ReportsRoutes:
                         y -= 1
                     months.append((y, m))
 
-            # Comptes virtuels/cachés exclus : ils ne représentent pas de l'argent réel.
-            all_accounts = Accounts.query.filter(
+            # Comptes de valeur virtuels/cachés exclus : ils ne représentent pas de l'argent réel.
+            # Ce filtre ne s'applique volontairement PAS aux comptes Income/Expense ci-dessous : un
+            # compte Income/Expense virtuel ou masqué reste une vraie catégorie de flux (masquer une
+            # catégorie pour la ranger ne doit pas faire disparaître son historique des rapports),
+            # même logique déjà appliquée dans get_by_category_report/get_by_tag_report plus bas.
+            wealth_accounts = Accounts.query.filter(
                 Accounts.user_id == user_id,
+                Accounts.account_type.in_(WEALTH_TYPES),
                 Accounts.is_virtual == False,
                 Accounts.is_hidden == False,
             ).all()
-            # Seuls les comptes de valeur réelle (Current + Assets + Equity)
-            wealth_ids = [a.id for a in all_accounts if a.account_type in WEALTH_TYPES]
-            ie_ids = [a.id for a in all_accounts if a.account_type in INCOME_EXPENSE_TYPES]
+            wealth_ids = [a.id for a in wealth_accounts]
+            ie_ids = [a.id for a in Accounts.query.filter(
+                Accounts.user_id == user_id,
+                Accounts.account_type.in_(INCOME_EXPENSE_TYPES),
+            ).all()]
 
             result = []
             for y, m in months:

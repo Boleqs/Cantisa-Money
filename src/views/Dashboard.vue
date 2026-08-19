@@ -239,12 +239,24 @@ function fmtDate(v) {
 // valeur calculée côté backend (positions + cash libre), déjà dans la devise par défaut plutôt que
 // la devise native du compte, d'où le helper de libellé dédié ci-dessous (fmtAmountNative
 // afficherait à tort le code devise natif sur un montant déjà converti).
+// Un compte Income est toujours crédité en négatif par construction du trigger SQL (le cumul réel
+// est dans total_spent, positif) et un compte Expense toujours débité en positif (cumul réel dans
+// total_earned) — total_earned - total_spent donnerait donc un signe trompeur pour ces deux types
+// (ex. "Revenus → Mecadaq Group : -87 082,33 EUR" alors que c'est bien de l'argent reçu). Revenus
+// affichés en positif, dépenses en négatif — même convention que les cartes KPI "Revenus/Dépenses
+// du mois" plus haut sur cette page. Même calcul que accountFigure() dans IncomeExpenseAccounts.vue,
+// juste signé au lieu de neutre (ce widget-ci n'a pas de colonne dédiée par type de compte).
 function accountBalance(a) {
+  if (a.account_type === 'Income') return Number(a.total_spent) || 0
+  if (a.account_type === 'Expense') return -(Number(a.total_earned) || 0)
   const override = containerAccountValues.value.get(String(a.id))
   if (override != null) return override
   return (Number(a.total_earned) || 0) - (Number(a.total_spent) || 0)
 }
 function accountBalanceLabel(a) {
+  if (a.account_type === 'Income' || a.account_type === 'Expense') {
+    return fmtAmountSignedNative(accountBalance(a), a.id)
+  }
   const override = containerAccountValues.value.get(String(a.id))
   if (override != null) return fmtAmount(override)
   return fmtAmountNative(accountBalance(a), a.id)
