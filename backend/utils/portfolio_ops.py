@@ -62,6 +62,49 @@ def resolve_split_amounts(Accounts, Commodities, dest_account, source_account, t
     return dest_amount, source_amount, dest_fx_rate, None
 
 
+def convert_asset_to_default_currency(amount, asset_currency, default_currency, manual_fx_rate, on_date, FxRates):
+    """Convertit un montant depuis la devise native de l'actif vers la devise par défaut de
+    l'utilisateur (Settings.currency) — au taux manuel si fourni (1 unité de asset_currency =
+    manual_fx_rate unité(s) de default_currency), sinon au taux historique automatique de on_date.
+    Le taux manuel cible toujours cette paire (actif → défaut), indépendamment du compte réellement
+    débité/crédité : la jambe compte réel se résout ensuite automatiquement à partir de la devise
+    par défaut (cf. resolve_split_amounts), un pas qui reste fiable même quand la devise de l'actif
+    est trop exotique pour avoir un historique de change disponible. Retourne (amount_in_default,
+    resolved_rate, error_response) — resolved_rate est le taux effectivement appliqué (manuel ou
+    résolu automatiquement, 1.0 si les devises sont identiques) : à persister par l'appelant
+    (AssetPossession.fx_rate / AssetDisposal.fx_rate) pour ne plus jamais redépendre d'une
+    résolution automatique implicite a posteriori (ex: taux historique qui aurait changé entre
+    l'achat et une vente ultérieure du même lot)."""
+    if asset_currency == default_currency:
+        return amount, 1.0, None
+    if manual_fx_rate is not None:
+        rate = float(manual_fx_rate)
+        return amount * rate, rate, None
+    rate = get_fx_rate(asset_currency, default_currency, FxRates, on_date=on_date)
+    if rate is None:
+        return None, None, json_response(
+            f"Taux de change historique {asset_currency} → {default_currency} indisponible — renseigne un taux manuel",
+            HttpCode.BAD_REQUEST)
+    return amount * rate, rate, None
+
+
+def convert_default_to_asset_currency(amount, asset_currency, default_currency, manual_fx_rate, on_date, FxRates):
+    """Inverse de convert_asset_to_default_currency — reconvertit un montant saisi en devise par
+    défaut (les frais, toujours saisis dans cette devise) vers la devise native de l'actif, pour
+    les calculs qui doivent y rester exprimés (prix d'achat/vente, plus-value réalisée — cf.
+    rt_tax.py qui reconvertit lui-même depuis commodity.short_name). Retourne (amount_in_asset,
+    error_response)."""
+    if asset_currency == default_currency or amount == 0:
+        return amount, None
+    if manual_fx_rate is not None:
+        return amount / float(manual_fx_rate), None
+    converted = convert_amount(amount, default_currency, asset_currency, FxRates, on_date=on_date)
+    if converted is None:
+        return None, json_response(
+            f"Taux de change historique {default_currency} → {asset_currency} indisponible", HttpCode.BAD_REQUEST)
+    return converted, None
+
+
 def format_qty(q):
     """Rendu compact d'une quantité potentiellement fractionnaire dans une description de
     transaction (ex: "x2.29" plutôt que "x2.290000")."""

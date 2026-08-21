@@ -38,5 +38,12 @@ class AssetPossession(Base):
     quantity = Column(Numeric(18, 6), nullable=False, default=0)
     purchase_price:int = Column(Numeric, nullable=True)
     purchase_price_native:int = Column(Numeric, nullable=True)
+    # Frais/commissions forfaitaires de cette transaction d'achat, toujours en devise par défaut
+    # (Settings.currency), distincts de purchase_price pour ne pas polluer le prix unitaire — voir
+    # rt_assets.py::add_possession.
+    fees:int = Column(Numeric, nullable=False, default=0)
+    # Taux de change saisi manuellement (devise de l'actif -> devise par défaut), NULL si résolu
+    # automatiquement — voir utils/portfolio_ops.py::convert_asset_to_default_currency.
+    fx_rate:int = Column(Numeric, nullable=True)
     purchase_date:datetime = Column(DateTime, nullable=True)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())

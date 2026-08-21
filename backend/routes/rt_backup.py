@@ -195,14 +195,15 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'id': _u(p.id), 'asset_id': _u(p.asset_id), 'account_id': _u(p.account_id),
             'source_account_id': _u(p.source_account_id), 'quantity': _n(p.quantity),
             'purchase_price': _n(p.purchase_price), 'purchase_price_native': _n(p.purchase_price_native),
-            'purchase_date': _dt(p.purchase_date),
+            'fees': _n(p.fees), 'fx_rate': _n(p.fx_rate), 'purchase_date': _dt(p.purchase_date),
         } for p in asset_possessions],
         # tx_id/source_split_id/dest_split_id volontairement absents, même raison que pour
         # asset_possessions (voir commentaire dans import_user_data) — la donnée fiscale/patrimoniale
         # (quantité, prix, date, plus-value) est préservée intégralement sans reconstituer les splits.
         'asset_disposals': [{
             'id': _u(d.id), 'possession_id': _u(d.possession_id), 'quantity': _n(d.quantity),
-            'sale_price': _n(d.sale_price), 'sale_price_native': _n(d.sale_price_native),
+            'sale_price': _n(d.sale_price), 'sale_price_native': _n(d.sale_price_native), 'fees': _n(d.fees),
+            'fx_rate': _n(d.fx_rate),
             'sale_date': _dt(d.sale_date), 'dest_account_id': _u(d.dest_account_id),
             'realized_gain': _n(d.realized_gain), 'holding_period_days': d.holding_period_days,
         } for d in asset_disposals],
@@ -591,7 +592,8 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                 user_id=user_id, asset_id=asset_local, account_id=account_local,
                 source_account_id=map_account.get(row.get('source_account_id')),
                 quantity=row.get('quantity', 0), purchase_price=row.get('purchase_price'),
-                purchase_price_native=row.get('purchase_price_native'), purchase_date=purchase_date)
+                purchase_price_native=row.get('purchase_price_native'), fees=row.get('fees', 0),
+                fx_rate=row.get('fx_rate'), purchase_date=purchase_date)
             DB.session.add(obj)
             DB.session.flush()
             cache_possession[key] = obj.id
@@ -637,6 +639,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             DB.session.add(AssetDisposal(
                 user_id=user_id, possession_id=possession_local, quantity=row.get('quantity', 0),
                 sale_price=row.get('sale_price'), sale_price_native=row.get('sale_price_native'),
+                fees=row.get('fees', 0), fx_rate=row.get('fx_rate'),
                 sale_date=sale_date, dest_account_id=map_account.get(row.get('dest_account_id')),
                 realized_gain=row.get('realized_gain'), holding_period_days=row.get('holding_period_days')))
             cache_disposal.add(key)

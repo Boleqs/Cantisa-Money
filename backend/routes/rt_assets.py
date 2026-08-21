@@ -10,7 +10,8 @@ from backend.config import HttpCode, VAR_API_ROOT_PATH as ROOT_PATH, VAR_PERMISS
 from backend.utils.api_responses import json_response
 from backend.utils.market_price import fetch_live_price, convert_amount, get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
-from backend.utils.portfolio_ops import resolve_current_value, resolve_purchase_price, resolve_split_amounts, format_qty
+from backend.utils.portfolio_ops import resolve_current_value, resolve_purchase_price, resolve_split_amounts, \
+    convert_asset_to_default_currency, convert_default_to_asset_currency, format_qty
 from backend.utils.asset_geography import compute_country_breakdown
 
 VALID_ASSET_TYPES = ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')
@@ -52,6 +53,15 @@ class AddPossessionSchema(Schema):
     source_account_id = fields.UUID(load_default=None)
     quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
     purchase_price = fields.Decimal(required=True, as_string=False)
+    # Forfait, pas un prix unitaire — toujours saisi dans la devise par défaut de l'utilisateur
+    # (Settings.currency), quelle que soit la devise de l'actif ou du compte débité.
+    fees = fields.Decimal(load_default=Decimal('0'), as_string=False, validate=validate.Range(min=0))
+    # Saisi par l'utilisateur quand l'actif n'est PAS dans la devise par défaut (ex: titre coté en
+    # USD, devise par défaut EUR) : 1 unité de la devise de l'actif = fx_rate unité(s) de la devise
+    # par défaut. Remplace la résolution automatique du taux historique pour cette conversion
+    # (potentiellement imprécise/indisponible) par le taux réellement appliqué par le courtier/la
+    # banque. Indépendant du compte débité choisi — voir portfolio_ops.py::convert_asset_to_default_currency.
+    fx_rate = fields.Decimal(load_default=None, as_string=False, allow_none=True, validate=validate.Range(min=Decimal('0.000001')))
     purchase_date = fields.Date(required=True)
 
 
@@ -59,6 +69,8 @@ class UpdatePossessionSchema(Schema):
     possession_id = fields.UUID(required=True)
     quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
     purchase_price = fields.Decimal(required=True, as_string=False)
+    fees = fields.Decimal(load_default=Decimal('0'), as_string=False, validate=validate.Range(min=0))
+    fx_rate = fields.Decimal(load_default=None, as_string=False, allow_none=True, validate=validate.Range(min=Decimal('0.000001')))
     purchase_date = fields.Date(required=True)
 
 
@@ -67,9 +79,17 @@ class DeletePossessionSchema(Schema):
 
 
 class SellPossessionSchema(Schema):
-    possession_id = fields.UUID(required=True)
+    # Vente au niveau de l'actif (dans un compte donné), pas d'une ligne précise — les lots sont
+    # consommés automatiquement en FIFO (le plus ancien d'abord), voir sell_possession ci-dessous.
+    asset_id = fields.UUID(required=True)
+    account_id = fields.UUID(required=True)
     quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
     sale_price = fields.Decimal(required=True, as_string=False)  # devise native si track_live_price, miroir purchase_price
+    # Toujours en devise par défaut (comme AddPossessionSchema.fees) ; fx_rate même convention que
+    # AddPossessionSchema.fx_rate (actif → devise par défaut), utilisé ici pour ramener le produit
+    # de la vente et pour reconvertir les frais/la plus-value dans la devise de l'actif.
+    fees = fields.Decimal(load_default=Decimal('0'), as_string=False, validate=validate.Range(min=0))
+    fx_rate = fields.Decimal(load_default=None, as_string=False, allow_none=True, validate=validate.Range(min=Decimal('0.000001')))
     sale_date = fields.Date(required=True)
     dest_account_id = fields.UUID(load_default=None)
 
@@ -130,11 +150,16 @@ def _possession_to_dict(p, disposals=None):
         'remaining_quantity': float(p.quantity - disposed_qty),
         'purchase_price': float(p.purchase_price) if p.purchase_price is not None else None,
         'purchase_price_native': float(p.purchase_price_native) if p.purchase_price_native is not None else None,
+        'fees': float(p.fees or 0),
+        'fx_rate': float(p.fx_rate) if p.fx_rate is not None else None,
         'purchase_date': p.purchase_date.isoformat() if p.purchase_date else None,
         'created_at': p.created_at.isoformat() if p.created_at else None,
         'disposals': [{
             'id': str(d.id), 'quantity': float(d.quantity),
             'sale_date': d.sale_date.isoformat() if d.sale_date else None,
+            'sale_price': float(d.sale_price) if d.sale_price is not None else None,
+            'fees': float(d.fees or 0),
+            'fx_rate': float(d.fx_rate) if d.fx_rate is not None else None,
             'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
         } for d in disposals],
     }
@@ -588,12 +613,36 @@ class AssetsRoutes:
                 if error:
                     return error
 
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            default_currency = settings.currency if settings else 'EUR'
+            manual_fx_rate = data.get('fx_rate')
+
+            # Résolu (et persisté plus bas dans p.fx_rate) que le lot ait ou non un compte débité —
+            # utile même sans mouvement d'argent réel : c'est ce taux qui reconvertira plus tard les
+            # frais d'achat de CE lot spécifique lors d'une vente partielle (voir sell_possession),
+            # sans redépendre d'une résolution automatique implicite a posteriori qui pourrait
+            # tomber sur un taux historique différent si les données de change ont évolué entretemps.
+            cost_asset_ccy = float(data['quantity']) * float(purchase_price)
+            cost_default, resolved_fx_rate, error = convert_asset_to_default_currency(
+                cost_asset_ccy, commodity.short_name, default_currency, manual_fx_rate,
+                data['purchase_date'], FxRates)
+            if error:
+                return error
+            if commodity.short_name == default_currency:
+                resolved_fx_rate = None  # pas "1.0" : aucune conversion n'a de sens ici (même devise)
+
             dest_amount = source_amount = dest_fx_rate = None
             if source_account:
-                total_cost = float(data['quantity']) * float(purchase_price)
+                # Les frais (toujours saisis en devise par défaut) s'ajoutent directement au coût
+                # déjà ramené en devise par défaut ci-dessus : purchase_price reste lui un prix par
+                # unité "propre", non pollué par le forfait de frais. Le total en devise par défaut
+                # est ensuite reconverti automatiquement vers la devise réelle de chaque compte
+                # impliqué (fiable même si la devise de l'actif est trop exotique pour avoir un
+                # historique de change disponible).
+                total_cost_default = cost_default + float(data['fees'])
                 dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
-                    Accounts, Commodities, dest_account, source_account, total_cost,
-                    commodity.short_name, data['purchase_date'], FxRates)
+                    Accounts, Commodities, dest_account, source_account, total_cost_default,
+                    default_currency, data['purchase_date'], FxRates)
                 if error:
                     return error
 
@@ -630,6 +679,8 @@ class AssetsRoutes:
                     quantity=data['quantity'],
                     purchase_price=purchase_price,
                     purchase_price_native=purchase_price_native,
+                    fees=data['fees'],
+                    fx_rate=resolved_fx_rate,
                     purchase_date=data['purchase_date'],
                 )
                 DB.session.add(p)
@@ -677,22 +728,38 @@ class AssetsRoutes:
                 if error:
                     return error
 
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            default_currency = settings.currency if settings else 'EUR'
+            manual_fx_rate = data.get('fx_rate')
+
+            resolved_fx_rate = None
             dest_amount = source_amount = dest_fx_rate = None
-            if p.tx_id and p.source_account_id and commodity:
-                dest_account = Accounts.query.filter_by(id=p.account_id).first()
-                source_account = Accounts.query.filter_by(id=p.source_account_id).first()
-                total_cost = float(data['quantity']) * float(purchase_price)
-                dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
-                    Accounts, Commodities, dest_account, source_account, total_cost,
-                    commodity.short_name, data['purchase_date'], FxRates)
+            if commodity:
+                cost_asset_ccy = float(data['quantity']) * float(purchase_price)
+                cost_default, resolved_fx_rate, error = convert_asset_to_default_currency(
+                    cost_asset_ccy, commodity.short_name, default_currency, manual_fx_rate,
+                    data['purchase_date'], FxRates)
                 if error:
                     return error
+                if commodity.short_name == default_currency:
+                    resolved_fx_rate = None
+                if p.tx_id and p.source_account_id:
+                    dest_account = Accounts.query.filter_by(id=p.account_id).first()
+                    source_account = Accounts.query.filter_by(id=p.source_account_id).first()
+                    total_cost_default = cost_default + float(data['fees'])
+                    dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
+                        Accounts, Commodities, dest_account, source_account, total_cost_default,
+                        default_currency, data['purchase_date'], FxRates)
+                    if error:
+                        return error
 
             old_purchase_date = p.purchase_date.date() if p.purchase_date else None
             try:
                 p.quantity = data['quantity']
                 p.purchase_price = purchase_price
                 p.purchase_price_native = purchase_price_native
+                p.fees = data['fees']
+                p.fx_rate = resolved_fx_rate
                 p.purchase_date = data['purchase_date']
 
                 if p.tx_id and dest_amount is not None:
@@ -762,27 +829,43 @@ class AssetsRoutes:
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
             user_id = get_jwt_identity()
-            p = AssetPossession.query.filter(
-                AssetPossession.id == data['possession_id'],
-                AssetPossession.user_id == user_id
-            ).first()
-            if not p:
-                return json_response('Possession not found', HttpCode.NOT_FOUND)
 
-            existing_disposals = AssetDisposal.query.filter_by(possession_id=p.id).all()
-            already_sold = sum(disp.quantity for disp in existing_disposals)
-            remaining = p.quantity - already_sold
-            if data['quantity'] > remaining:
-                return json_response(
-                    f"Quantité vendue ({data['quantity']}) supérieure à la quantité restante du lot ({remaining})",
-                    HttpCode.BAD_REQUEST)
-
-            a = Assets.query.filter_by(id=p.asset_id).first()
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
             if not a:
                 return json_response('Asset not found', HttpCode.NOT_FOUND)
             commodity = Commodities.query.filter_by(id=a.commodity_id).first()
             if not commodity:
                 return json_response('Commodity not found', HttpCode.NOT_FOUND)
+            position_account = Accounts.query.filter(
+                Accounts.id == data['account_id'], Accounts.user_id == user_id).first()
+            if not position_account:
+                return json_response('Account not found', HttpCode.NOT_FOUND)
+
+            # FIFO : lots de ce (actif, compte), du plus ancien au plus récent, avec leur quantité
+            # restante — consommés dans cet ordre jusqu'à couvrir la quantité vendue. Méthode standard
+            # pour le calcul de plus-value (cohérent avec le fisc français), et celle qu'un utilisateur
+            # attend implicitement quand il vend "l'actif" plutôt qu'une ligne précise.
+            lots = AssetPossession.query.filter_by(
+                user_id=user_id, asset_id=data['asset_id'], account_id=data['account_id']
+            ).order_by(AssetPossession.purchase_date.asc(), AssetPossession.created_at.asc()).all()
+            disposals_by_lot = {p.id: AssetDisposal.query.filter_by(possession_id=p.id).all() for p in lots}
+            chunks = []  # (lot, quantité prélevée sur ce lot)
+            remaining_to_sell = float(data['quantity'])
+            for p in lots:
+                if remaining_to_sell <= 0:
+                    break
+                already_sold = sum(float(d.quantity) for d in disposals_by_lot[p.id])
+                lot_remaining = float(p.quantity) - already_sold
+                if lot_remaining <= 0:
+                    continue
+                take = min(lot_remaining, remaining_to_sell)
+                chunks.append((p, take))
+                remaining_to_sell -= take
+            if remaining_to_sell > 1e-9:
+                total_remaining = sum(float(p.quantity) - sum(float(d.quantity) for d in disposals_by_lot[p.id]) for p in lots)
+                return json_response(
+                    f"Quantité vendue ({data['quantity']}) supérieure à la quantité détenue sur ce compte ({total_remaining})",
+                    HttpCode.BAD_REQUEST)
 
             sale_price_native = data['sale_price']
             sale_price = sale_price_native
@@ -792,7 +875,6 @@ class AssetsRoutes:
                 if error:
                     return error
 
-            position_account = Accounts.query.filter_by(id=p.account_id).first()
             dest_account_id = data.get('dest_account_id')
             dest_account = None
             if dest_account_id:
@@ -804,27 +886,65 @@ class AssetsRoutes:
                     return json_response(
                         "Le compte crédité doit être de type 'Current', 'Assets' ou 'Equity'", HttpCode.BAD_REQUEST)
 
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            default_currency = settings.currency if settings else 'EUR'
+            manual_fx_rate = data.get('fx_rate')
+
+            total_fees = float(data['fees'])
+            total_quantity = float(data['quantity'])
+
+            # Résolu (et persisté plus bas dans chaque disposal.fx_rate) que la vente ait ou non un
+            # compte crédité — c'est ce même taux qui sert à reconvertir les frais de CETTE vente
+            # (déjà en devise par défaut) vers la devise de l'actif, pour rester cohérent avec
+            # sale_price/purchase_price/realized_gain qui y restent exprimés (cf. rt_tax.py qui
+            # reconvertit lui-même realized_gain depuis commodity.short_name).
+            proceeds_asset_ccy = total_quantity * float(sale_price)
+            proceeds_default, resolved_fx_rate, error = convert_asset_to_default_currency(
+                proceeds_asset_ccy, commodity.short_name, default_currency, manual_fx_rate,
+                data['sale_date'], FxRates)
+            if error:
+                return error
+            if commodity.short_name == default_currency:
+                total_fees_asset_ccy = total_fees
+                resolved_fx_rate = None  # pas "1.0" : aucune conversion n'a de sens ici (même devise)
+            else:
+                total_fees_asset_ccy = total_fees / resolved_fx_rate
+
+            # Frais d'achat de chaque lot reconvertis avec LE TAUX ET LA DATE DE CE LOT (p.fx_rate /
+            # p.purchase_date), pas ceux de la vente en cours — un même lot peut être vendu des
+            # années après avoir été acheté à un taux différent.
+            buy_fees_asset_ccy_by_lot = {}
+            for p, take in chunks:
+                prorated_buy_fees_default = float(p.fees or 0) * (take / float(p.quantity))
+                lot_purchase_date = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
+                prorated_buy_fees_asset, error = convert_default_to_asset_currency(
+                    prorated_buy_fees_default, commodity.short_name, default_currency, p.fx_rate,
+                    lot_purchase_date, FxRates)
+                if error:
+                    return error
+                buy_fees_asset_ccy_by_lot[p.id] = prorated_buy_fees_asset
+
             dest_amount = source_amount = dest_fx_rate = None
             if dest_account:
-                total_proceeds = float(data['quantity']) * float(sale_price)
+                # Le produit de la vente (déjà ramené en devise par défaut ci-dessus) moins les
+                # frais (déjà en devise par défaut) donne le virement réellement reçu — comme chez
+                # un courtier, symétrique de l'ajout des frais au coût dans add_possession. Un seul
+                # virement pour la vente entière, même si elle pioche sur plusieurs lots (FIFO) — les
+                # frais/le gain ne sont ventilés par lot que pour le calcul du gain réalisé, pas pour
+                # l'écriture comptable.
+                total_proceeds_default = proceeds_default - total_fees
+                if total_proceeds_default < 0:
+                    return json_response(
+                        "Les frais dépassent le montant de la vente", HttpCode.BAD_REQUEST)
                 # Rôles inversés par rapport à add_possession : ici "dest_account" est le compte
                 # crédité (le cash qui entre), "source_account" est le compte débité (la position
                 # qui sort) — cf. décision de conception Phase 2 (vente = renversement à 2 splits,
                 # au montant de la vente, pas au coût d'achat).
                 dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
-                    Accounts, Commodities, dest_account, position_account, total_proceeds,
-                    commodity.short_name, data['sale_date'], FxRates)
+                    Accounts, Commodities, dest_account, position_account, total_proceeds_default,
+                    default_currency, data['sale_date'], FxRates)
                 if error:
                     return error
-
-            realized_gain = None
-            if p.purchase_price is not None:
-                realized_gain = (float(sale_price) - float(p.purchase_price)) * float(data['quantity'])
-
-            holding_period_days = None
-            if p.purchase_date:
-                purchase_date_only = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
-                holding_period_days = (data['sale_date'] - purchase_date_only).days
 
             try:
                 tx = None
@@ -848,25 +968,59 @@ class AssetsRoutes:
                     DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
                     DB.session.flush()
 
-                disposal = AssetDisposal(
-                    user_id=user_id,
-                    possession_id=p.id,
-                    quantity=data['quantity'],
-                    sale_price=sale_price,
-                    sale_price_native=sale_price_native,
-                    sale_date=data['sale_date'],
-                    dest_account_id=dest_account_id,
-                    tx_id=tx.id if tx else None,
-                    source_split_id=source_split_id,
-                    dest_split_id=dest_split_id,
-                    realized_gain=realized_gain,
-                    holding_period_days=holding_period_days,
-                )
-                DB.session.add(disposal)
+                disposals = []
+                for p, take in chunks:
+                    # Frais de vente et gain ventilés au prorata de la part de CETTE vente prélevée
+                    # sur ce lot ; frais d'achat du lot proratisés à la quantité prélevée sur ce lot
+                    # spécifiquement (un même lot peut être vendu en plusieurs fois au fil du temps).
+                    # chunk_fees_default est stocké tel quel (devise par défaut, comme AssetPossession.fees)
+                    # ; chunk_fees_asset_ccy (reconverti plus haut) sert uniquement au calcul du gain.
+                    fraction = take / total_quantity
+                    chunk_fees_default = total_fees * fraction
+                    chunk_fees_asset_ccy = total_fees_asset_ccy * fraction
+                    realized_gain = None
+                    if p.purchase_price is not None:
+                        realized_gain = (
+                            (float(sale_price) - float(p.purchase_price)) * take
+                            - chunk_fees_asset_ccy - buy_fees_asset_ccy_by_lot[p.id]
+                        )
+                    holding_period_days = None
+                    if p.purchase_date:
+                        purchase_date_only = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
+                        holding_period_days = (data['sale_date'] - purchase_date_only).days
+
+                    disposal = AssetDisposal(
+                        user_id=user_id,
+                        possession_id=p.id,
+                        quantity=take,
+                        sale_price=sale_price,
+                        sale_price_native=sale_price_native,
+                        fees=chunk_fees_default,
+                        fx_rate=resolved_fx_rate,
+                        sale_date=data['sale_date'],
+                        dest_account_id=dest_account_id,
+                        tx_id=tx.id if tx else None,
+                        source_split_id=source_split_id,
+                        dest_split_id=dest_split_id,
+                        realized_gain=realized_gain,
+                        holding_period_days=holding_period_days,
+                    )
+                    DB.session.add(disposal)
+                    disposals.append(disposal)
+
                 DB.session.commit()
                 _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
                                        Transactions, Splits, WealthSnapshot, AssetValuations, user_id, data['sale_date'])
-                return json_response(_possession_to_dict(p, existing_disposals + [disposal]), HttpCode.CREATED)
+                return json_response({
+                    'asset_id': str(a.id),
+                    'account_id': str(position_account.id),
+                    'quantity_sold': total_quantity,
+                    'lots_touched': len(chunks),
+                    'disposals': [{
+                        'id': str(d.id), 'possession_id': str(d.possession_id), 'quantity': float(d.quantity),
+                        'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
+                    } for d in disposals],
+                }, HttpCode.CREATED)
             except Exception as e:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)

@@ -75,41 +75,56 @@
               <button v-if="a.track_live_price" class="btn-action" :disabled="refreshingIds.has(a.id)" @click="refreshPrice(a)">⟳</button>
               <button class="btn-action" @click="openHistory(a)" title="Historique">📈</button>
               <button class="btn-action" @click="openEdit(a)">✎</button>
-              <button class="btn-action" @click="openAddPossession(a)">+</button>
+              <button class="btn-action" @click="openAddPossession(a)" title="Ajouter une position">+</button>
+              <button
+                class="btn-action" title="Vendre"
+                :disabled="!a.total_quantity"
+                @click="openSellAsset(a)"
+              >💰</button>
               <button class="btn-action btn-danger" @click="deleteAsset(a)">✕</button>
             </td>
           </tr>
-          <!-- Possessions expandable -->
+          <!-- Historique (achats + ventes fusionnés) -->
           <tr v-if="expanded.has(a.id) && a.possessions.length" class="possession-row">
             <td colspan="10">
               <div class="table-scroll">
               <table class="sub-table">
                 <thead>
-                  <tr><th>Compte</th><th>Quantité</th><th>Prix d'achat</th><th>Date d'achat</th><th>Valeur</th><th>Plus-value</th><th></th></tr>
+                  <tr><th></th><th>Compte</th><th>Quantité</th><th>Prix</th><th>Frais</th><th>Date</th><th>Plus-value</th><th></th></tr>
                 </thead>
                 <tbody>
-                  <tr v-for="p in a.possessions" :key="p.id" :class="{ 'possession-closed': remainingQty(p) === 0 }">
-                    <td class="muted acc-cell">{{ accountName(p.account_id) }}</td>
-                    <td>{{ p.disposals?.length ? `${fmtQty(remainingQty(p))} / ${fmtQty(p.quantity)}` : fmtQty(p.quantity) }}</td>
-                    <td class="muted">{{ p.purchase_price != null ? fmtAmount(p.purchase_price * conversionRate(a), a.display_currency) : '—' }}</td>
-                    <td class="muted">{{ p.purchase_date ? p.purchase_date.slice(0, 10) : '—' }}</td>
-                    <td>{{ fmtAmount(remainingQty(p) * a.converted_value_per_unit, a.display_currency) }}</td>
-                    <td :class="possessionGain(p, a) ? (possessionGain(p, a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
-                      <template v-if="possessionGain(p, a)">
-                        {{ fmtAmount(possessionGain(p, a).abs, a.display_currency) }}
-                        <span v-if="possessionGain(p, a).pct != null">({{ possessionGain(p, a).pct >= 0 ? '+' : '' }}{{ possessionGain(p, a).pct.toFixed(1) }}%)</span>
+                  <tr v-for="h in assetHistory(a)" :key="h.kind + h.id">
+                    <td>
+                      <span class="badge-kind" :class="h.kind === 'buy' ? 'badge-kind-buy' : 'badge-kind-sell'">
+                        {{ h.kind === 'buy' ? 'Achat' : 'Vente' }}
+                      </span>
+                    </td>
+                    <td class="muted acc-cell">{{ accountName(h.account_id) }}</td>
+                    <td>{{ h.kind === 'buy' && h.possession.disposals?.length ? `${fmtQty(remainingQty(h.possession))} / ${fmtQty(h.quantity)}` : fmtQty(h.quantity) }}</td>
+                    <td class="muted">{{ h.price != null ? fmtAmount(h.price * conversionRate(a), a.display_currency) : '—' }}</td>
+                    <td class="muted">{{ h.fees ? fmtAmount(h.fees, a.display_currency) : '—' }}</td>
+                    <td class="muted">{{ h.date ? h.date.slice(0, 10) : '—' }}</td>
+                    <td v-if="h.kind === 'sell'" :class="h.gain != null ? (h.gain >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
+                      {{ h.gain != null ? fmtAmount(h.gain * conversionRate(a), a.display_currency) : '—' }}
+                      <span class="hint-inline">réalisée</span>
+                    </td>
+                    <td v-else :class="possessionGain(h.possession, a) ? (possessionGain(h.possession, a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
+                      <template v-if="possessionGain(h.possession, a) && remainingQty(h.possession) > 0">
+                        {{ fmtAmount(possessionGain(h.possession, a).abs, a.display_currency) }}
+                        <span class="hint-inline">latente</span>
                       </template>
                       <template v-else>—</template>
                     </td>
                     <td class="actions">
-                      <button v-if="remainingQty(p) > 0" class="btn-action" title="Vendre" @click="openSell(p, a)">💰</button>
-                      <button class="btn-action" @click="openEditPossession(p, a)">✎</button>
-                      <button
-                        class="btn-action btn-danger"
-                        :disabled="!!p.disposals?.length"
-                        :title="p.disposals?.length ? 'Impossible : des ventes sont liées à cette position' : ''"
-                        @click="deletePossession(p, a)"
-                      >✕</button>
+                      <template v-if="h.kind === 'buy'">
+                        <button class="btn-action" @click="openEditPossession(h.possession, a)">✎</button>
+                        <button
+                          class="btn-action btn-danger"
+                          :disabled="!!h.possession.disposals?.length"
+                          :title="h.possession.disposals?.length ? 'Impossible : des ventes sont liées à cette position' : ''"
+                          @click="deletePossession(h.possession, a)"
+                        >✕</button>
+                      </template>
                     </td>
                   </tr>
                 </tbody>
@@ -198,6 +213,16 @@
             :placeholder="possessionTarget?.track_live_price ? 'Dans la devise native du titre' : 'Montant payé'"
           />
         </label>
+        <label>Frais et commissions (en {{ possessionTarget?.display_currency }}, facultatif)
+          <input v-model.number="possessionForm.fees" type="number" step="0.01" min="0" placeholder="0" />
+        </label>
+        <template v-if="possessionFxMismatch">
+          <p class="hint-text">L'actif n'est pas dans ta devise par défaut ({{ possessionTarget?.display_currency }}) — indique le taux réellement appliqué si tu le connais (sinon résolu automatiquement).</p>
+          <label>
+            Taux de change (1 {{ possessionAssetCurrency }} = ? {{ possessionTarget?.display_currency }})
+            <input v-model.number="possessionForm.fx_rate" type="number" step="0.000001" min="0.000001" placeholder="Automatique" />
+          </label>
+        </template>
         <label>Date d'achat *
           <input v-model="possessionForm.purchase_date" type="date" />
         </label>
@@ -216,13 +241,31 @@
     <div v-if="showSellModal" class="modal-backdrop" @click.self="shake">
       <div class="modal" :class="{ 'modal-shake': shaking }">
         <h2>Vendre — {{ sellAssetTarget?.name }}</h2>
-        <p class="hint-text">Position restante : {{ fmtQty(remainingQty(sellTarget)) }} unité{{ remainingQty(sellTarget) > 1 ? 's' : '' }}.</p>
+        <label>Compte *
+          <select v-model="sellForm.account_id" @change="sellForm.quantity = sellRemainingQty">
+            <option v-for="a in sellAccountsForAsset(sellAssetTarget)" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
+          </select>
+        </label>
+        <p class="hint-text">
+          Position restante sur ce compte : {{ fmtQty(sellRemainingQty) }} unité{{ sellRemainingQty > 1 ? 's' : '' }}.
+          Le(s) lot(s) le(s) plus ancien(s) sont vendus en premier (FIFO).
+        </p>
         <label>Quantité vendue *
-          <input v-model.number="sellForm.quantity" type="number" min="0.000001" step="any" :max="remainingQty(sellTarget)" />
+          <input v-model.number="sellForm.quantity" type="number" min="0.000001" step="any" :max="sellRemainingQty" />
         </label>
         <label>Prix de vente unitaire *{{ sellAssetTarget?.track_live_price ? ` (devise native du titre)` : '' }}
           <input v-model.number="sellForm.sale_price" type="number" step="0.01" min="0" placeholder="Montant reçu par unité" />
         </label>
+        <label>Frais et commissions (en {{ sellAssetTarget?.display_currency }}, facultatif)
+          <input v-model.number="sellForm.fees" type="number" step="0.01" min="0" placeholder="0" />
+        </label>
+        <template v-if="sellFxMismatch">
+          <p class="hint-text">L'actif n'est pas dans ta devise par défaut ({{ sellAssetTarget?.display_currency }}) — indique le taux réellement appliqué si tu le connais (sinon résolu automatiquement).</p>
+          <label>
+            Taux de change (1 {{ sellAssetCurrency }} = ? {{ sellAssetTarget?.display_currency }})
+            <input v-model.number="sellForm.fx_rate" type="number" step="0.000001" min="0.000001" placeholder="Automatique" />
+          </label>
+        </template>
         <label>Date de vente *
           <input v-model="sellForm.sale_date" type="date" />
         </label>
@@ -236,7 +279,7 @@
           <button class="btn" @click="showSellModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!sellForm.quantity || sellForm.quantity <= 0 || sellForm.quantity > remainingQty(sellTarget) || sellForm.sale_price == null || !sellForm.sale_date"
+            :disabled="!sellForm.account_id || !sellForm.quantity || sellForm.quantity <= 0 || sellForm.quantity > sellRemainingQty || sellForm.sale_price == null || !sellForm.sale_date"
             @click="saveSell"
           >Vendre</button>
         </div>
@@ -339,9 +382,8 @@ const possessionEditTarget = ref(null)
 const expanded = ref(new Set())
 
 const showSellModal = ref(false)
-const sellTarget = ref(null)
 const sellAssetTarget = ref(null)
-const sellForm = ref({ quantity: 1, sale_price: null, sale_date: null, dest_account_id: null })
+const sellForm = ref({ account_id: null, quantity: 1, sale_price: null, fees: 0, fx_rate: null, sale_date: null, dest_account_id: null })
 
 const showHistoryModal = ref(false)
 const historyTarget = ref(null)
@@ -380,10 +422,25 @@ const assetTypes = [
 ]
 
 const form = ref({ symbol: '', name: '', asset_type: 'Stock', sector: '', commodity_id: '', value_per_unit: 0, track_live_price: false })
-const possessionForm = ref({ account_id: '', source_account_id: null, quantity: 1, purchase_price: null, purchase_date: null })
+const possessionForm = ref({ account_id: '', source_account_id: null, quantity: 1, purchase_price: null, fees: 0, fx_rate: null, purchase_date: null })
 
 const investmentAccounts = computed(() => accounts.value.filter(a => ['Assets', 'Equity'].includes(a.account_type)))
 const debitableAccounts = computed(() => accounts.value.filter(a => ['Current', 'Assets', 'Equity'].includes(a.account_type)))
+
+// Taux de change manuel : proposé uniquement quand l'actif n'est pas dans la devise par défaut de
+// l'utilisateur (a.display_currency, déjà calculée côté backend) — indépendant du compte débité
+// choisi, cf. portfolio_ops.py::convert_asset_to_default_currency.
+const possessionAssetCurrency = computed(() => possessionTarget.value ? commodityCode(possessionTarget.value.commodity_id) : null)
+const possessionFxMismatch = computed(() =>
+  !!possessionAssetCurrency.value && !!possessionTarget.value?.display_currency &&
+  possessionAssetCurrency.value !== possessionTarget.value.display_currency
+)
+
+const sellAssetCurrency = computed(() => sellAssetTarget.value ? commodityCode(sellAssetTarget.value.commodity_id) : null)
+const sellFxMismatch = computed(() =>
+  !!sellAssetCurrency.value && !!sellAssetTarget.value?.display_currency &&
+  sellAssetCurrency.value !== sellAssetTarget.value.display_currency
+)
 
 function accountName(accountId) {
   const a = accounts.value.find(a => a.id === accountId)
@@ -515,7 +572,7 @@ function openAddPossession(a) {
   possessionForm.value = {
     account_id: investmentAccounts.value[0]?.id || '',
     source_account_id: null,
-    quantity: 1, purchase_price: null, purchase_date: null,
+    quantity: 1, purchase_price: null, fees: 0, fx_rate: null, purchase_date: null,
   }
   showPossessionModal.value = true
 }
@@ -528,6 +585,8 @@ function openEditPossession(p, a) {
     source_account_id: p.source_account_id || null,
     quantity: p.quantity,
     purchase_price: p.purchase_price_native != null ? p.purchase_price_native : p.purchase_price,
+    fees: p.fees || 0,
+    fx_rate: p.fx_rate ?? null,
     purchase_date: p.purchase_date ? p.purchase_date.slice(0, 10) : null,
   }
   showPossessionModal.value = true
@@ -584,6 +643,8 @@ async function savePossession() {
         possession_id: possessionEditTarget.value.id,
         quantity: possessionForm.value.quantity,
         purchase_price: possessionForm.value.purchase_price,
+        fees: possessionForm.value.fees || 0,
+        fx_rate: possessionFxMismatch.value ? (possessionForm.value.fx_rate || null) : null,
         purchase_date: possessionForm.value.purchase_date,
       })
     } else {
@@ -593,6 +654,8 @@ async function savePossession() {
         source_account_id: possessionForm.value.source_account_id || null,
         quantity: possessionForm.value.quantity,
         purchase_price: possessionForm.value.purchase_price,
+        fees: possessionForm.value.fees || 0,
+        fx_rate: possessionFxMismatch.value ? (possessionForm.value.fx_rate || null) : null,
         purchase_date: possessionForm.value.purchase_date,
       })
     }
@@ -625,19 +688,46 @@ function remainingQty(p) {
   return p.remaining_quantity != null ? p.remaining_quantity : p.quantity
 }
 
-function openSell(p, a) {
-  sellTarget.value = p
+// Comptes détenant encore des unités de cet actif — vente au niveau de l'actif (FIFO côté backend,
+// le lot le plus ancien d'abord), pas d'une ligne précise, voir sellAccountsForAsset().
+function sellAccountsForAsset(a) {
+  if (!a) return []
+  const ids = new Set()
+  for (const p of a.possessions || []) {
+    if (remainingQty(p) > 0) ids.add(p.account_id)
+  }
+  return [...ids].map(id => accounts.value.find(acc => acc.id === id)).filter(Boolean)
+}
+
+function remainingQtyForAccount(a, accountId) {
+  if (!a || !accountId) return 0
+  return (a.possessions || [])
+    .filter(p => p.account_id === accountId)
+    .reduce((s, p) => s + remainingQty(p), 0)
+}
+
+const sellRemainingQty = computed(() => remainingQtyForAccount(sellAssetTarget.value, sellForm.value.account_id))
+
+function openSellAsset(a) {
   sellAssetTarget.value = a
-  sellForm.value = { quantity: remainingQty(p), sale_price: null, sale_date: null, dest_account_id: null }
+  const firstAccount = sellAccountsForAsset(a)[0]?.id || null
+  sellForm.value = {
+    account_id: firstAccount,
+    quantity: remainingQtyForAccount(a, firstAccount),
+    sale_price: null, fees: 0, fx_rate: null, sale_date: null, dest_account_id: null,
+  }
   showSellModal.value = true
 }
 
 async function saveSell() {
   try {
     await axios.post('/api/assets/possessions/sell', {
-      possession_id: sellTarget.value.id,
+      asset_id: sellAssetTarget.value.id,
+      account_id: sellForm.value.account_id,
       quantity: sellForm.value.quantity,
       sale_price: sellForm.value.sale_price,
+      fees: sellForm.value.fees || 0,
+      fx_rate: sellFxMismatch.value ? (sellForm.value.fx_rate || null) : null,
       sale_date: sellForm.value.sale_date,
       dest_account_id: sellForm.value.dest_account_id || null,
     })
@@ -646,6 +736,26 @@ async function saveSell() {
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   }
+}
+
+// Historique fusionné achats + ventes d'un actif, plus récent d'abord — remplace l'ancienne liste
+// par lot (les ventes n'y étaient visibles qu'imbriquées dans leur lot d'origine).
+function assetHistory(a) {
+  const entries = []
+  for (const p of a.possessions || []) {
+    entries.push({
+      kind: 'buy', id: p.id, date: p.purchase_date, account_id: p.account_id,
+      quantity: p.quantity, price: p.purchase_price, fees: p.fees, gain: null, possession: p,
+    })
+    for (const d of p.disposals || []) {
+      entries.push({
+        kind: 'sell', id: d.id, date: d.sale_date, account_id: d.dest_account_id || p.account_id,
+        quantity: d.quantity, price: d.sale_price, fees: d.fees, gain: d.realized_gain, possession: p,
+      })
+    }
+  }
+  entries.sort((x, y) => new Date(y.date) - new Date(x.date))
+  return entries
 }
 
 async function refreshPrice(a) {
@@ -903,6 +1013,17 @@ onMounted(() => reload())
 .sub-table td { padding: 6px 24px; border-bottom: 1px solid rgba(148,163,184,0.05); }
 .possession-closed { opacity: 0.55; }
 
+.badge-kind {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.badge-kind-buy { background: rgba(59,130,246,0.12); color: #93c5fd; border-color: rgba(59,130,246,0.3); }
+.badge-kind-sell { background: rgba(245,158,11,0.1); color: #fde68a; border-color: rgba(245,158,11,0.3); }
+
 .badge {
   padding: 3px 8px;
   border-radius: 6px;
@@ -976,6 +1097,7 @@ onMounted(() => reload())
 
 .gain-positive { color: #4ade80; font-weight: 600; }
 .gain-negative { color: #f87171; font-weight: 600; }
+.hint-inline { font-size: 10px; font-weight: 400; color: #6b7280; margin-left: 3px; }
 
 .modal-history { width: 640px; }
 .no-data { font-size: 13px; color: #6b7280; padding: 12px 0; }

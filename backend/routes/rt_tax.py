@@ -230,12 +230,16 @@ class TaxRoutes:
         # amount_spent_incomplete sur les budgets.
         _missing_rate_currencies = set()
 
-        def _rate_to(code, target_currency):
+        def _rate_to(code, target_currency, on_date=None):
+            """on_date optionnel : _sum_by_tax_treatment agrège des montants sur toute une année
+            sans date unique par ligne (appelle sans on_date, taux courant) ; _compute_capital_gains
+            connaît la date de cession de chaque ligne et doit utiliser le taux historique à cette
+            date pour une plus-value fiscalement correcte, pas le taux du jour de calcul du rapport."""
             if code == target_currency:
                 return 1.0
-            key = (code, target_currency)
+            key = (code, target_currency, on_date)
             if key not in _rate_cache:
-                rate = get_fx_rate(code, target_currency, FxRates)
+                rate = get_fx_rate(code, target_currency, FxRates, on_date=on_date)
                 if rate is None:
                     _missing_rate_currencies.add(code)
                 _rate_cache[key] = rate or 0.0
@@ -320,7 +324,17 @@ class TaxRoutes:
                 if disposal.realized_gain is None:
                     unknown_cost_basis_count += 1
                     continue
-                gain = float(disposal.realized_gain) * _rate_to(commodity.short_name, target_currency)
+                # target_currency == Settings.currency (voir _target_currency ci-dessus), soit
+                # exactement la devise pour laquelle disposal.fx_rate a été résolu (manuel ou
+                # automatique, voir rt_assets.py::sell_possession) — le réutiliser évite de
+                # recalculer un taux potentiellement différent (ex: le taux manuel saisi par
+                # l'utilisateur, ignoré si on repassait par une résolution automatique indépendante)
+                # et reste cohérent avec le taux qui a réellement servi à calculer realized_gain.
+                # Fallback sur une résolution automatique pour les cessions antérieures à l'ajout de
+                # cette colonne (fx_rate alors toujours NULL, y compris en cas de devises différentes).
+                rate = (float(disposal.fx_rate) if disposal.fx_rate is not None
+                        else _rate_to(commodity.short_name, target_currency, on_date=disposal.sale_date))
+                gain = float(disposal.realized_gain) * rate
                 total_realized_gain += gain
 
                 is_pea = (

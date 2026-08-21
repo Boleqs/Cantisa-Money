@@ -30,6 +30,14 @@ class AssetDisposal(Base):
     quantity = Column(Numeric(18, 6), nullable=False, default=0)
     sale_price:int = Column(Numeric, nullable=True)
     sale_price_native:int = Column(Numeric, nullable=True)
+    # Frais/commissions forfaitaires de cette vente, toujours en devise par défaut (Settings.currency)
+    # — voir rt_assets.py::sell_possession, déduits du montant crédité et du gain réalisé.
+    fees:int = Column(Numeric, nullable=False, default=0)
+    # Taux de change effectivement appliqué à CETTE vente (devise de l'actif -> devise par défaut),
+    # manuel ou résolu automatiquement — NULL si l'actif est dans la devise par défaut (aucune
+    # conversion n'a de sens). Persisté pour la même raison qu'AssetPossession.fx_rate : ne pas
+    # redépendre d'une résolution automatique implicite si les données de change évoluent plus tard.
+    fx_rate:int = Column(Numeric, nullable=True)
     sale_date:datetime = Column(DateTime, nullable=False)
     dest_account_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     tx_id:uuid = Column(UUID(as_uuid=True), nullable=True)
