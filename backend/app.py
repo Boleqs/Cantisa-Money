@@ -83,6 +83,7 @@ RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users, Categories, ImportCategoryRules)
 BankSyncRoutes(app, DB, BankConnections, Accounts, Institutions, Transactions, Splits, ImportCategoryRules, Users)
 DocumentsRoutes(app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users)
+FinancialDocumentsRoutes(app, DB, FinancialDocuments, Accounts, Assets, Loans, Users)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
 MarketsRoutes(app, Users, DB, Watchlist, MarketIndex)
@@ -101,7 +102,7 @@ BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, B
              AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments,
              Institutions, SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
              TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist, CustomReports,
-             Loans, LoanInstallments, LoanRateRevisions)
+             Loans, LoanInstallments, LoanRateRevisions, FinancialDocuments=FinancialDocuments)
 CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
                      Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 
@@ -455,7 +456,7 @@ if IS_MAIN_PROCESS:
         # Reconstruit l'historique depuis la date d'achat la plus ancienne (prix/FX historiques via yfinance),
         # puis snapshot_wealth() écrase le point du jour avec des données live fraîches.
         backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
-        snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot)
+        snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Splits)
         # Contrairement aux abonnements/crédits (qui ont un bouton "Exécuter maintenant" en plus du
         # job horaire), la reconduction de budget n'a aucun déclenchement manuel — sans cet appel au
         # démarrage, un budget déjà échu au moment du (re)lancement du backend n'était reconduit qu'à
@@ -479,7 +480,11 @@ if __name__ == '__main__':
 
     # host=0.0.0.0 : nécessaire pour être joignable depuis l'extérieur du conteneur Docker
     # (127.0.0.1, le défaut Flask, ne serait accessible que depuis l'intérieur du conteneur).
+    # threaded=True : sans ça, le serveur de dev traite une requête à la fois — un appel yfinance
+    # lent (aucun timeout côté market_price.py) bloque alors TOUTES les requêtes de TOUS les
+    # utilisateurs, pas juste celle qui l'a déclenché (cause probable des latences de plusieurs
+    # secondes, voire un blocage complet observé en pratique, sur les actions liées au portefeuille).
     app.run(host='0.0.0.0', port=int(os.environ.get('API_PORT', 5000)), debug=True,
-            use_reloader=USE_RELOADER, ssl_context=ssl_context)
+            use_reloader=USE_RELOADER, ssl_context=ssl_context, threaded=True)
 
 

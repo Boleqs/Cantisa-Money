@@ -145,7 +145,9 @@ def _goal_occurrences(goal, today, horizon_end):
 def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
                     Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, user_id,
                     horizon_months, growth_financial_pct, growth_physical_pct, growth_cash_pct,
-                    avg_monthly_net_flow_override, target_currency, goals=None):
+                    avg_monthly_net_flow_override, target_currency, goals=None,
+                    invest_mode='amount', invest_financial_amount=0.0, invest_physical_amount=0.0,
+                    invest_financial_pct=0.0, invest_physical_pct=0.0):
     today = date.today()
     commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
     assets_by_id = {a.id: a for a in Assets.query.filter_by(user_id=user_id).all()}
@@ -163,6 +165,16 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
             DB, Accounts, Transactions, Splits, AssetPossession, Loans, LoanInstallments, Subscriptions,
             Commodities, FxRates, user_id, target_currency)
         net_flow_auto = True
+
+    # Part du flux mensuel moyen affectée à l'investissement plutôt qu'à la trésorerie — deux modes :
+    # montant fixe (indépendant du flux) ou pourcentage DU flux (recalculé ici une fois le flux
+    # résolu, auto ou manuel, pour éviter au frontend de connaître la valeur auto avant le 1er appel).
+    if invest_mode == 'percent':
+        invest_financial = avg_monthly_net_flow * invest_financial_pct / 100
+        invest_physical = avg_monthly_net_flow * invest_physical_pct / 100
+    else:
+        invest_financial = invest_financial_amount
+        invest_physical = invest_physical_amount
 
     # Crédits en cours : l'échéancier complet (jusqu'au terme) est déjà généré et stocké à la
     # création du prêt (build_schedule(), voir rt_loans.py) — aucune amortization à recalculer ici,
@@ -302,7 +314,12 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
                 else:
                     portfolio_physical += contribution_amount
 
-        month_delta += avg_monthly_net_flow
+        # Part du flux investie chaque mois : sort de la trésorerie projetée comme une contribution
+        # DCA, et compose sur le portefeuille à partir du mois suivant (ajoutée après la
+        # multiplication par (1+r) ci-dessus, même convention que les contributions DCA).
+        month_delta += avg_monthly_net_flow - invest_financial - invest_physical
+        portfolio_financial += invest_financial
+        portfolio_physical += invest_physical
 
         liabilities = 0.0
         for loan in active_loans:
@@ -369,6 +386,9 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
             'growth_cash_pct': growth_cash_pct,
             'avg_monthly_net_flow': round(avg_monthly_net_flow, 2),
             'avg_monthly_net_flow_auto': net_flow_auto,
+            'invest_mode': invest_mode,
+            'invest_financial_amount': round(invest_financial, 2),
+            'invest_physical_amount': round(invest_physical, 2),
         },
         'points': points,
         'goals_result': goals_result,

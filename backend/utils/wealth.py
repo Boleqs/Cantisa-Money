@@ -452,12 +452,15 @@ def portfolio_value_series(Assets, AssetPossession, AssetDisposal, Commodities, 
     return {d: round(v, 2) for d, v in result.items()}
 
 
-def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations):
+def backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations, user_id=None):
     """Reconstruit l'historique quotidien du patrimoine (bancaire + portefeuille, en EUR) depuis la
-    date d'achat la plus ancienne renseignée jusqu'à aujourd'hui, pour chaque utilisateur. Idempotent :
-    ne recalcule jamais un jour déjà présent en base."""
+    date d'achat la plus ancienne renseignée jusqu'à aujourd'hui, pour chaque utilisateur (ou un seul
+    si `user_id` est fourni — cf. rt_assets.py::_force_wealth_refresh, appelé après CHAQUE
+    achat/vente/suppression de position : recalculer tous les utilisateurs à chaque fois serait un
+    gaspillage inutile, contributeur direct de la latence perçue sur ces actions). Idempotent : ne
+    recalcule jamais un jour déjà présent en base."""
     today = date.today()
-    user_ids = {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
+    user_ids = {user_id} if user_id is not None else {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
 
     for user_id in user_ids:
         purchase_dates = [p.purchase_date.date() for p in AssetPossession.query.filter_by(user_id=user_id).all() if p.purchase_date]

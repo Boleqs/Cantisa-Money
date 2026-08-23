@@ -34,10 +34,11 @@ onMounted(() => reload())
       <div class="title-block">
         <h1>Répartition géographique</h1>
         <p class="subtitle">
-          Pondération par pays de vos actions et ETF détenus, calculée via Yahoo Finance. Pour une action,
-          le pays vient directement de l'émetteur ; pour un ETF, Yahoo Finance ne fournit jamais sa composition
-          complète — seulement son <strong>top 10 des positions</strong>, dont on extrapole la répartition
-          pays à la valeur totale du fonds. C'est une approximation, pas une composition exacte.
+          Pondération par pays de l'ensemble de votre patrimoine. Pour une action, le pays vient directement
+          de l'émetteur (Yahoo Finance) ; pour un ETF, Yahoo Finance ne fournit jamais sa composition complète
+          — seulement son <strong>top 10 des positions</strong>, dont on extrapole la répartition pays à la
+          valeur totale du fonds (approximation, pas une composition exacte). Pour un actif physique
+          (immobilier, véhicule…), le pays est celui renseigné manuellement sur la fiche de l'actif.
         </p>
       </div>
       <button class="btn" :disabled="loading" @click="reload">
@@ -51,7 +52,7 @@ onMounted(() => reload())
     <div class="card">
       <div class="card-title">Exposition par pays</div>
       <div v-if="loading && !countries.length" class="empty">Calcul en cours (interrogation de Yahoo Finance pour chaque ETF détenu)…</div>
-      <div v-else-if="!countries.length" class="empty">Aucune position action/ETF avec un pays identifiable pour l'instant.</div>
+      <div v-else-if="!countries.length" class="empty">Aucun actif avec un pays identifiable pour l'instant.</div>
       <WorldMap v-else :countries="countries" :unmapped-percent="unmappedPercent" />
     </div>
   </div>

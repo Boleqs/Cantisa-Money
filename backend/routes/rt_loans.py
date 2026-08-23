@@ -567,12 +567,19 @@ class LoansRoutes:
             current_total_payment = float(swept[0].principal_portion) + float(swept[0].interest_portion)
             first_installment_number = swept[0].installment_number
 
-            last_paid_before = (LoanInstallments.query
-                                 .filter(LoanInstallments.loan_id == loan.id, LoanInstallments.is_paid == True,
-                                         LoanInstallments.due_date < data['effective_date'])
-                                 .order_by(LoanInstallments.installment_number.desc()).first())
-            base_remaining_principal = (float(last_paid_before.remaining_principal_after)
-                                         if last_paid_before else float(loan.principal))
+            # Ancrer sur l'échéance PRÉCÉDENTE de l'échéancier existant (peu importe si elle est déjà
+            # payée) plutôt que sur la dernière effectivement payée à l'instant T : si effective_date
+            # est loin dans le futur, des échéances entre aujourd'hui et cette date existent déjà,
+            # non payées mais déjà correctement chaînées (remaining_principal_after cohérent) — s'en
+            # tenir à "dernière payée à la création de la révision" ignorait leur remboursement à
+            # venir et gonflait artificiellement le capital restant repris par le nouvel échéancier
+            # (bug constaté : capital restant qui REMONTE juste après la révision au lieu de baisser).
+            prior_installment = (LoanInstallments.query
+                                  .filter(LoanInstallments.loan_id == loan.id,
+                                          LoanInstallments.installment_number == first_installment_number - 1)
+                                  .first())
+            base_remaining_principal = (float(prior_installment.remaining_principal_after)
+                                         if prior_installment else float(loan.principal))
 
             try:
                 new_rows = regenerate_from_revision(

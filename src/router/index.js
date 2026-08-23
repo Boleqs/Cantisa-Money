@@ -136,6 +136,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/dossier-financier',
+        name: 'FinancialDocuments',
+        component: () => import('../views/FinancialDocuments.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/portfolio/geographie',
         name: 'PortfolioGeography',
         component: () => import('../views/PortfolioGeography.vue'),

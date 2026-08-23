@@ -22,6 +22,11 @@ class ForecastWealthSchema(Schema):
     growth_physical_pct = fields.Decimal(load_default=Decimal('2.0'), as_string=False)
     growth_cash_pct = fields.Decimal(load_default=Decimal('3.0'), as_string=False)
     avg_monthly_net_flow = fields.Decimal(load_default=None, allow_none=True, as_string=False)
+    invest_mode = fields.String(load_default='amount', validate=validate.OneOf(('amount', 'percent')))
+    invest_financial_amount = fields.Decimal(load_default=Decimal('0'), as_string=False)
+    invest_physical_amount = fields.Decimal(load_default=Decimal('0'), as_string=False)
+    invest_financial_pct = fields.Decimal(load_default=Decimal('0'), as_string=False)
+    invest_physical_pct = fields.Decimal(load_default=Decimal('0'), as_string=False)
     currency = fields.String(load_default='EUR')
 
 
@@ -61,5 +66,10 @@ class ForecastRoutes:
                 avg_monthly_net_flow_override=float(data['avg_monthly_net_flow']) if data['avg_monthly_net_flow'] is not None else None,
                 target_currency=data['currency'].upper(),
                 goals=goals,
+                invest_mode=data['invest_mode'],
+                invest_financial_amount=float(data['invest_financial_amount']),
+                invest_physical_amount=float(data['invest_physical_amount']),
+                invest_financial_pct=float(data['invest_financial_pct']),
+                invest_physical_pct=float(data['invest_physical_pct']),
             )
             return json_response(result, HttpCode.OK)

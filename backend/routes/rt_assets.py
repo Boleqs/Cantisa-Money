@@ -23,6 +23,7 @@ class AddAssetSchema(Schema):
     name = fields.String(required=True)
     asset_type = fields.String(required=True, validate=validate.OneOf(VALID_ASSET_TYPES))
     sector = fields.String(load_default=None)
+    country = fields.String(load_default=None, allow_none=True)
     commodity_id = fields.UUID(required=True)
     value_per_unit = fields.Decimal(load_default=0, as_string=False)
     track_live_price = fields.Boolean(load_default=False)
@@ -34,6 +35,7 @@ class UpdateAssetSchema(Schema):
     name = fields.String(required=True)
     asset_type = fields.String(required=True, validate=validate.OneOf(VALID_ASSET_TYPES))
     sector = fields.String(load_default=None)
+    country = fields.String(load_default=None, allow_none=True)
     commodity_id = fields.UUID(required=True)
     value_per_unit = fields.Decimal(load_default=0, as_string=False)
     track_live_price = fields.Boolean(load_default=False)
@@ -128,6 +130,7 @@ def _asset_to_dict(a):
         'name': a.name,
         'asset_type': a.asset_type,
         'sector': a.sector,
+        'country': a.country,
         'commodity_id': str(a.commodity_id),
         'value_per_unit': float(a.value_per_unit or 0),
         'track_live_price': a.track_live_price,
@@ -198,8 +201,11 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDispo
         WealthSnapshot.snapshot_date >= from_date,
     ).delete()
     DB.session.commit()
-    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations)
-    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot)
+    # Scopé à CET utilisateur (voir user_id/snapshot_user_id) — recalculer tout le monde à chaque
+    # achat/vente/suppression de position serait un gaspillage inutile et un contributeur direct de
+    # la latence perçue sur ces actions (voir docstring de backfill_wealth_history/snapshot_wealth).
+    backfill_wealth_history(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions, Splits, WealthSnapshot, AssetValuations, user_id=user_id)
+    snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Splits, snapshot_user_id=user_id)
 
 
 class AssetsRoutes:
@@ -251,19 +257,17 @@ class AssetsRoutes:
         @jwt_required()
         @restricted_by_permission(Users, ASSETS_PERM)
         def get_assets_geography():
-            """Répartition géographique du portefeuille actions/ETF, à partir de Yahoo Finance :
-            pays direct pour une action, extrapolation du top 10 holdings pour un ETF (Yahoo ne
-            fournit jamais la composition complète d'un fonds) — voir asset_geography.py."""
+            """Répartition géographique du portefeuille : actions/ETF via Yahoo Finance (pays
+            direct pour une action, extrapolation du top 10 holdings pour un ETF — Yahoo ne fournit
+            jamais la composition complète d'un fonds, voir asset_geography.py), actifs physiques
+            (RealEstate/Vehicle/Other) via le pays saisi manuellement sur l'actif (100% de sa valeur,
+            un seul pays par actif contrairement à un ETF)."""
             user_id = get_jwt_identity()
             settings = UserSettings.query.filter_by(user_id=user_id).first()
             target_currency = settings.currency if settings else 'EUR'
             commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
 
-            assets = Assets.query.filter(
-                Assets.user_id == user_id, Assets.asset_type.in_(('Stock', 'ETF'))).all()
-
-            positions = []
-            for a in assets:
+            def asset_value(a):
                 possessions = AssetPossession.query.filter(AssetPossession.asset_id == a.id).all()
                 possession_ids = [p.id for p in possessions]
                 disposals = (AssetDisposal.query.filter(AssetDisposal.possession_id.in_(possession_ids)).all()
@@ -275,16 +279,33 @@ class AssetsRoutes:
                 total_qty = float(sum(p.quantity - sum(d.quantity for d in disposed_by_possession.get(p.id, []))
                                        for p in possessions))
                 if total_qty <= 0:
-                    continue
+                    return None
                 total_value = total_qty * float(a.value_per_unit or 0)
                 native_commodity = commodities_by_id.get(a.commodity_id)
                 native_code = native_commodity.short_name if native_commodity else target_currency
                 rate = 1.0 if native_code == target_currency else (get_fx_rate(native_code, target_currency, FxRates) or 1.0)
-                positions.append({'symbol': a.symbol, 'asset_type': a.asset_type, 'value': total_value * rate})
+                return total_value * rate
+
+            assets = Assets.query.filter(Assets.user_id == user_id).all()
+
+            positions = []
+            by_country = {}
+            unmapped_value = 0.0
+            for a in assets:
+                value = asset_value(a)
+                if value is None:
+                    continue
+                if a.asset_type in ('Stock', 'ETF'):
+                    positions.append({'symbol': a.symbol, 'asset_type': a.asset_type, 'value': value})
+                elif a.country:
+                    by_country[a.country] = by_country.get(a.country, 0.0) + value
+                else:
+                    unmapped_value += value
 
             breakdown = compute_country_breakdown(positions)
-            by_country = breakdown['by_country']
-            unmapped_value = breakdown['unmapped_value']
+            for country, value in breakdown['by_country'].items():
+                by_country[country] = by_country.get(country, 0.0) + value
+            unmapped_value += breakdown['unmapped_value']
             total_known_value = sum(by_country.values())
             grand_total = total_known_value + unmapped_value
 
@@ -329,7 +350,8 @@ class AssetsRoutes:
                     symbol=data['symbol'],
                     name=data['name'],
                     asset_type=data['asset_type'],
-                    sector=data.get('sector'),
+                    sector=data.get('sector') if data['asset_type'] in ('Stock', 'ETF') else None,
+                    country=data.get('country') if data['asset_type'] not in ('Stock', 'ETF') else None,
                     commodity_id=data['commodity_id'],
                     value_per_unit=value_per_unit,
                     track_live_price=data['track_live_price'],
@@ -370,7 +392,8 @@ class AssetsRoutes:
                 a.symbol = data['symbol']
                 a.name = data['name']
                 a.asset_type = data['asset_type']
-                a.sector = data.get('sector')
+                a.sector = data.get('sector') if data['asset_type'] in ('Stock', 'ETF') else None
+                a.country = data.get('country') if data['asset_type'] not in ('Stock', 'ETF') else None
                 a.commodity_id = data['commodity_id']
                 a.value_per_unit = value_per_unit
                 a.track_live_price = data['track_live_price']

@@ -63,6 +63,13 @@ def _doc_zip_path(doc_id, original_filename):
     return f"documents/{doc_id}_{safe_name}"
 
 
+def _financial_doc_zip_path(doc_id, original_filename):
+    """Équivalent de _doc_zip_path pour le coffre-fort de documents financiers (rt_financial_documents.py)
+    — préfixe distinct pour ne pas mélanger les deux familles de documents dans l'archive."""
+    safe_name = os.path.basename(original_filename or 'document').strip() or 'document'
+    return f"financial_documents/{doc_id}_{safe_name}"
+
+
 # ── Remapping des références UUID à l'intérieur d'un config JSONB opaque ────
 # (CustomReports.config.filters) : le backend ne les interprète pas autrement, mais elles
 # pointent vers des comptes/catégories/tags dont l'id local change à chaque import — sans ce
@@ -100,7 +107,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
                       TransactionDocuments, Institutions=None, SubscriptionPriceHistory=None,
                       DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None, TaxHouseholdIncome=None,
                       FinancialGoals=None, ImportCategoryRules=None, Watchlist=None, CustomReports=None,
-                      Loans=None, LoanInstallments=None, LoanRateRevisions=None):
+                      Loans=None, LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None):
     commodities = Commodities.query.filter_by(user_id=user_id).all()
     accounts = Accounts.query.filter_by(user_id=user_id).all()
     institutions = Institutions.query.filter_by(user_id=user_id).all() if Institutions is not None else []
@@ -144,6 +151,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
     # Seuls les justificatifs confirmés (rattachés à une transaction) sont de vraies données
     # utilisateur — 'pending' est un état transitoire de relecture OCR en cours, jamais persistant.
     documents = TransactionDocuments.query.filter_by(user_id=user_id, status='confirmed').all()
+    financial_documents = FinancialDocuments.query.filter_by(user_id=user_id).all() if FinancialDocuments is not None else []
 
     data = {
         'backup_format_version': BACKUP_FORMAT_VERSION,
@@ -286,6 +294,15 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'mime_type': d.mime_type, 'uploaded_at': _dt(d.uploaded_at),
             'file_path': _doc_zip_path(d.id, d.original_filename),
         } for d in documents],
+        # Même principe que transaction_documents ci-dessus : bytes réels à part dans l'archive
+        # (voir financial_doc_files plus bas), seul le chemin est référencé ici.
+        'financial_documents': [{
+            'id': _u(d.id), 'original_filename': d.original_filename, 'mime_type': d.mime_type,
+            'category': d.category, 'description': d.description, 'extracted_text': d.extracted_text,
+            'linked_account_id': _u(d.linked_account_id), 'linked_asset_id': _u(d.linked_asset_id),
+            'linked_loan_id': _u(d.linked_loan_id), 'uploaded_at': _dt(d.uploaded_at),
+            'file_path': _financial_doc_zip_path(d.id, d.original_filename),
+        } for d in financial_documents],
         'user_settings': ({
             'currency': settings.currency, 'date_format': settings.date_format,
             'market_score_weights': settings.market_score_weights,
@@ -293,6 +310,8 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
         } if settings else None),
     }
     doc_files = [{'path': _doc_zip_path(d.id, d.original_filename), 'bytes': d.file_data} for d in documents]
+    doc_files += [{'path': _financial_doc_zip_path(d.id, d.original_filename), 'bytes': d.file_data}
+                  for d in financial_documents]
 
     return data, doc_files
 
@@ -320,7 +339,8 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                       TransactionDocuments, apply_settings=False, Institutions=None,
                       SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None,
                       TaxHouseholdIncome=None, FinancialGoals=None, ImportCategoryRules=None, Watchlist=None,
-                      CustomReports=None, Loans=None, LoanInstallments=None, LoanRateRevisions=None):
+                      CustomReports=None, Loans=None, LoanInstallments=None, LoanRateRevisions=None,
+                      FinancialDocuments=None):
     report = {}
 
     def bump(entity, created):
@@ -1003,6 +1023,40 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             cache_doc.add(key)
             bump('transaction_documents', True)
 
+    # ── FinancialDocuments (clé : empreinte du fichier — pas de transaction à laquelle
+    # rattacher la clé, contrairement à TransactionDocuments) ───────────────
+    if FinancialDocuments is not None:
+        existing_fin_docs = FinancialDocuments.query.filter_by(user_id=user_id).all()
+        cache_fin_doc = {hashlib.sha256(d.file_data).hexdigest() for d in existing_fin_docs}
+        for row in payload.get('financial_documents', []):
+            category = row.get('category')
+            if not category:
+                report.setdefault('errors', []).append(
+                    f"Document financier '{row.get('original_filename')}' ignoré (catégorie manquante)")
+                continue
+            try:
+                file_bytes = base64.b64decode(row['file_data_b64'])
+            except Exception:
+                report.setdefault('errors', []).append(
+                    f"Document financier '{row.get('original_filename')}' ignoré (fichier illisible)")
+                continue
+            key = hashlib.sha256(file_bytes).hexdigest()
+            if key in cache_fin_doc:
+                bump('financial_documents', False)
+            else:
+                DB.session.add(FinancialDocuments(
+                    user_id=user_id, original_filename=row.get('original_filename', 'document'),
+                    mime_type=row.get('mime_type', 'application/octet-stream'), file_data=file_bytes,
+                    file_size=len(file_bytes),
+                    category=category, description=row.get('description'),
+                    extracted_text=row.get('extracted_text'),
+                    linked_account_id=map_account.get(row.get('linked_account_id')),
+                    linked_asset_id=map_asset.get(row.get('linked_asset_id')),
+                    linked_loan_id=map_loan.get(row.get('linked_loan_id')),
+                    uploaded_at=_parse_dt(row.get('uploaded_at')) or datetime.now()))
+                cache_fin_doc.add(key)
+                bump('financial_documents', True)
+
     # ── UserSettings (jamais écrasé sans confirmation explicite) ─────────────
     if apply_settings and payload.get('user_settings'):
         us = payload['user_settings']
@@ -1028,7 +1082,7 @@ class BackupRoutes:
                  Institutions=None, SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None,
                  TaxHouseholdProfile=None, TaxHouseholdIncome=None, FinancialGoals=None,
                  ImportCategoryRules=None, Watchlist=None, CustomReports=None, Loans=None,
-                 LoanInstallments=None, LoanRateRevisions=None):
+                 LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None):
         ROUTE_PATH = f"{ROOT_PATH}/backup"
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
@@ -1041,7 +1095,8 @@ class BackupRoutes:
                                     TagsOnSplits, UserSettings, TransactionDocuments, Institutions,
                                     SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
                                     TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist,
-                                    CustomReports, Loans, LoanInstallments, LoanRateRevisions)
+                                    CustomReports, Loans, LoanInstallments, LoanRateRevisions,
+                                    FinancialDocuments=FinancialDocuments)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr('data.json', json_lib.dumps(data, ensure_ascii=False, indent=2))
@@ -1074,6 +1129,10 @@ class BackupRoutes:
                             doc_path = doc.pop('file_path', None)
                             if doc_path:
                                 doc['file_data_b64'] = base64.b64encode(zf.read(doc_path)).decode('ascii')
+                        for doc in payload.get('financial_documents', []):
+                            doc_path = doc.pop('file_path', None)
+                            if doc_path:
+                                doc['file_data_b64'] = base64.b64encode(zf.read(doc_path)).decode('ascii')
                 else:
                     # Ancien format (JSON pur, éventuellement avec 'file_data_b64' déjà embarqué) :
                     # toujours accepté pour ne pas casser la réimportation de sauvegardes antérieures.
@@ -1093,7 +1152,8 @@ class BackupRoutes:
                                           TaxHouseholdIncome=TaxHouseholdIncome, FinancialGoals=FinancialGoals,
                                           ImportCategoryRules=ImportCategoryRules, Watchlist=Watchlist,
                                           CustomReports=CustomReports, Loans=Loans,
-                                          LoanInstallments=LoanInstallments, LoanRateRevisions=LoanRateRevisions)
+                                          LoanInstallments=LoanInstallments, LoanRateRevisions=LoanRateRevisions,
+                                          FinancialDocuments=FinancialDocuments)
                 DB.session.commit()
                 return json_response(report, HttpCode.OK)
             except Exception as e:

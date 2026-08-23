@@ -12,7 +12,7 @@
             v-model="search"
             class="search-input"
             type="text"
-            placeholder="Rechercher un actif (symbole, nom, secteur)…"
+            placeholder="Rechercher un actif (symbole, nom, secteur, pays)…"
           />
         </div>
         <button class="btn" :disabled="loading" @click="reload">
@@ -44,7 +44,7 @@
           <th>Symbole</th>
           <th>Nom</th>
           <th>Type</th>
-          <th>Secteur</th>
+          <th>Secteur / Pays</th>
           <th>Valeur unitaire</th>
           <th>Quantité totale</th>
           <th>Valeur totale</th>
@@ -59,7 +59,7 @@
             <td class="symbol">{{ a.symbol }}</td>
             <td>{{ a.name }}</td>
             <td><span class="badge" :class="'badge-' + a.asset_type.toLowerCase()">{{ typeLabel(a.asset_type) }}</span></td>
-            <td class="muted">{{ a.sector || '—' }}</td>
+            <td class="muted">{{ a.sector || a.country || '—' }}</td>
             <td>{{ fmtAmount(a.converted_value_per_unit, a.display_currency) }}</td>
             <td>{{ fmtQty(a.total_quantity) }}</td>
             <td class="value">{{ fmtAmount(a.converted_total_value, a.display_currency) }}</td>
@@ -81,7 +81,7 @@
                 :disabled="!a.total_quantity"
                 @click="openSellAsset(a)"
               >💰</button>
-              <button class="btn-action btn-danger" @click="deleteAsset(a)">✕</button>
+              <button class="btn-action btn-danger" :disabled="actionPending" @click="deleteAsset(a)">✕</button>
             </td>
           </tr>
           <!-- Historique (achats + ventes fusionnés) -->
@@ -101,11 +101,11 @@
                     </td>
                     <td class="muted acc-cell">{{ accountName(h.account_id) }}</td>
                     <td>{{ h.kind === 'buy' && h.possession.disposals?.length ? `${fmtQty(remainingQty(h.possession))} / ${fmtQty(h.quantity)}` : fmtQty(h.quantity) }}</td>
-                    <td class="muted">{{ h.price != null ? fmtAmount(h.price * conversionRate(a), a.display_currency) : '—' }}</td>
+                    <td class="muted">{{ h.price != null ? fmtAmount(h.price, commodityCode(a.commodity_id)) : '—' }}</td>
                     <td class="muted">{{ h.fees ? fmtAmount(h.fees, a.display_currency) : '—' }}</td>
                     <td class="muted">{{ h.date ? h.date.slice(0, 10) : '—' }}</td>
                     <td v-if="h.kind === 'sell'" :class="h.gain != null ? (h.gain >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
-                      {{ h.gain != null ? fmtAmount(h.gain * conversionRate(a), a.display_currency) : '—' }}
+                      {{ h.gain != null ? fmtAmount(h.gain * realizedGainRate(h, a), a.display_currency) : '—' }}
                       <span class="hint-inline">réalisée</span>
                     </td>
                     <td v-else :class="possessionGain(h.possession, a) ? (possessionGain(h.possession, a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
@@ -120,7 +120,7 @@
                         <button class="btn-action" @click="openEditPossession(h.possession, a)">✎</button>
                         <button
                           class="btn-action btn-danger"
-                          :disabled="!!h.possession.disposals?.length"
+                          :disabled="actionPending || !!h.possession.disposals?.length"
                           :title="h.possession.disposals?.length ? 'Impossible : des ventes sont liées à cette position' : ''"
                           @click="deletePossession(h.possession, a)"
                         >✕</button>
@@ -147,12 +147,28 @@
           <input v-model="form.name" placeholder="Apple Inc." />
         </label>
         <label>Type *
-          <select v-model="form.asset_type" @change="validateSymbol">
+          <select v-model="form.asset_type" @change="onAssetTypeChange">
             <option v-for="t in assetTypes" :key="t.value" :value="t.value">{{ t.label }}</option>
           </select>
         </label>
         <label v-if="['Stock','ETF'].includes(form.asset_type)">Secteur
           <input v-model="form.sector" placeholder="Technology…" />
+        </label>
+        <label v-else class="country-field">Pays (facultatif)
+          <div class="country-picker">
+            <input
+              v-model="countryQuery"
+              placeholder="Rechercher un pays…"
+              autocomplete="off"
+              @focus="showCountryDropdown = true"
+              @blur="() => setTimeout(() => showCountryDropdown = false, 150)"
+            />
+            <button v-if="form.country" type="button" class="country-clear" title="Effacer" @click="clearCountry">✕</button>
+            <ul v-if="showCountryDropdown && countryMatches.length" class="country-dropdown">
+              <li v-for="c in countryMatches" :key="c" @mousedown.prevent="selectCountry(c)">{{ c }}</li>
+            </ul>
+          </div>
+          <p class="field-hint-sm">Utilisé pour la carte de répartition géographique du patrimoine.</p>
         </label>
         <label>Devise *
           <select v-model="form.commodity_id">
@@ -181,9 +197,9 @@
           <button class="btn" @click="showModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!form.symbol.trim() || !form.name.trim() || (form.track_live_price && (validatingSymbol || fetchedPrice == null))"
+            :disabled="actionPending || !form.symbol.trim() || !form.name.trim() || (form.track_live_price && (validatingSymbol || fetchedPrice == null))"
             @click="saveAsset"
-          >Enregistrer</button>
+          >{{ actionPending ? 'Enregistrement…' : 'Enregistrer' }}</button>
         </div>
       </div>
     </div>
@@ -230,9 +246,9 @@
           <button class="btn" @click="showPossessionModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!possessionForm.account_id || possessionForm.quantity <= 0 || possessionForm.purchase_price == null || !possessionForm.purchase_date"
+            :disabled="actionPending || !possessionForm.account_id || possessionForm.quantity <= 0 || possessionForm.purchase_price == null || !possessionForm.purchase_date"
             @click="savePossession"
-          >Enregistrer</button>
+          >{{ actionPending ? 'Enregistrement…' : 'Enregistrer' }}</button>
         </div>
       </div>
     </div>
@@ -279,9 +295,9 @@
           <button class="btn" @click="showSellModal = false">Annuler</button>
           <button
             class="btn btn-primary"
-            :disabled="!sellForm.account_id || !sellForm.quantity || sellForm.quantity <= 0 || sellForm.quantity > sellRemainingQty || sellForm.sale_price == null || !sellForm.sale_date"
+            :disabled="actionPending || !sellForm.account_id || !sellForm.quantity || sellForm.quantity <= 0 || sellForm.quantity > sellRemainingQty || sellForm.sale_price == null || !sellForm.sale_date"
             @click="saveSell"
-          >Vendre</button>
+          >{{ actionPending ? 'Vente…' : 'Vendre' }}</button>
         </div>
       </div>
     </div>
@@ -351,6 +367,7 @@ import { useToast } from '@/utils/toast'
 import { normalizeSearch } from '@/utils/search.js'
 import { accountDisplayLabel } from '@/utils/accountDisplay.js'
 import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
+import { COUNTRIES } from '@/utils/countries.js'
 
 const toast = useToast()
 
@@ -371,7 +388,8 @@ const filteredAssets = computed(() => {
   return assets.value.filter((a) =>
     normalizeText(a.symbol).includes(q) ||
     normalizeText(a.name).includes(q) ||
-    normalizeText(a.sector).includes(q)
+    normalizeText(a.sector).includes(q) ||
+    normalizeText(a.country).includes(q)
   )
 })
 const showModal = ref(false)
@@ -421,7 +439,31 @@ const assetTypes = [
   { value: 'Other', label: 'Autre' },
 ]
 
-const form = ref({ symbol: '', name: '', asset_type: 'Stock', sector: '', commodity_id: '', value_per_unit: 0, track_live_price: false })
+const form = ref({ symbol: '', name: '', asset_type: 'Stock', sector: '', country: '', commodity_id: '', value_per_unit: 0, track_live_price: false })
+const countryQuery = ref('')
+const showCountryDropdown = ref(false)
+const countryMatches = computed(() => {
+  const q = normalizeText(countryQuery.value)
+  if (!q) return COUNTRIES.slice(0, 20)
+  return COUNTRIES.filter(c => normalizeText(c).includes(q)).slice(0, 20)
+})
+function selectCountry(c) {
+  form.value.country = c
+  countryQuery.value = c
+  showCountryDropdown.value = false
+}
+function clearCountry() {
+  form.value.country = ''
+  countryQuery.value = ''
+}
+function onAssetTypeChange() {
+  if (['Stock', 'ETF'].includes(form.value.asset_type)) {
+    clearCountry()
+  } else {
+    form.value.sector = ''
+  }
+  validateSymbol()
+}
 const possessionForm = ref({ account_id: '', source_account_id: null, quantity: 1, purchase_price: null, fees: 0, fx_rate: null, purchase_date: null })
 
 const investmentAccounts = computed(() => accounts.value.filter(a => ['Assets', 'Equity'].includes(a.account_type)))
@@ -452,6 +494,11 @@ const symbolValidationError = ref('')
 const fetchedPrice = ref(null)
 const fetchedCurrency = ref(null)
 const refreshingIds = ref(new Set())
+// Garde-fou anti double-soumission partagé par les actions mutantes (achat/vente/suppression de
+// position, création/suppression d'actif) — ces requêtes peuvent prendre plusieurs secondes
+// (recalcul de l'historique de patrimoine côté backend) et un double-clic pendant l'attente ne
+// doit pas déclencher l'action deux fois.
+const actionPending = ref(false)
 
 function typeLabel(t) {
   return assetTypes.find(x => x.value === t)?.label || t
@@ -484,6 +531,16 @@ function typeSummaryValue(group) {
 // l'API (évite de dupliquer côté frontend la logique de taux de change du backend).
 function conversionRate(a) {
   return a.value_per_unit ? a.converted_value_per_unit / a.value_per_unit : 1
+}
+
+// Un gain réalisé est un événement figé dans le passé — le convertir avec le taux du JOUR
+// (conversionRate, qui reflète le cours actuel) le ferait fluctuer indéfiniment selon la date de
+// consultation, alors que sa valeur en devise par défaut a été fixée une fois pour toutes à la
+// vente (h.fx_rate, cf. rt_assets.py::sell_possession). Repli sur conversionRate uniquement pour
+// les cessions antérieures à l'ajout de cette colonne (fx_rate alors toujours null) — imparfait
+// mais pas pire que le comportement précédent pour ces données historiques.
+function realizedGainRate(h, a) {
+  return h.fx_rate != null ? h.fx_rate : conversionRate(a)
 }
 
 const byType = computed(() => {
@@ -522,7 +579,8 @@ async function reload() {
 
 function openCreate() {
   editTarget.value = null
-  form.value = { symbol: '', name: '', asset_type: 'Stock', sector: '', commodity_id: commodities.value[0]?.id || '', value_per_unit: 0, track_live_price: false }
+  form.value = { symbol: '', name: '', asset_type: 'Stock', sector: '', country: '', commodity_id: commodities.value[0]?.id || '', value_per_unit: 0, track_live_price: false }
+  countryQuery.value = ''
   fetchedPrice.value = null
   fetchedCurrency.value = null
   symbolValidationError.value = ''
@@ -532,10 +590,11 @@ function openCreate() {
 function openEdit(a) {
   editTarget.value = a
   form.value = {
-    symbol: a.symbol, name: a.name, asset_type: a.asset_type, sector: a.sector || '',
+    symbol: a.symbol, name: a.name, asset_type: a.asset_type, sector: a.sector || '', country: a.country || '',
     commodity_id: a.commodity_id, value_per_unit: a.value_per_unit,
     track_live_price: a.track_live_price,
   }
+  countryQuery.value = a.country || ''
   fetchedPrice.value = null
   fetchedCurrency.value = null
   symbolValidationError.value = ''
@@ -597,12 +656,18 @@ async function saveAsset() {
     await validateSymbol()
     if (fetchedPrice.value == null) return
   }
+  // La requête (surtout un achat/vente/suppression de position, qui recalcule l'historique de
+  // patrimoine côté backend) peut prendre plusieurs secondes — sans ce garde-fou, un double-clic
+  // pendant l'attente déclenche l'action deux fois (double achat, double suppression...).
+  if (actionPending.value) return
+  actionPending.value = true
   try {
     const payload = {
       symbol: form.value.symbol,
       name: form.value.name,
       asset_type: form.value.asset_type,
       sector: ['Stock', 'ETF'].includes(form.value.asset_type) ? form.value.sector || null : null,
+      country: !['Stock', 'ETF'].includes(form.value.asset_type) ? form.value.country || null : null,
       commodity_id: form.value.commodity_id,
       value_per_unit: form.value.value_per_unit,
       track_live_price: form.value.track_live_price,
@@ -616,6 +681,8 @@ async function saveAsset() {
     await reload()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
   }
 }
 
@@ -626,17 +693,22 @@ async function deleteAsset(a) {
     confirmLabel: 'Supprimer',
     danger: true,
   })
-  if (!ok) return
+  if (!ok || actionPending.value) return
+  actionPending.value = true
   try {
     await axios.delete('/api/assets', { params: { asset_id: a.id } })
     await reload()
     toast.success(`Actif « ${a.name} » supprimé.`)
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
   }
 }
 
 async function savePossession() {
+  if (actionPending.value) return
+  actionPending.value = true
   try {
     if (possessionEditTarget.value) {
       await axios.patch('/api/assets/possessions', {
@@ -663,6 +735,8 @@ async function savePossession() {
     await reload()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
   }
 }
 
@@ -673,13 +747,16 @@ async function deletePossession(p, a) {
     confirmLabel: 'Supprimer',
     danger: true,
   })
-  if (!ok) return
+  if (!ok || actionPending.value) return
+  actionPending.value = true
   try {
     await axios.delete('/api/assets/possessions', { params: { possession_id: p.id } })
     await reload()
     toast.success('Position supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
   }
 }
 
@@ -720,6 +797,8 @@ function openSellAsset(a) {
 }
 
 async function saveSell() {
+  if (actionPending.value) return
+  actionPending.value = true
   try {
     await axios.post('/api/assets/possessions/sell', {
       asset_id: sellAssetTarget.value.id,
@@ -735,6 +814,8 @@ async function saveSell() {
     await reload()
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
   }
 }
 
@@ -750,7 +831,7 @@ function assetHistory(a) {
     for (const d of p.disposals || []) {
       entries.push({
         kind: 'sell', id: d.id, date: d.sale_date, account_id: d.dest_account_id || p.account_id,
-        quantity: d.quantity, price: d.sale_price, fees: d.fees, gain: d.realized_gain, possession: p,
+        quantity: d.quantity, price: d.sale_price, fees: d.fees, fx_rate: d.fx_rate, gain: d.realized_gain, possession: p,
       })
     }
   }
@@ -770,25 +851,35 @@ async function refreshPrice(a) {
   }
 }
 
+// Frais d'achat du lot proratisés à la quantité restante — la part correspondant aux unités déjà
+// vendues est déjà comptée dans realized_gain (côté backend), pas ici, pour ne pas la compter deux
+// fois. p.fees est toujours en devise par défaut (cf. rt_assets.py::add_possession), donc déjà
+// dans la même devise que a.display_currency — pas besoin de conversionRate dessus.
+function remainingFees(p, qty) {
+  return p.quantity ? (p.fees || 0) * (qty / p.quantity) : 0
+}
+
 function possessionGain(p, a) {
   if (p.purchase_price == null) return null
   // Quantité restante (pas la quantité brute achetée) — sinon un lot partiellement vendu
-  // surestime sa plus-value latente. abs converti dans la devise d'affichage (même taux que
-  // converted_value_per_unit) ; pct invariant par conversion, pas besoin de le convertir.
+  // surestime sa plus-value latente.
   const qty = remainingQty(p)
-  const abs = (a.value_per_unit - p.purchase_price) * qty * conversionRate(a)
-  const purchaseValue = p.purchase_price * qty
-  const pct = purchaseValue !== 0 ? ((a.value_per_unit - p.purchase_price) * qty / purchaseValue) * 100 : null
+  const currentValue = qty * a.value_per_unit * conversionRate(a)
+  const totalCost = qty * p.purchase_price * conversionRate(a) + remainingFees(p, qty)
+  const abs = currentValue - totalCost
+  const pct = totalCost !== 0 ? (abs / totalCost) * 100 : null
   return { abs, pct }
 }
 
 function gainLoss(a) {
   const priced = (a.possessions || []).filter(p => p.purchase_price != null)
   if (!priced.length) return null
-  const currentValue = priced.reduce((s, p) => s + remainingQty(p) * a.value_per_unit, 0)
-  const purchaseValue = priced.reduce((s, p) => s + remainingQty(p) * p.purchase_price, 0)
-  const abs = (currentValue - purchaseValue) * conversionRate(a)
-  const pct = purchaseValue !== 0 ? ((currentValue - purchaseValue) / purchaseValue) * 100 : null
+  const currentValue = priced.reduce((s, p) => s + remainingQty(p) * a.value_per_unit, 0) * conversionRate(a)
+  const costValue = priced.reduce((s, p) => s + remainingQty(p) * p.purchase_price, 0) * conversionRate(a)
+  const totalFees = priced.reduce((s, p) => s + remainingFees(p, remainingQty(p)), 0)
+  const totalCost = costValue + totalFees
+  const abs = currentValue - totalCost
+  const pct = totalCost !== 0 ? (abs / totalCost) * 100 : null
   return { abs, pct }
 }
 
@@ -1094,6 +1185,46 @@ onMounted(() => reload())
 .ok-text { color: #6ee7b7; }
 .hint-text { font-size: 11px; color: #64748b; margin: -6px 0 0; }
 .modal input:disabled, .modal select:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.country-field .field-hint-sm { font-size: 11px; color: #64748b; margin: 0; }
+.country-picker { position: relative; }
+.country-picker input { width: 100%; box-sizing: border-box; padding-right: 26px; }
+.country-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.country-clear:hover { color: #e5e7eb; }
+.country-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #0f172a;
+  border: 1px solid rgba(148,163,184,0.25);
+  border-radius: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  z-index: 20;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+}
+.country-dropdown li {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+.country-dropdown li:hover { background: rgba(59,130,246,0.15); }
 
 .gain-positive { color: #4ade80; font-weight: 600; }
 .gain-negative { color: #f87171; font-weight: 600; }

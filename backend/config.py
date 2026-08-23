@@ -50,6 +50,12 @@ VAR_PERMISSIONS_LIST = {'Administration': {'id': uuid.UUID('00000000-cafe-4c9d-8
                         # plus-values réalisées en Phase 2, dossier annuel en Phase 3).
                         'Fiscalité':           {'id': uuid.UUID('a1c9e4d7-2b6f-4e83-9d5a-7c1f0e8b3d6a'),
                                                 'description': 'Régimes fiscaux, foyer fiscal, marquage fiscal des catégories, simulation d\'impôt'},
+                        # Groupe dédié (pas rattaché à Comptabilité/Patrimoine/Fiscalité) : le
+                        # coffre-fort couvre des documents de tous ces domaines à la fois (RIB,
+                        # assurance, avis d'imposition, actes de propriété...), sans appartenir
+                        # clairement à aucun.
+                        'Dossier financier':   {'id': uuid.UUID('7ce2bf07-6a42-4edc-bee7-5a5137a7a9dc'),
+                                                'description': "Coffre-fort de documents financiers (RIB, assurances, avis d'imposition, actes, contrats de prêt...)"},
                         }
 # Rôle assigné par défaut à tout nouvel utilisateur (inscription publique ou seed) — voir
 # insert_roles() dans app.py et le endpoint public POST /api/auth/signup dans rt_auth.py.

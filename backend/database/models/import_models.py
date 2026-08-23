@@ -13,6 +13,7 @@ from .categories import Categories
 from .commodities import Commodities
 from .custom_reports import CustomReports
 from .dca_plans import DcaPlans
+from .financial_documents import FinancialDocuments
 from .financial_goals import FinancialGoals
 from .fx_rates import FxRates
 from .import_category_rules import ImportCategoryRules

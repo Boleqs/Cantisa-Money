@@ -80,7 +80,16 @@ class WealthRoutes:
             bank_net_worth = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, currency)
             total_liabilities = compute_total_liabilities(Accounts, Commodities, FxRates, user_id, currency)
             portfolio = get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, currency)
-            portfolio_value = round(sum(a['value'] for a in portfolio), 2)
+            # portfolio_value doit compter le cash libre des comptes-conteneurs (dépôts pas encore
+            # investis, dividendes non réinvestis...) en plus de la valeur de marché des positions —
+            # sinon ce cash disparaît du Patrimoine : bank_net_worth exclut délibérément ces comptes
+            # (pour ne pas compter leur coût d'achat figé en plus de la valeur de marché), et une
+            # simple somme par actif (ci-dessous, `portfolio`) ne voit que les positions, jamais le
+            # cash. get_portfolio_container_account_values calcule déjà correctement (positions +
+            # cash libre) par compte-conteneur — on en prend juste la somme ici.
+            container_values = get_portfolio_container_account_values(
+                Accounts, Assets, AssetPossession, AssetDisposal, Splits, Commodities, FxRates, user_id, currency)
+            portfolio_value = round(sum(container_values.values()), 2)
 
             gains = [a for a in portfolio if a['gain_abs'] is not None]
             unrealized_gain = round(sum(a['gain_abs'] for a in gains), 2)

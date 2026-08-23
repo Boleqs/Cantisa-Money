@@ -18,6 +18,7 @@ class Assets(Base):
         UniqueConstraint('name', 'asset_type', 'commodity_id'),
         CheckConstraint("asset_type IN ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')"),
         CheckConstraint("asset_type IN ('Stock', 'ETF') OR sector IS NULL"),
+        CheckConstraint("asset_type NOT IN ('Stock', 'ETF') OR country IS NULL"),
         CheckConstraint("track_live_price = false OR asset_type IN ('Stock', 'ETF')")
     )
 
@@ -27,6 +28,11 @@ class Assets(Base):
     name:str = Column(String(100), nullable=False)
     asset_type:str = Column(String(20), nullable=False)
     sector:str = Column(String(50), nullable=True)
+    # Uniquement pour les actifs physiques (RealEstate/Vehicle/Other) — pour Stock/ETF, la géographie
+    # est déjà dérivée dynamiquement via Yahoo Finance (voir asset_geography.py), pas de saisie
+    # manuelle nécessaire. Nom de pays en anglais (convention yfinance) pour fusionner correctement
+    # avec cette source dans /api/assets/geography sans dupliquer un même pays sous deux libellés.
+    country:str = Column(String(100), nullable=True)
     commodity_id:uuid = Column(UUID(as_uuid=True))
     value_per_unit:int = Column(Numeric, default=0, nullable=False)
     track_live_price:bool = Column(Boolean, default=False, nullable=False)

@@ -236,16 +236,25 @@ def refresh_tracked_commodity_rates(app, DB, Commodities, FxRates, UserSettings)
         DB.session.commit()
 
 
-def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot):
-    """Enregistre un point quotidien (bancaire + portefeuille, converti en EUR) par utilisateur.
-    Appelé par le scheduler et une fois au démarrage (voir app.py)."""
-    from utils.wealth import compute_bank_net_worth, compute_portfolio_value, compute_total_liabilities
+def snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Splits, snapshot_user_id=None):
+    """Enregistre un point quotidien (bancaire + portefeuille, converti en EUR) par utilisateur (ou
+    un seul si `snapshot_user_id` est fourni — cf. rt_assets.py::_force_wealth_refresh, appelé après
+    chaque achat/vente/suppression de position : recalculer tous les utilisateurs à chaque fois
+    serait un gaspillage inutile, contributeur direct de la latence perçue sur ces actions). Appelé
+    par le scheduler et une fois au démarrage (voir app.py)."""
+    from utils.wealth import compute_bank_net_worth, compute_total_liabilities, get_portfolio_container_account_values
     with app.app_context():
         today = date.today()
-        user_ids = {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
+        user_ids = {snapshot_user_id} if snapshot_user_id is not None else {row[0] for row in DB.session.query(Accounts.user_id).distinct()}
         for user_id in user_ids:
             bank_nw = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, 'EUR')
-            portfolio_val = compute_portfolio_value(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, 'EUR')
+            # Positions + cash libre des comptes-conteneurs (pas juste les positions) — même
+            # raisonnement que rt_wealth.py::get_wealth_overview : compute_bank_net_worth exclut ces
+            # comptes pour ne pas compter leur coût d'achat figé, donc leur cash libre doit être
+            # compté ici, sous peine de disparaître du Patrimoine.
+            container_values = get_portfolio_container_account_values(
+                Accounts, Assets, AssetPossession, AssetDisposal, Splits, Commodities, FxRates, user_id, 'EUR')
+            portfolio_val = round(sum(container_values.values()), 2)
             liabilities = compute_total_liabilities(Accounts, Commodities, FxRates, user_id, 'EUR')
             # bank_nw/portfolio_val restent bruts (soldes bancaires + portefeuille, sans dette) —
             # seul le total (le "Patrimoine") est net des crédits en cours.
@@ -388,7 +397,7 @@ def start_scheduler(app, DB, Subscriptions, Transactions, Splits, Accounts, Asse
     )
     scheduler.add_job(
         func=snapshot_wealth,
-        args=[app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot],
+        args=[app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Splits],
         trigger='interval',
         hours=24,
         id='wealth_snapshot_job',

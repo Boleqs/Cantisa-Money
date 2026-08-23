@@ -70,6 +70,30 @@
             /mois (revenus et dépenses réels, hors abonnements et crédits déjà comptés à part).
           </p>
         </div>
+
+        <div class="hyp-field hyp-field--wide">
+          <label>Part du flux investie (plutôt que laissée en trésorerie)</label>
+          <div class="pill-row">
+            <button type="button" class="pill" :class="{ active: investMode === 'amount' }" @click="investMode = 'amount'">Montant (€/mois)</button>
+            <button type="button" class="pill" :class="{ active: investMode === 'percent' }" @click="investMode = 'percent'">Pourcentage du flux</button>
+          </div>
+          <div class="invest-row">
+            <div class="invest-field">
+              <label>Actifs financiers {{ investMode === 'percent' ? '(%)' : `(${currency}/mois)` }}</label>
+              <input v-model.number="investFinancial" type="number" :step="investMode === 'percent' ? 1 : 10" min="0" />
+            </div>
+            <div class="invest-field">
+              <label>Actifs physiques {{ investMode === 'percent' ? '(%)' : `(${currency}/mois)` }}</label>
+              <input v-model.number="investPhysical" type="number" :step="investMode === 'percent' ? 1 : 10" min="0" />
+            </div>
+          </div>
+          <p class="field-hint" v-if="result">
+            Sur les <strong>{{ fmtAmount(result.params.avg_monthly_net_flow) }}</strong>/mois de flux, <strong>{{ fmtAmount(result.params.invest_financial_amount) }}</strong> investis en financier
+            et <strong>{{ fmtAmount(result.params.invest_physical_amount) }}</strong> en physique — le reste
+            (<strong>{{ fmtAmount(result.params.avg_monthly_net_flow - result.params.invest_financial_amount - result.params.invest_physical_amount) }}</strong>) part vers la trésorerie,
+            qui absorbe ensuite ses propres abonnements et échéances de crédit (comptés à part, voir courbe ci-dessous) — ce n'est donc pas ce montant net qui s'accumule chaque mois.
+          </p>
+        </div>
       </div>
       <button class="btn btn-primary apply-btn" :disabled="loading" @click="reload">Appliquer</button>
     </div>
@@ -113,6 +137,12 @@
 
     <template v-else-if="result">
       <!-- Résultat -->
+      <div v-if="treasuryNegativeDate" class="alert alert-warning">
+        ⚠ Avec ces hypothèses, votre trésorerie projetée passerait sous 0 € à partir de <strong>{{ treasuryNegativeDate }}</strong> —
+        vos abonnements, échéances de crédit et part investie dépassent ce que votre flux mensuel peut couvrir. Le
+        « Patrimoine financier net » ci-dessous reste positif car il ne compte pas la trésorerie (voir "Trésorerie projetée").
+      </div>
+
       <div class="hero-row">
         <div class="hero-card">
           <div class="hero-label">Patrimoine financier net projeté — {{ endDateLabel }}</div>
@@ -129,7 +159,7 @@
           </div>
           <div class="stat-card">
             <div class="stat-label">Trésorerie projetée — {{ endDateLabel }}</div>
-            <div class="stat-value">{{ fmtAmount(endBankCash) }}</div>
+            <div class="stat-value" :class="endBankCash >= 0 ? 'pos' : 'neg'">{{ fmtAmount(endBankCash) }}</div>
           </div>
           <div class="stat-card" v-if="endLiabilities === 0 && startLiabilities > 0">
             <div class="stat-label">Crédits</div>
@@ -187,6 +217,9 @@ const growthPhysical = ref(2)
 const growthCash = ref(3)
 const netFlowMode = ref('auto')
 const manualNetFlow = ref(0)
+const investMode = ref('amount')
+const investFinancial = ref(0)
+const investPhysical = ref(0)
 
 const result = ref(null)
 const loading = ref(false)
@@ -293,6 +326,14 @@ async function reload() {
       currency: currency.value,
     }
     if (netFlowMode.value === 'manual') params.avg_monthly_net_flow = manualNetFlow.value
+    params.invest_mode = investMode.value
+    if (investMode.value === 'percent') {
+      params.invest_financial_pct = investFinancial.value
+      params.invest_physical_pct = investPhysical.value
+    } else {
+      params.invest_financial_amount = investFinancial.value
+      params.invest_physical_amount = investPhysical.value
+    }
     const res = await axios.get('/api/forecast/wealth', { params })
     result.value = res.data?.response_data ?? null
   } catch (e) {
@@ -321,6 +362,20 @@ const endNetWorth = computed(() => endPoint.value?.financial_net_worth ?? 0)
 const endBankCash = computed(() => endPoint.value?.bank_cash ?? 0)
 const startLiabilities = computed(() => startPoint.value?.liabilities ?? 0)
 const endLiabilities = computed(() => endPoint.value?.liabilities ?? 0)
+
+// Le "Patrimoine financier net" (portefeuille - crédits) reste positif même quand la trésorerie
+// simulée passe sous 0 (les deux périmètres sont volontairement disjoints, voir commentaire sur
+// financial_net_worth plus bas) — sans cet avertissement dédié, un déficit structurel (abonnements +
+// crédits + part investie > flux mensuel) passe inaperçu tant qu'on ne regarde pas la courbe de
+// trésorerie en détail. Utilise la courbe "avec objectifs" si des objectifs existent (trajectoire
+// réellement pertinente pour l'utilisateur), sinon la trajectoire de base.
+const treasuryNegativeDate = computed(() => {
+  const pts = result.value?.points ?? []
+  const hasGoals = goals.value.length > 0
+  const negativePoint = pts.find(p => (hasGoals ? (p.bank_cash_with_goals ?? p.bank_cash) : p.bank_cash) < 0)
+  if (!negativePoint) return null
+  return new Date(negativePoint.date).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+})
 const delta = computed(() => endNetWorth.value - startNetWorth.value)
 const deltaPct = computed(() => startNetWorth.value ? (delta.value / Math.abs(startNetWorth.value)) * 100 : null)
 
@@ -392,6 +447,12 @@ const chartSeries = computed(() => {
   border-radius: 10px;
   color: #fca5a5;
   font-size: 13px;
+}
+.alert-warning {
+  border-color: rgba(245,158,11,0.4);
+  background: rgba(245,158,11,0.08);
+  color: #fcd34d;
+  line-height: 1.6;
 }
 
 .card {
@@ -475,6 +536,20 @@ const chartSeries = computed(() => {
 }
 .hyp-field input:focus { outline: none; border-color: var(--color-accent); }
 .net-flow-input { width: 260px !important; margin-top: 4px; }
+
+.invest-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
+.invest-field { display: flex; flex-direction: column; gap: 6px; }
+.invest-field label { font-size: 12px; color: #9ca3af; }
+.invest-field input {
+  background: #020617;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #e5e7eb;
+  font-size: 13px;
+  width: 160px;
+}
+.invest-field input:focus { outline: none; border-color: var(--color-accent); }
 
 .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .pill {
