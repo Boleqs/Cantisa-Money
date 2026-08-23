@@ -20,6 +20,7 @@ class AssetPossession(Base):
         ForeignKeyConstraint(['source_split_id'], ['splits.id'], ondelete='SET NULL'),
         ForeignKeyConstraint(['dest_split_id'], ['splits.id'], ondelete='SET NULL'),
         ForeignKeyConstraint(['dca_plan_id'], ['dca_plans.id'], ondelete='SET NULL'),
+        ForeignKeyConstraint(['operation_id'], ['asset_operations.id'], ondelete='SET NULL'),
 
         CheckConstraint("quantity <= 1000000000 AND quantity >= 0", name='asset_possession_quantity_check')
     )
@@ -35,6 +36,9 @@ class AssetPossession(Base):
     # Non nul si ce lot provient d'une exécution de plan DCA (voir dca_plans.py) — permet de
     # retrouver les lots générés par un plan sans dépendre du texte de la description.
     dca_plan_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    # Non nul si ce lot a été créé par une opération sur titre (fusion/scission reçue) — voir
+    # asset_operations.py et rt_assets.py::create_asset_operation. NULL pour un lot d'achat normal.
+    operation_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     quantity = Column(Numeric(18, 6), nullable=False, default=0)
     purchase_price:int = Column(Numeric, nullable=True)
     purchase_price_native:int = Column(Numeric, nullable=True)

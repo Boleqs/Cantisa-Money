@@ -76,7 +76,7 @@ TagsRoutes(app, DB, Tags, TagsOnSplits, Splits, Transactions, Users)
 SubscriptionsRoutes(app, DB, Subscriptions, Users, Transactions, Splits, Accounts, SubscriptionPriceHistory)
 DashboardRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Commodities, FxRates, UserSettings,
                  Assets, AssetPossession, AssetDisposal)
-AssetsRoutes(app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings)
+AssetsRoutes(app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings, AssetOperations)
 DcaRoutes(app, DB, DcaPlans, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, Users, UserSettings)
 ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budgets, Subscriptions, Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
@@ -104,7 +104,8 @@ BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, B
              AssetValuations, Transactions, Splits, TagsOnSplits, UserSettings, TransactionDocuments,
              Institutions, SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
              TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist, CustomReports,
-             Loans, LoanInstallments, LoanRateRevisions, FinancialDocuments=FinancialDocuments)
+             Loans, LoanInstallments, LoanRateRevisions, FinancialDocuments=FinancialDocuments,
+             AssetOperations=AssetOperations)
 CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
                      Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 

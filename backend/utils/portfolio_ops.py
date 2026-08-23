@@ -105,6 +105,17 @@ def convert_default_to_asset_currency(amount, asset_currency, default_currency, 
     return converted, None
 
 
+def cost_basis_per_unit(purchase_price, fees, quantity, fx_rate):
+    """Prix de revient (coût d'achat + frais, ramené à l'unité) d'un lot, dans la devise
+    d'affichage — même formule que Portfolio.vue::costBasisPerUnit (frontend), pour rester
+    cohérent entre les deux. purchase_price est en devise native de l'actif, fx_rate le taux
+    historique de CET achat (asset_currency -> devise par défaut, 1.0 si devises identiques) ;
+    fees est déjà en devise par défaut (cf. AddPossessionSchema.fees)."""
+    if purchase_price is None or not quantity:
+        return None
+    return float(purchase_price) * float(fx_rate) + float(fees or 0) / float(quantity)
+
+
 def format_qty(q):
     """Rendu compact d'une quantité potentiellement fractionnaire dans une description de
     transaction (ex: "x2.29" plutôt que "x2.290000")."""

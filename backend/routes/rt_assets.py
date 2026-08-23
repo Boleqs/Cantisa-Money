@@ -11,7 +11,7 @@ from backend.utils.api_responses import json_response
 from backend.utils.market_price import fetch_live_price, convert_amount, get_fx_rate
 from backend.utils.restricted_by_permission import restricted_by_permission
 from backend.utils.portfolio_ops import resolve_current_value, resolve_purchase_price, resolve_split_amounts, \
-    convert_asset_to_default_currency, convert_default_to_asset_currency, format_qty
+    convert_asset_to_default_currency, convert_default_to_asset_currency, format_qty, cost_basis_per_unit
 from backend.utils.asset_geography import compute_country_breakdown
 
 VALID_ASSET_TYPES = ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')
@@ -96,6 +96,26 @@ class SellPossessionSchema(Schema):
     dest_account_id = fields.UUID(load_default=None)
 
 
+class CreateAssetOperationSchema(Schema):
+    asset_id = fields.UUID(required=True)
+    operation_type = fields.String(required=True, validate=validate.OneOf(['split', 'merger', 'spinoff']))
+    operation_date = fields.Date(required=True)
+    # "Pour ratio_from part(s) détenue(s), on obtient ratio_to part(s)" — ex: split 4-pour-1 =>
+    # ratio_from=1, ratio_to=4 ; regroupement 1-pour-10 => ratio_from=10, ratio_to=1.
+    ratio_from = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
+    ratio_to = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
+    # Obligatoire pour merger/spinoff (validé dans la route, pas ici : dépend de operation_type).
+    # L'actif cible doit déjà exister — pas de création inline dans cette opération.
+    target_asset_id = fields.UUID(load_default=None, allow_none=True)
+    # Obligatoire pour spinoff uniquement (part du prix de revient transférée vers l'actif cible).
+    cost_allocation_pct = fields.Decimal(load_default=None, allow_none=True, validate=validate.Range(min=0, max=100))
+    note = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
+
+
+class GetAssetOperationsSchema(Schema):
+    asset_id = fields.UUID(required=True)
+
+
 class GetAssetHistorySchema(Schema):
     asset_id = fields.UUID(required=True)
     start_date = fields.Date(load_default=None)
@@ -149,6 +169,7 @@ def _possession_to_dict(p, disposals=None):
         'source_account_id': str(p.source_account_id) if p.source_account_id else None,
         'tx_id': str(p.tx_id) if p.tx_id else None,
         'dca_plan_id': str(p.dca_plan_id) if p.dca_plan_id else None,
+        'operation_id': str(p.operation_id) if p.operation_id else None,
         'quantity': float(p.quantity),
         'remaining_quantity': float(p.quantity - disposed_qty),
         'purchase_price': float(p.purchase_price) if p.purchase_price is not None else None,
@@ -164,7 +185,23 @@ def _possession_to_dict(p, disposals=None):
             'fees': float(d.fees or 0),
             'fx_rate': float(d.fx_rate) if d.fx_rate is not None else None,
             'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
+            'operation_id': str(d.operation_id) if d.operation_id else None,
         } for d in disposals],
+    }
+
+
+def _operation_to_dict(o):
+    return {
+        'id': str(o.id),
+        'asset_id': str(o.asset_id),
+        'operation_type': o.operation_type,
+        'operation_date': o.operation_date.isoformat(),
+        'ratio_from': float(o.ratio_from),
+        'ratio_to': float(o.ratio_to),
+        'target_asset_id': str(o.target_asset_id) if o.target_asset_id else None,
+        'cost_allocation_pct': float(o.cost_allocation_pct) if o.cost_allocation_pct is not None else None,
+        'note': o.note,
+        'created_at': o.created_at.isoformat() if o.created_at else None,
     }
 
 
@@ -208,8 +245,18 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDispo
     snapshot_wealth(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, WealthSnapshot, Splits, snapshot_user_id=user_id)
 
 
+class _OperationError(Exception):
+    """Erreur métier levée en cours d'application d'une opération sur titre — distincte d'une
+    Exception générique pour renvoyer un BAD_REQUEST (message utilisateur) plutôt qu'un SERVER_ERROR,
+    tout en garantissant le rollback (contrairement à un `return` en plein milieu du try)."""
+    def __init__(self, message, code=HttpCode.BAD_REQUEST):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
 class AssetsRoutes:
-    def __init__(self, app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings):
+    def __init__(self, app, DB, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Accounts, Transactions, Splits, WealthSnapshot, Users, AssetValuations, UserSettings, AssetOperations):
         ROUTE_PATH = f"{ROOT_PATH}/assets"
 
         @app.route(f"{ROUTE_PATH}", methods=['GET'])
@@ -1044,6 +1091,214 @@ class AssetsRoutes:
                         'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
                     } for d in disposals],
                 }, HttpCode.CREATED)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        # ── Opérations sur titre (split, fusion, scission) ──────────────────
+
+        @app.route(f"{ROUTE_PATH}/operations", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def get_asset_operations():
+            try:
+                data = GetAssetOperationsSchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+            operations = AssetOperations.query.filter_by(user_id=user_id, asset_id=a.id) \
+                .order_by(AssetOperations.operation_date.desc()).all()
+            return json_response([_operation_to_dict(o) for o in operations], HttpCode.OK)
+
+        @app.route(f"{ROUTE_PATH}/operations", methods=['POST'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def create_asset_operation():
+            """Applique une opération sur titre décidée par l'émetteur à TOUS les lots de l'actif
+            source, tous comptes confondus. Les 3 types partagent un principe commun : ne jamais
+            changer un euro déjà réalisé dans le passé ni la valeur totale actuelle, seulement
+            re-dénominer le "prix par part" — voir le détail par branche ci-dessous et le plan associé.
+            Ne touche jamais Transactions/Splits (grand livre) : aucune opération ici ne bouge de cash."""
+            try:
+                data = CreateAssetOperationSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+
+            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
+            if not a:
+                return json_response('Asset not found', HttpCode.NOT_FOUND)
+
+            op_type = data['operation_type']
+            target = target_commodity = None
+            if op_type in ('merger', 'spinoff'):
+                target_id = data.get('target_asset_id')
+                if not target_id:
+                    return json_response(
+                        "target_asset_id est obligatoire pour une fusion ou une scission", HttpCode.BAD_REQUEST)
+                if target_id == data['asset_id']:
+                    return json_response("L'actif cible doit être différent de l'actif source", HttpCode.BAD_REQUEST)
+                target = Assets.query.filter(Assets.id == target_id, Assets.user_id == user_id).first()
+                if not target:
+                    return json_response('Target asset not found', HttpCode.NOT_FOUND)
+                target_commodity = Commodities.query.filter_by(id=target.commodity_id).first()
+                if not target_commodity:
+                    return json_response('Target commodity not found', HttpCode.NOT_FOUND)
+            if op_type == 'spinoff' and data.get('cost_allocation_pct') is None:
+                return json_response("cost_allocation_pct est obligatoire pour une scission", HttpCode.BAD_REQUEST)
+
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            default_currency = settings.currency if settings else 'EUR'
+            ratio = float(data['ratio_to']) / float(data['ratio_from'])
+            operation_date = data['operation_date']
+
+            lots = AssetPossession.query.filter_by(user_id=user_id, asset_id=a.id).all()
+            lot_ids = [p.id for p in lots]
+            disposals_by_lot = {}
+            if lot_ids:
+                for d in AssetDisposal.query.filter(AssetDisposal.possession_id.in_(lot_ids)).all():
+                    disposals_by_lot.setdefault(d.possession_id, []).append(d)
+
+            def resolve_target_purchase_price(cost_in_default_ccy, new_qty):
+                """Convertit un coût en devise par défaut vers la devise native de l'actif cible, au
+                taux historique de operation_date (même convention que AssetPossession.fx_rate
+                ailleurs dans ce fichier : None si devises identiques). Retourne (purchase_price, fx_rate)."""
+                if target_commodity.short_name == default_currency:
+                    return cost_in_default_ccy / new_qty, None
+                rate = get_fx_rate(target_commodity.short_name, default_currency, FxRates, on_date=operation_date)
+                if rate is None:
+                    raise _OperationError(
+                        f"Taux de change historique {target_commodity.short_name} → {default_currency} "
+                        f"indisponible pour la date de l'opération")
+                return (cost_in_default_ccy / rate) / new_qty, rate
+
+            try:
+                operation = AssetOperations(
+                    user_id=user_id, asset_id=a.id, operation_type=op_type, operation_date=operation_date,
+                    ratio_from=data['ratio_from'], ratio_to=data['ratio_to'],
+                    target_asset_id=target.id if target else None,
+                    cost_allocation_pct=data.get('cost_allocation_pct'), note=data.get('note'),
+                )
+                DB.session.add(operation)
+                DB.session.flush()
+
+                if op_type == 'split':
+                    # Rescale EN PLACE, sur tous les lots (y compris déjà partiellement/totalement
+                    # vendus, pour rester dimensionnellement cohérent avec les cessions passées) :
+                    # quantité × ratio, prix par unité ÷ ratio — la valeur totale et le gain réalisé
+                    # de chaque vente passée restent mathématiquement invariants sous cette transfo.
+                    for p in lots:
+                        p.quantity = float(p.quantity) * ratio
+                        if p.purchase_price is not None:
+                            p.purchase_price = float(p.purchase_price) / ratio
+                        if p.purchase_price_native is not None:
+                            p.purchase_price_native = float(p.purchase_price_native) / ratio
+                        for d in disposals_by_lot.get(p.id, []):
+                            d.quantity = float(d.quantity) * ratio
+                            if d.sale_price is not None:
+                                d.sale_price = float(d.sale_price) / ratio
+                            if d.sale_price_native is not None:
+                                d.sale_price_native = float(d.sale_price_native) / ratio
+                            # realized_gain inchangé : invariant sous cette transformation.
+                    a.value_per_unit = float(a.value_per_unit or 0) / ratio
+                    for v in AssetValuations.query.filter(
+                            AssetValuations.asset_id == a.id, AssetValuations.valuation_date < operation_date).all():
+                        v.value_per_unit = float(v.value_per_unit) / ratio
+
+                elif op_type == 'merger':
+                    # L'actif source disparaît : chaque lot restant est clôturé (cession synthétique,
+                    # gain nul — rollover fiscalement neutre, pas de composante cash en v1) et son coût
+                    # de revient intégral roule vers un nouveau lot sur l'actif cible, même compte,
+                    # même date d'achat d'origine (durée de détention conservée).
+                    for p in lots:
+                        disposed = sum(float(d.quantity) for d in disposals_by_lot.get(p.id, []))
+                        remaining = float(p.quantity) - disposed
+                        if remaining <= 1e-9:
+                            continue
+                        fx_for_cost = float(p.fx_rate) if p.fx_rate is not None else 1.0
+                        basis = cost_basis_per_unit(p.purchase_price, p.fees, p.quantity, fx_for_cost)
+                        cost_remaining = basis * remaining if basis is not None else None
+
+                        holding_period_days = None
+                        if p.purchase_date:
+                            purchase_date_only = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
+                            holding_period_days = (operation_date - purchase_date_only).days
+
+                        DB.session.add(AssetDisposal(
+                            user_id=user_id, possession_id=p.id, quantity=remaining,
+                            sale_price=p.purchase_price, sale_price_native=p.purchase_price_native,
+                            fees=0, fx_rate=p.fx_rate, sale_date=operation_date, dest_account_id=None,
+                            tx_id=None, realized_gain=(0 if cost_remaining is not None else None),
+                            holding_period_days=holding_period_days, operation_id=operation.id,
+                        ))
+
+                        new_qty = remaining * ratio
+                        new_purchase_price = new_fx_rate = None
+                        if cost_remaining is not None:
+                            new_purchase_price, new_fx_rate = resolve_target_purchase_price(cost_remaining, new_qty)
+
+                        DB.session.add(AssetPossession(
+                            user_id=user_id, asset_id=target.id, account_id=p.account_id,
+                            source_account_id=None, tx_id=None, quantity=new_qty,
+                            purchase_price=new_purchase_price, purchase_price_native=new_purchase_price,
+                            fees=0, fx_rate=new_fx_rate, purchase_date=p.purchase_date,
+                            operation_id=operation.id,
+                        ))
+
+                else:  # spinoff
+                    # L'actif source continue d'exister : quantité inchangée, mais son prix de revient
+                    # est réduit de la part transférée vers l'actif cible (pct saisi par l'utilisateur —
+                    # ne peut pas être déduit automatiquement, dépend de valeurs de marché externes).
+                    pct = float(data['cost_allocation_pct'])
+                    for p in lots:
+                        disposed = sum(float(d.quantity) for d in disposals_by_lot.get(p.id, []))
+                        remaining = float(p.quantity) - disposed
+                        if remaining <= 1e-9:
+                            continue
+                        fx_for_cost = float(p.fx_rate) if p.fx_rate is not None else 1.0
+                        basis = cost_basis_per_unit(p.purchase_price, p.fees, p.quantity, fx_for_cost)
+                        new_qty = remaining * ratio
+
+                        if basis is None:
+                            # Coût inconnu sur le lot source : rien à réallouer, on octroie juste les
+                            # nouvelles parts avec un coût inconnu, sans toucher au lot source.
+                            DB.session.add(AssetPossession(
+                                user_id=user_id, asset_id=target.id, account_id=p.account_id,
+                                source_account_id=None, tx_id=None, quantity=new_qty,
+                                purchase_price=None, purchase_price_native=None, fees=0, fx_rate=None,
+                                purchase_date=p.purchase_date, operation_id=operation.id,
+                            ))
+                            continue
+
+                        total_cost = basis * remaining
+                        transferred_cost = total_cost * (pct / 100)
+                        kept_cost = total_cost - transferred_cost
+
+                        # Lot source modifié en place (quantité inchangée) : le prix de revient est
+                        # recalculé pour refléter kept_cost, frais remis à 0 (déjà absorbés dedans).
+                        p.purchase_price = (kept_cost / remaining) / fx_for_cost
+                        p.purchase_price_native = p.purchase_price
+                        p.fees = 0
+
+                        new_purchase_price, new_fx_rate = resolve_target_purchase_price(transferred_cost, new_qty)
+                        DB.session.add(AssetPossession(
+                            user_id=user_id, asset_id=target.id, account_id=p.account_id,
+                            source_account_id=None, tx_id=None, quantity=new_qty,
+                            purchase_price=new_purchase_price, purchase_price_native=new_purchase_price,
+                            fees=0, fx_rate=new_fx_rate, purchase_date=p.purchase_date,
+                            operation_id=operation.id,
+                        ))
+
+                DB.session.commit()
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+                                       Transactions, Splits, WealthSnapshot, AssetValuations, user_id, operation_date)
+                return json_response(_operation_to_dict(operation), HttpCode.CREATED)
+            except _OperationError as e:
+                DB.session.rollback()
+                return json_response(e.message, e.code)
             except Exception as e:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)

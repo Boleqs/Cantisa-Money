@@ -18,6 +18,7 @@ class AssetDisposal(Base):
         ForeignKeyConstraint(['tx_id'], ['transactions.id'], ondelete='SET NULL'),
         ForeignKeyConstraint(['source_split_id'], ['splits.id'], ondelete='SET NULL'),
         ForeignKeyConstraint(['dest_split_id'], ['splits.id'], ondelete='SET NULL'),
+        ForeignKeyConstraint(['operation_id'], ['asset_operations.id'], ondelete='SET NULL'),
 
         CheckConstraint("quantity <= 1000000000 AND quantity >= 0", name='ck_asset_disposal_quantity'),
     )
@@ -46,4 +47,8 @@ class AssetDisposal(Base):
     # Null si le lot cédé n'avait pas de purchase_price connu (coût d'acquisition inconnu).
     realized_gain:int = Column(Numeric, nullable=True)
     holding_period_days:int = Column(Integer, nullable=True)
+    # Non nul si cette cession est la clôture synthétique d'un lot lors d'une fusion (voir
+    # asset_operations.py et rt_assets.py::create_asset_operation) — realized_gain vaut alors 0
+    # (rollover neutre) plutôt qu'un vrai gain/perte de marché. NULL pour une vente normale.
+    operation_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())

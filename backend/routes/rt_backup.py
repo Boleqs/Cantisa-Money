@@ -108,7 +108,8 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
                       TransactionDocuments, Institutions=None, SubscriptionPriceHistory=None,
                       DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None, TaxHouseholdIncome=None,
                       FinancialGoals=None, ImportCategoryRules=None, Watchlist=None, CustomReports=None,
-                      Loans=None, LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None):
+                      Loans=None, LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None,
+                      AssetOperations=None):
     commodities = Commodities.query.filter_by(user_id=user_id).all()
     accounts = Accounts.query.filter_by(user_id=user_id).all()
     institutions = Institutions.query.filter_by(user_id=user_id).all() if Institutions is not None else []
@@ -127,6 +128,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
     asset_possessions = AssetPossession.query.filter_by(user_id=user_id).all()
     asset_disposals = AssetDisposal.query.filter_by(user_id=user_id).all()
     asset_valuations = AssetValuations.query.filter_by(user_id=user_id).all()
+    asset_operations = AssetOperations.query.filter_by(user_id=user_id).all() if AssetOperations is not None else []
     dca_plans = DcaPlans.query.filter_by(user_id=user_id).all() if DcaPlans is not None else []
     tax_regimes = TaxRegime.query.filter_by(user_id=user_id).all() if TaxRegime is not None else []
     household_profiles = TaxHouseholdProfile.query.filter_by(user_id=user_id).all() if TaxHouseholdProfile is not None else []
@@ -220,6 +222,12 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'id': _u(v.id), 'asset_id': _u(v.asset_id), 'valuation_date': _dt(v.valuation_date),
             'value_per_unit': _n(v.value_per_unit),
         } for v in asset_valuations],
+        'asset_operations': [{
+            'id': _u(o.id), 'asset_id': _u(o.asset_id), 'operation_type': o.operation_type,
+            'operation_date': _dt(o.operation_date), 'ratio_from': _n(o.ratio_from), 'ratio_to': _n(o.ratio_to),
+            'target_asset_id': _u(o.target_asset_id), 'cost_allocation_pct': _n(o.cost_allocation_pct),
+            'note': o.note,
+        } for o in asset_operations],
         'dca_plans': [{
             'id': _u(p.id), 'name': p.name, 'asset_id': _u(p.asset_id),
             'source_account_id': _u(p.source_account_id), 'dest_account_id': _u(p.dest_account_id),
@@ -341,7 +349,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                       SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None,
                       TaxHouseholdIncome=None, FinancialGoals=None, ImportCategoryRules=None, Watchlist=None,
                       CustomReports=None, Loans=None, LoanInstallments=None, LoanRateRevisions=None,
-                      FinancialDocuments=None):
+                      FinancialDocuments=None, AssetOperations=None):
     report = {}
 
     def bump(entity, created):
@@ -586,11 +594,35 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
             map_asset[row['id']] = obj.id
             bump('assets', True)
 
+    # ── AssetOperations (clé : actif + date + type) ──────────────────────────
+    if AssetOperations is not None:
+        cache_operation = {
+            (o.asset_id, o.operation_date, o.operation_type)
+            for o in AssetOperations.query.filter_by(user_id=user_id).all()
+        }
+        for row in payload.get('asset_operations', []):
+            asset_local = map_asset.get(row.get('asset_id'))
+            if not asset_local:
+                continue
+            op_date = _parse_date(row.get('operation_date'))
+            key = (asset_local, op_date, row.get('operation_type'))
+            if key in cache_operation:
+                bump('asset_operations', False)
+            else:
+                DB.session.add(AssetOperations(
+                    user_id=user_id, asset_id=asset_local, operation_type=row.get('operation_type'),
+                    operation_date=op_date, ratio_from=row.get('ratio_from', 1), ratio_to=row.get('ratio_to', 1),
+                    target_asset_id=map_asset.get(row.get('target_asset_id')),
+                    cost_allocation_pct=row.get('cost_allocation_pct'), note=row.get('note')))
+                cache_operation.add(key)
+                bump('asset_operations', True)
+        DB.session.flush()
+
     # ── AssetPossession (clé heuristique : actif + compte + date + qté + prix) ─
-    # Les liens tx_id/source_split_id/dest_split_id (traçabilité vers la transaction d'origine) ne
-    # sont pas ré-établis à l'import : reconstituer le bon split source de façon fiable serait
-    # disproportionné pour une sauvegarde, la donnée patrimoniale elle-même (quantité, prix, date)
-    # est préservée intégralement.
+    # Les liens tx_id/source_split_id/dest_split_id/operation_id (traçabilité vers la transaction ou
+    # l'opération d'origine) ne sont pas ré-établis à l'import : reconstituer la bonne référence de
+    # façon fiable serait disproportionné pour une sauvegarde, la donnée patrimoniale elle-même
+    # (quantité, prix, date) est préservée intégralement.
     existing_possessions = AssetPossession.query.filter_by(user_id=user_id).all()
     cache_possession = {
         (p.asset_id, p.account_id, p.purchase_date, p.quantity, p.purchase_price): p.id
@@ -640,8 +672,8 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     DB.session.flush()
 
     # ── AssetDisposal (clé heuristique : lot local + date + qté + prix de vente) ─
-    # Même convention que AssetPossession : tx_id/source_split_id/dest_split_id ne sont pas
-    # ré-établis, la donnée fiscale/patrimoniale (quantité cédée, prix, date, plus-value réalisée)
+    # Même convention que AssetPossession : tx_id/source_split_id/dest_split_id/operation_id ne sont
+    # pas ré-établis, la donnée fiscale/patrimoniale (quantité cédée, prix, date, plus-value réalisée)
     # est préservée intégralement. possession_id est résolu via map_possession construit ci-dessus.
     existing_disposals = AssetDisposal.query.filter_by(user_id=user_id).all()
     cache_disposal = {
@@ -1087,7 +1119,8 @@ class BackupRoutes:
                  Institutions=None, SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None,
                  TaxHouseholdProfile=None, TaxHouseholdIncome=None, FinancialGoals=None,
                  ImportCategoryRules=None, Watchlist=None, CustomReports=None, Loans=None,
-                 LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None):
+                 LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None,
+                 AssetOperations=None):
         ROUTE_PATH = f"{ROOT_PATH}/backup"
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
@@ -1101,7 +1134,7 @@ class BackupRoutes:
                                     SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
                                     TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist,
                                     CustomReports, Loans, LoanInstallments, LoanRateRevisions,
-                                    FinancialDocuments=FinancialDocuments)
+                                    FinancialDocuments=FinancialDocuments, AssetOperations=AssetOperations)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr('data.json', json_lib.dumps(data, ensure_ascii=False, indent=2))
@@ -1158,7 +1191,7 @@ class BackupRoutes:
                                           ImportCategoryRules=ImportCategoryRules, Watchlist=Watchlist,
                                           CustomReports=CustomReports, Loans=Loans,
                                           LoanInstallments=LoanInstallments, LoanRateRevisions=LoanRateRevisions,
-                                          FinancialDocuments=FinancialDocuments)
+                                          FinancialDocuments=FinancialDocuments, AssetOperations=AssetOperations)
                 DB.session.commit()
                 return json_response(report, HttpCode.OK)
             except Exception as e:

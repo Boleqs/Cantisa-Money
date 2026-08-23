@@ -2,6 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Le code (comme le reste de l'app, cf. fr-FR codé en dur côté frontend) suppose que "maintenant"
+# correspond à l'heure de Paris : tous les datetime.now() du backend sont naïfs (pas de tzinfo,
+# jamais convertis en UTC) et comparés tels quels à l'heure du navigateur (ex: lastUpdatedLabel
+# dans Portfolio.vue). Sans ce réglage, l'image de base (Debian) tourne en UTC — un rafraîchissement
+# de prix qui vient de se produire s'affichait "il y a 2 heures" en France l'été (CEST = UTC+2).
+ENV TZ=Europe/Paris
+
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 

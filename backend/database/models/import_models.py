@@ -4,6 +4,7 @@ from .asset_possession import AssetPossession
 from .bank_connections import BankConnections
 from .asset_disposal import AssetDisposal
 from .asset_valuations import AssetValuations
+from .asset_operations import AssetOperations
 from .assets import Assets
 from .budget_accounts import BudgetAccounts
 from .budget_categories import BudgetCategories

@@ -83,6 +83,7 @@
                 :disabled="!a.total_quantity"
                 @click="openSellAsset(a)"
               >💰</button>
+              <button class="btn-action" title="Opération sur titre (split, fusion, scission)" @click="openOperation(a)">⇄</button>
               <button class="btn-action btn-danger" :disabled="actionPending" @click="deleteAsset(a)">✕</button>
             </td>
           </tr>
@@ -105,8 +106,12 @@
                 <tbody>
                   <tr v-for="h in assetHistory(a)" :key="h.kind + h.id">
                     <td>
-                      <span class="badge-kind" :class="h.kind === 'buy' ? 'badge-kind-buy' : 'badge-kind-sell'">
-                        {{ h.kind === 'buy' ? 'Achat' : 'Vente' }}
+                      <span
+                        class="badge-kind"
+                        :class="h.operation_id ? 'badge-kind-operation' : (h.kind === 'buy' ? 'badge-kind-buy' : 'badge-kind-sell')"
+                        :title="h.operation_id ? 'Créé par une opération sur titre (split/fusion/scission)' : ''"
+                      >
+                        {{ kindLabel(h) }}
                       </span>
                     </td>
                     <td class="muted acc-cell">{{ accountName(h.account_id) }}</td>
@@ -360,8 +365,82 @@
           </div>
         </template>
 
+        <template v-if="operationsHistory.length">
+          <h3 class="history-subtitle">Opérations passées</h3>
+          <table class="sub-table">
+            <thead><tr><th>Type</th><th>Date</th><th>Ratio</th><th>Cible</th><th>Note</th></tr></thead>
+            <tbody>
+              <tr v-for="o in operationsHistory" :key="o.id">
+                <td>{{ operationTypeLabel(o.operation_type) }}</td>
+                <td class="muted">{{ o.operation_date }}</td>
+                <td class="muted">{{ o.ratio_from }} → {{ o.ratio_to }}</td>
+                <td class="muted">{{ o.target_asset_id ? assetName(o.target_asset_id) : '—' }}</td>
+                <td class="muted">{{ o.note || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+
         <div class="modal-actions">
           <button class="btn" @click="closeHistory">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal opération sur titre -->
+    <div v-if="showOperationModal" class="modal-backdrop" @click.self="shake">
+      <div class="modal" :class="{ 'modal-shake': shaking }">
+        <h2>Opération sur titre — {{ operationTarget?.name }}</h2>
+        <label>Type d'opération *
+          <select v-model="operationForm.operation_type">
+            <option value="split">Split / regroupement</option>
+            <option value="merger">Fusion</option>
+            <option value="spinoff">Scission (spin-off)</option>
+          </select>
+        </label>
+        <label>
+          Ratio — pour {{ operationForm.ratio_from || '?' }} part(s) détenue(s), on obtient {{ operationForm.ratio_to || '?' }} part(s)
+          <div class="ratio-fields">
+            <input v-model.number="operationForm.ratio_from" type="number" min="0.000001" step="any" placeholder="Avant" />
+            <span>→</span>
+            <input v-model.number="operationForm.ratio_to" type="number" min="0.000001" step="any" placeholder="Après" />
+          </div>
+        </label>
+        <p class="hint-text" v-if="operationForm.operation_type === 'split'">
+          Ex: split 4-pour-1 → 1 puis 4. Regroupement 1-pour-10 → 10 puis 1.
+        </p>
+        <label>Date de l'opération *
+          <input v-model="operationForm.operation_date" type="date" />
+        </label>
+        <template v-if="operationForm.operation_type !== 'split'">
+          <label>Actif cible * (doit déjà exister)
+            <select v-model="operationForm.target_asset_id">
+              <option :value="null">— Sélectionner —</option>
+              <option v-for="t in operationTargetOptions" :key="t.id" :value="t.id">{{ t.name }} ({{ t.symbol }})</option>
+            </select>
+          </label>
+          <p class="hint-text" v-if="!operationTargetOptions.length">
+            Aucun autre actif — crée d'abord l'actif cible via "+ Nouvel actif".
+          </p>
+        </template>
+        <label v-if="operationForm.operation_type === 'spinoff'">
+          % du prix de revient transféré vers l'actif cible *
+          <input v-model.number="operationForm.cost_allocation_pct" type="number" min="0" max="100" step="0.1" placeholder="Ex: 20" />
+        </label>
+        <p class="hint-text" v-if="operationForm.operation_type === 'merger'">
+          Traité comme un roulement neutre (pas de plus-value générée) : le prix de revient de
+          l'actif source est intégralement reporté sur l'actif cible. Pas de composante en espèces.
+        </p>
+        <label>Note (facultatif)
+          <input v-model="operationForm.note" placeholder="Ex: annonce officielle du split" />
+        </label>
+        <div class="modal-actions">
+          <button class="btn" @click="showOperationModal = false">Annuler</button>
+          <button
+            class="btn btn-primary"
+            :disabled="actionPending || !operationFormValid"
+            @click="saveOperation"
+          >{{ actionPending ? 'Application…' : 'Appliquer' }}</button>
         </div>
       </div>
     </div>
@@ -422,6 +501,14 @@ const historyError = ref('')
 const valuations = ref([])
 const valuationForm = ref({ valuation_date: null, value_per_unit: null })
 const valuationEditTarget = ref(null)
+const operationsHistory = ref([])
+
+const showOperationModal = ref(false)
+const operationTarget = ref(null)
+const operationForm = ref({
+  operation_type: 'split', ratio_from: 1, ratio_to: 1, operation_date: null,
+  target_asset_id: null, cost_allocation_pct: null, note: '',
+})
 
 const { shaking, shake } = useModalShake()
 useEscapeClose(
@@ -429,10 +516,11 @@ useEscapeClose(
     if (showModal.value) showModal.value = false
     else if (showPossessionModal.value) showPossessionModal.value = false
     else if (showSellModal.value) showSellModal.value = false
+    else if (showOperationModal.value) showOperationModal.value = false
     else if (showHistoryModal.value) closeHistory()
   },
   shake,
-  () => showModal.value || showPossessionModal.value || showSellModal.value
+  () => showModal.value || showPossessionModal.value || showSellModal.value || showOperationModal.value
 )
 
 // Mémoïsés pour ne pas recréer le graphique Chart.js (via le watch de LineGraph) à chaque
@@ -851,16 +939,27 @@ function assetHistory(a) {
     entries.push({
       kind: 'buy', id: p.id, date: p.purchase_date, account_id: p.account_id,
       quantity: p.quantity, price: p.purchase_price, fees: p.fees, gain: null, possession: p,
+      operation_id: p.operation_id,
     })
     for (const d of p.disposals || []) {
       entries.push({
         kind: 'sell', id: d.id, date: d.sale_date, account_id: d.dest_account_id || p.account_id,
         quantity: d.quantity, price: d.sale_price, fees: d.fees, fx_rate: d.fx_rate, gain: d.realized_gain, possession: p,
+        operation_id: d.operation_id,
       })
     }
   }
   entries.sort((x, y) => new Date(y.date) - new Date(x.date))
   return entries
+}
+
+// Une ligne créée par une opération sur titre (nouveau lot reçu en fusion/scission, ou clôture
+// synthétique lors d'une fusion) est distinguée d'un achat/vente manuel classique — le type exact
+// (split/fusion/scission) n'est volontairement pas ré-affiché ici (nécessiterait une requête
+// supplémentaire par ligne), voir la section "Opérations passées" de la modale Historique pour le détail.
+function kindLabel(h) {
+  if (h.kind === 'buy') return h.operation_id ? 'Opération' : 'Achat'
+  return h.operation_id ? 'Clôture' : 'Vente'
 }
 
 async function refreshPrice(a) {
@@ -935,6 +1034,7 @@ async function openHistory(a) {
   showHistoryModal.value = true
   await loadHistory()
   if (!a.track_live_price) await loadValuations()
+  await loadOperations()
 }
 
 function closeHistory() {
@@ -942,8 +1042,74 @@ function closeHistory() {
   historyTarget.value = null
   historyData.value = []
   valuations.value = []
+  operationsHistory.value = []
   cancelEditValuation()
 }
+
+async function loadOperations() {
+  if (!historyTarget.value) return
+  try {
+    const res = await axios.get('/api/assets/operations', { params: { asset_id: historyTarget.value.id } })
+    operationsHistory.value = Array.isArray(res.data?.response_data) ? res.data.response_data : []
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  }
+}
+
+function assetName(assetId) {
+  return assets.value.find(x => x.id === assetId)?.name || assetId
+}
+
+const operationTypeLabels = { split: 'Split / regroupement', merger: 'Fusion', spinoff: 'Scission' }
+function operationTypeLabel(t) {
+  return operationTypeLabels[t] || t
+}
+
+// Actifs éligibles comme cible d'une fusion/scission : tous sauf l'actif source lui-même — doit
+// déjà exister (pas de création inline dans cette modale, cf. rt_assets.py::create_asset_operation).
+const operationTargetOptions = computed(() =>
+  assets.value.filter(x => x.id !== operationTarget.value?.id))
+
+function openOperation(a) {
+  operationTarget.value = a
+  operationForm.value = {
+    operation_type: 'split', ratio_from: 1, ratio_to: 1, operation_date: null,
+    target_asset_id: null, cost_allocation_pct: null, note: '',
+  }
+  showOperationModal.value = true
+}
+
+async function saveOperation() {
+  if (actionPending.value) return
+  actionPending.value = true
+  try {
+    await axios.post('/api/assets/operations', {
+      asset_id: operationTarget.value.id,
+      operation_type: operationForm.value.operation_type,
+      operation_date: operationForm.value.operation_date,
+      ratio_from: operationForm.value.ratio_from,
+      ratio_to: operationForm.value.ratio_to,
+      target_asset_id: operationForm.value.operation_type !== 'split' ? operationForm.value.target_asset_id : null,
+      cost_allocation_pct: operationForm.value.operation_type === 'spinoff' ? operationForm.value.cost_allocation_pct : null,
+      note: operationForm.value.note || null,
+    })
+    showOperationModal.value = false
+    await reload()
+    toast.success('Opération sur titre appliquée.')
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
+  }
+}
+
+const operationFormValid = computed(() => {
+  const f = operationForm.value
+  if (!f.operation_date || !f.ratio_from || !f.ratio_to || f.ratio_from <= 0 || f.ratio_to <= 0) return false
+  if (f.operation_type !== 'split' && !f.target_asset_id) return false
+  if (f.operation_type === 'spinoff' && (f.cost_allocation_pct == null || f.cost_allocation_pct < 0 || f.cost_allocation_pct > 100)) return false
+  return true
+})
 
 async function loadHistory() {
   if (!historyTarget.value) return
@@ -1150,6 +1316,7 @@ onMounted(() => reload())
 }
 .badge-kind-buy { background: rgba(59,130,246,0.12); color: #93c5fd; border-color: rgba(59,130,246,0.3); }
 .badge-kind-sell { background: rgba(245,158,11,0.1); color: #fde68a; border-color: rgba(245,158,11,0.3); }
+.badge-kind-operation { background: rgba(168,85,247,0.12); color: #d8b4fe; border-color: rgba(168,85,247,0.3); }
 
 .badge {
   padding: 3px 8px;
@@ -1265,6 +1432,10 @@ onMounted(() => reload())
 .gain-positive { color: #4ade80; font-weight: 600; }
 .gain-negative { color: #f87171; font-weight: 600; }
 .hint-inline { font-size: 10px; font-weight: 400; color: #6b7280; margin-left: 3px; }
+
+.ratio-fields { display: flex; align-items: center; gap: 8px; }
+.ratio-fields input { flex: 1; min-width: 0; }
+.ratio-fields span { color: #6b7280; }
 
 .modal-history { width: 640px; }
 .no-data { font-size: 13px; color: #6b7280; padding: 12px 0; }
