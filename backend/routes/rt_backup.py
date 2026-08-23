@@ -4,6 +4,7 @@ import io
 import os
 import uuid
 import zipfile
+from collections import defaultdict, deque
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 
@@ -822,6 +823,11 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     # Clé de correspondance (comme l'import CSV/QIF, étendue à toute la transaction plutôt qu'un
     # seul split) : même date + même description + même multiset de (compte local, montant) sur
     # l'ensemble des splits. Les comptes/catégories référencés doivent avoir été résolus avant.
+    # cache_tx est un multiset (une file par signature) et ne contient QUE les transactions déjà
+    # en base avant cet import : deux transactions du payload partageant la même signature (ex.
+    # deux péages identiques le même jour) sont deux lignes réelles distinctes et doivent toutes
+    # les deux être créées, pas fusionnées entre elles — seule une transaction déjà présente en
+    # base peut absorber un match, et chaque match ne consomme qu'une occurrence de la file.
     existing_tx = Transactions.query.filter_by(user_id=user_id).all()
     existing_tx_ids = [t.id for t in existing_tx]
     existing_splits = Splits.query.filter(Splits.tx_id.in_(existing_tx_ids)).all() if existing_tx_ids else []
@@ -832,10 +838,10 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     def tx_signature(post_date, description, split_pairs):
         return (post_date.date() if post_date else None, description or '', tuple(sorted(split_pairs)))
 
-    cache_tx = {}
+    cache_tx = defaultdict(deque)
     for t in existing_tx:
         pairs = [(s.account_id, s.quantity) for s in splits_by_tx.get(t.id, [])]
-        cache_tx[tx_signature(t.post_date, t.description, pairs)] = t
+        cache_tx[tx_signature(t.post_date, t.description, pairs)].append(t)
 
     map_split = {}
     for row in payload.get('transactions', []):
@@ -858,7 +864,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
 
         post_date = _parse_dt(row.get('post_date'))
         sig = tx_signature(post_date, row.get('description'), remapped_pairs)
-        existing = cache_tx.get(sig)
+        existing = cache_tx[sig].popleft() if cache_tx[sig] else None
         if existing:
             map_tx[row['id']] = existing.id
             bump('transactions', False)
@@ -883,7 +889,6 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                 is_cleared=row.get('is_cleared', False))
             DB.session.add(tx)
             DB.session.flush()
-            cache_tx[sig] = tx
             map_tx[row['id']] = tx.id
             bump('transactions', True)
             for s in tx_splits:
