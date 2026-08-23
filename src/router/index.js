@@ -220,6 +220,12 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/receipt-templates',
+        name: 'ReceiptTemplates',
+        component: () => import('../views/ReceiptTemplates.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/reconcile',
         name: 'Reconcile',
         component: () => import('../views/Reconcile.vue'),

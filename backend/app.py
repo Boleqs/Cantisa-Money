@@ -82,7 +82,8 @@ ReportsRoutes(app, DB, Accounts, Transactions, Splits, Categories, Users, Budget
 RolesRoutes(app, DB, Users, Roles, Permissions, RolePermissions)
 ImportRoutes(app, DB, Transactions, Splits, Users, Categories, ImportCategoryRules)
 BankSyncRoutes(app, DB, BankConnections, Accounts, Institutions, Transactions, Splits, ImportCategoryRules, Users)
-DocumentsRoutes(app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users)
+DocumentsRoutes(app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users,
+                 ReceiptTemplates=ReceiptTemplates)
 FinancialDocumentsRoutes(app, DB, FinancialDocuments, Accounts, Assets, Loans, Users)
 ReconcileRoutes(app, DB, Transactions, Splits, Accounts, Users)
 TestRoutes(app, DB, Users, Accounts)
@@ -92,6 +93,7 @@ LoansRoutes(app, DB, Loans, LoanInstallments, LoanRateRevisions, Users, Transact
 ForecastRoutes(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
                Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, Users, FinancialGoals)
 GoalsRoutes(app, DB, FinancialGoals, Users)
+ReceiptTemplatesRoutes(app, DB, ReceiptTemplates, Users)
 SettingsRoutes(app, DB, UserSettings, Users, Commodities, Budgets, FxRates)
 OnboardingRoutes(app, DB, UserSettings, Commodities, Accounts, Categories, Tags)
 TaxRoutes(app, DB, Users, TaxRegime, TaxHouseholdProfile, TaxHouseholdIncome, Categories,

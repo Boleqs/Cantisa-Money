@@ -14,7 +14,7 @@ import {
     faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
     faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
     faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
-    faArrowRightArrowLeft, faPlug, faWandMagicSparkles, faEarthAmericas, faVault
+    faArrowRightArrowLeft, faPlug, faWandMagicSparkles, faEarthAmericas, faVault, faCropSimple
 } from '@fortawesome/free-solid-svg-icons';
 
 export default {
@@ -47,7 +47,7 @@ export default {
             faSatelliteDish, faScaleBalanced, faCalculator, faFileContract, faPeopleRoof,
             faFolderOpen, faChartBar, faGear, faBook, faFolderTree, faTag,
             faUserShield, faUsers, faUserLock, faDatabase, faChartArea, faLandmark, faCoins,
-            faArrowRightArrowLeft, faPlug, faEarthAmericas, faVault
+            faArrowRightArrowLeft, faPlug, faEarthAmericas, faVault, faCropSimple
         }
     }
 }
@@ -116,6 +116,7 @@ export default {
               <SidebarSectionTitle label="Paramètres"/>
               <SidebarLink v-if="hasPermission('Réglages personnels')" to="/parametres" :icon="faGear">Paramétrage</SidebarLink>
               <SidebarLink v-if="hasPermission('Comptabilité')" to="/import/rules" :icon="faWandMagicSparkles">Règles apprises</SidebarLink>
+              <SidebarLink v-if="hasPermission('Comptabilité')" to="/receipt-templates" :icon="faCropSimple">Gabarits de tickets</SidebarLink>
             </template>
 
             <SidebarGroup v-if="hasPermission('Comptabilité')" label="Référentiels" :icon="faBook" :paths="['/categories', '/tags']">

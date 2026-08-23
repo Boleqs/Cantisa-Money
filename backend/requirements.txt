@@ -14,9 +14,12 @@ python-dateutil
 fpdf2
 yfinance
 pytickersymbols
-pytesseract
 Pillow
 PyMuPDF
 gunicorn
 cryptography
 requests
+# OCR des tickets/factures (backend/utils/receipt_ocr.py) — dépendance lourde (torch, ~200-300 Mo,
+# modèles téléchargés au premier lancement) mais nettement plus robuste sur des photos imparfaites
+# (thermique pâli, angle, flou) que Tesseract, écarté pour cette raison.
+easyocr

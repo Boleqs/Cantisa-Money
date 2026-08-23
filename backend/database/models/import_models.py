@@ -21,6 +21,7 @@ from .institutions import Institutions
 from .loans import Loans
 from .loan_installments import LoanInstallments
 from .loan_rate_revisions import LoanRateRevisions
+from .receipt_templates import ReceiptTemplates
 from .splits import Splits
 from .subscriptions import Subscriptions
 from .subscription_price_history import SubscriptionPriceHistory

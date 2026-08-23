@@ -19,8 +19,20 @@
         <span v-else class="file-name">📄 {{ file.name }}</span>
       </div>
 
+      <div v-if="templatesList.length" class="form-group template-select-group">
+        <label class="form-label">Gabarit à appliquer</label>
+        <select v-model="selectedTemplateId" class="form-select" :disabled="isPdf">
+          <option :value="null">Détection automatique (par nom de marchand lu par l'OCR)</option>
+          <option v-for="t in templatesList" :key="t.id" :value="t.id">{{ t.merchant_name }}</option>
+        </select>
+        <p class="template-select-hint">
+          <span v-if="isPdf">Les gabarits ne s'appliquent qu'aux photos, pas aux PDF.</span>
+          <span v-else>À forcer si l'OCR risque de mal lire le nom du marchand (donc de rater la détection automatique).</span>
+        </p>
+      </div>
+
       <div class="info-banner">
-        Lecture par OCR local (Tesseract), sans IA. Le résultat est toujours à vérifier à l'étape suivante avant validation.
+        Lecture par OCR local (EasyOCR), sans IA. Le résultat est toujours à vérifier à l'étape suivante avant validation.
       </div>
 
       <div class="step-actions">
@@ -38,6 +50,16 @@
 
       <div v-if="warnings.length" class="alert alert-warn">
         <div v-for="(w, i) in warnings" :key="i">{{ w }}</div>
+      </div>
+
+      <div v-if="imageUrl" class="receipt-panel">
+        <img :src="imageUrl" alt="Ticket scanné" class="receipt-thumb" />
+        <div class="receipt-panel-side">
+          <div v-if="templateApplied" class="template-badge">✓ Gabarit appliqué — lecture ciblée par zone</div>
+          <button type="button" class="btn btn-sm" @click="openTemplateEditor(templateApplied)">
+            {{ templateApplied ? '🧾 Modifier le gabarit' : '🧾 Créer un gabarit pour ce marchand' }}
+          </button>
+        </div>
       </div>
 
       <div class="config-grid">
@@ -120,15 +142,25 @@
         </button>
       </div>
     </section>
+
+    <ReceiptTemplateEditor
+      v-if="showTemplateEditor"
+      :image-url="imageUrl"
+      :merchant-name="form.description"
+      :existing-template="editingTemplate"
+      @saved="onTemplateSaved"
+      @cancel="showTemplateEditor = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import { confirmDialog } from '@/utils/confirmDialog'
 import { accountDisplayLabel } from '@/utils/accountDisplay.js'
 import { ensureInstitutionsLoaded } from '@/utils/institutions.js'
+import ReceiptTemplateEditor from './ReceiptTemplateEditor.vue'
 
 const props = defineProps({
   existingTxId: { type: String, default: null },
@@ -157,6 +189,16 @@ const documentId = ref(null)
 const detectedTotal = ref(null)
 const warnings = ref([])
 const lines = ref([])
+
+const imageUrl = ref(null)
+const templateApplied = ref(false)
+const templateId = ref(null)
+const showTemplateEditor = ref(false)
+const editingTemplate = ref(null)
+
+const templatesList = ref([])
+const selectedTemplateId = ref(null)
+const isPdf = computed(() => file.value?.type === 'application/pdf')
 
 // Sur une transaction existante, préremplit compte payeur/dépense avec ceux déjà utilisés
 // (le split le plus négatif = payeur, le split de type Expense — ou le plus positif à défaut —
@@ -203,6 +245,33 @@ function onFileChange(e) {
 function setFile(f) {
   file.value = f
   error.value = ''
+  if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
+  // Les gabarits ne s'appliquent qu'aux images (voir receipt_ocr.py::load_image) — pas d'aperçu
+  // ni de bouton gabarit pour un PDF.
+  imageUrl.value = f.type.startsWith('image/') ? URL.createObjectURL(f) : null
+}
+
+async function openTemplateEditor(editExisting) {
+  editingTemplate.value = null
+  if (editExisting && templateId.value) {
+    try {
+      const { data } = await axios.get('/api/receipt-templates')
+      const list = Array.isArray(data?.response_data) ? data.response_data : []
+      editingTemplate.value = list.find(t => t.id === templateId.value) || null
+    } catch (e) {
+      // silencieux — l'éditeur s'ouvre quand même en mode création
+    }
+  }
+  showTemplateEditor.value = true
+}
+
+function onTemplateSaved(template) {
+  showTemplateEditor.value = false
+  templateApplied.value = true
+  templateId.value = template.id
+  const idx = templatesList.value.findIndex(t => t.id === template.id)
+  if (idx >= 0) templatesList.value[idx] = template
+  else templatesList.value.push(template)
 }
 
 function addLine() {
@@ -215,6 +284,7 @@ async function parse() {
   try {
     const fd = new FormData()
     fd.append('file', file.value)
+    if (selectedTemplateId.value) fd.append('template_id', selectedTemplateId.value)
     const { data } = await axios.post('/api/documents/parse', fd)
     const res = data.response_data
 
@@ -224,6 +294,8 @@ async function parse() {
     lines.value = (res.lines || []).map(l => ({ label: l.label, amount: l.amount, tag_id: l.suggested_tag_id || null }))
     form.value.description = res.merchant || ''
     form.value.post_date = res.date || new Date().toISOString().slice(0, 10)
+    templateApplied.value = !!res.template_applied
+    templateId.value = res.template_id || null
 
     localStep.value = 1
   } catch (e) {
@@ -274,6 +346,10 @@ async function backToUpload() {
   }
   documentId.value = null
   localStep.value = 0
+  if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
+  imageUrl.value = null
+  templateApplied.value = false
+  templateId.value = null
 }
 
 async function loadReferentials() {
@@ -292,8 +368,22 @@ async function loadReferentials() {
   }
 }
 
+async function loadTemplates() {
+  try {
+    const { data } = await axios.get('/api/receipt-templates')
+    templatesList.value = Array.isArray(data?.response_data) ? data.response_data : []
+  } catch (e) {
+    // silencieux — le sélecteur de gabarit reste simplement vide, pas bloquant pour scanner un ticket
+  }
+}
+
 onMounted(() => {
   if (!props.accounts) loadReferentials()
+  loadTemplates()
+})
+
+onBeforeUnmount(() => {
+  if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
 })
 </script>
 
@@ -345,6 +435,25 @@ onMounted(() => {
 }
 .drop-zone:hover, .drop-zone--over { border-color: #3b82f6; background: rgba(59, 130, 246, 0.06); color: #93c5fd; }
 .file-name { color: #93c5fd; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+
+.receipt-panel {
+  display: flex; gap: 16px; align-items: flex-start;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: rgba(2, 6, 23, 0.35);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 20px;
+}
+.receipt-thumb { max-width: 140px; max-height: 180px; border-radius: 8px; flex-shrink: 0; object-fit: contain; }
+.receipt-panel-side { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.template-badge {
+  font-size: 12px; font-weight: 600; color: #6ee7b7;
+  background: rgba(52, 211, 153, 0.1); border: 1px solid rgba(52, 211, 153, 0.3);
+  border-radius: 999px; padding: 5px 12px;
+}
+
+.template-select-group { margin-bottom: 16px; }
+.template-select-hint { margin: 6px 0 0; font-size: 12px; color: #64748b; line-height: 1.5; }
 
 .form-label { display: block; font-size: 13px; color: #9ca3af; margin-bottom: 6px; }
 .form-select, .form-input {

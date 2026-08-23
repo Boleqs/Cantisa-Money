@@ -29,3 +29,4 @@ from .rt_onboarding import OnboardingRoutes
 from .rt_tax import TaxRoutes
 from .rt_forecast import ForecastRoutes
 from .rt_goals import GoalsRoutes
+from .rt_receipt_templates import ReceiptTemplatesRoutes

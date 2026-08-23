@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from marshmallow import Schema, fields, ValidationError
 
@@ -9,7 +10,7 @@ from backend.config import (HttpCode,
                             VAR_PERMISSIONS_LIST)
 from backend.utils.api_responses import json_response
 from backend.utils.restricted_by_permission import restricted_by_permission
-from backend.utils.receipt_ocr import extract_text, parse_receipt
+from backend.utils.receipt_ocr import extract_text, parse_receipt, apply_template, load_image, normalize_merchant_key
 from backend.routes.rt_transactions import _tx_to_dict
 
 DOCUMENTS_PERM = VAR_PERMISSIONS_LIST['Comptabilité']['id']
@@ -31,7 +32,8 @@ class ConfirmDocumentSchema(Schema):
 
 
 class DocumentsRoutes:
-    def __init__(self, app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users):
+    def __init__(self, app, DB, TransactionDocuments, Transactions, Splits, TagsOnSplits, Tags, Accounts, Users,
+                 ReceiptTemplates=None):
         ROUTE_PATH = f"{ROOT_PATH}/documents"
 
         @app.route(f"{ROUTE_PATH}/parse", methods=['POST'])
@@ -58,6 +60,43 @@ class DocumentsRoutes:
                          for t in Tags.query.filter(Tags.user_id == user_id).all()]
             parsed = parse_receipt(raw_text, user_tags)
 
+            # Lecture pleine page ci-dessus toujours nécessaire pour identifier le marchand (même
+            # sans gabarit) — si un gabarit existe pour ce marchand, on l'utilise en complément :
+            # recadrage + OCR ciblé par zone, plus fiable qu'une lecture pleine page + heuristiques
+            # sur un ticket dont on connaît déjà la mise en page. Non géré pour les PDF (voir
+            # receipt_ocr.py::load_image).
+            # template_id (facultatif, form-data) : force un gabarit précis au lieu de la détection
+            # automatique par nom de marchand — utile quand l'OCR pleine page lit mal le marchand
+            # (donc la détection auto échouerait) alors que l'utilisateur, lui, sait déjà de quel
+            # ticket il s'agit.
+            template = None
+            template_result = None
+            if ReceiptTemplates is not None and mime_type != 'application/pdf':
+                forced_template_id = request.form.get('template_id') or None
+                if forced_template_id:
+                    try:
+                        template = ReceiptTemplates.query.filter_by(
+                            id=uuid.UUID(forced_template_id), user_id=user_id).first()
+                    except ValueError:
+                        template = None
+                elif parsed['merchant']:
+                    merchant_key = normalize_merchant_key(parsed['merchant'])
+                    template = ReceiptTemplates.query.filter_by(user_id=user_id, merchant_key=merchant_key).first()
+                if template:
+                    image = load_image(file_bytes, mime_type)
+                    template_result = apply_template(image, template.zones, user_tags)
+
+            if template_result:
+                result = {
+                    'merchant': template_result['merchant'] or template.merchant_name,
+                    'date': template_result['date'] or parsed['date'],
+                    'total': template_result['total'] if template_result['total'] is not None else parsed['total'],
+                    'lines': template_result['lines'] if 'articles' in template_result['zones_used'] and template_result['lines'] else parsed['lines'],
+                    'warnings': template_result['warnings'] or parsed['warnings'],
+                }
+            else:
+                result = parsed
+
             doc = TransactionDocuments(
                 user_id=user_id,
                 original_filename=file.filename,
@@ -70,11 +109,13 @@ class DocumentsRoutes:
 
             return json_response({
                 'document_id': str(doc.id),
-                'merchant': parsed['merchant'],
-                'date': parsed['date'],
-                'total': parsed['total'],
-                'lines': parsed['lines'],
-                'warnings': parsed['warnings'],
+                'merchant': result['merchant'],
+                'date': result['date'],
+                'total': result['total'],
+                'lines': result['lines'],
+                'warnings': result['warnings'],
+                'template_applied': template is not None,
+                'template_id': str(template.id) if template else None,
             }, HttpCode.OK)
 
         @app.route(f"{ROUTE_PATH}/confirm", methods=['POST'])
