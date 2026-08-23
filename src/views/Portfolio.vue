@@ -46,6 +46,7 @@
           <th>Type</th>
           <th>Secteur / Pays</th>
           <th>Valeur unitaire</th>
+          <th>Prix de revient moyen</th>
           <th>Quantité totale</th>
           <th>Valeur totale</th>
           <th>Plus-value</th>
@@ -61,6 +62,7 @@
             <td><span class="badge" :class="'badge-' + a.asset_type.toLowerCase()">{{ typeLabel(a.asset_type) }}</span></td>
             <td class="muted">{{ a.sector || a.country || '—' }}</td>
             <td>{{ fmtAmount(a.converted_value_per_unit, a.display_currency) }}</td>
+            <td class="muted">{{ avgCostBasis(a) != null ? fmtAmount(avgCostBasis(a), a.display_currency) : '—' }}</td>
             <td>{{ fmtQty(a.total_quantity) }}</td>
             <td class="value">{{ fmtAmount(a.converted_total_value, a.display_currency) }}</td>
             <td :class="gainLoss(a) ? (gainLoss(a).abs >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
@@ -86,11 +88,19 @@
           </tr>
           <!-- Historique (achats + ventes fusionnés) -->
           <tr v-if="expanded.has(a.id) && a.possessions.length" class="possession-row">
-            <td colspan="10">
+            <td colspan="11">
               <div class="table-scroll">
               <table class="sub-table">
                 <thead>
-                  <tr><th></th><th>Compte</th><th>Quantité</th><th>Prix</th><th>Frais</th><th>Date</th><th>Plus-value</th><th></th></tr>
+                  <tr>
+                    <th></th><th>Compte</th><th>Quantité</th>
+                    <th>Prix ({{ a.display_currency }})</th>
+                    <th>Frais ({{ a.display_currency }})</th>
+                    <th>Prix de revient ({{ a.display_currency }})</th>
+                    <th>Date</th>
+                    <th>Plus-value ({{ a.display_currency }})</th>
+                    <th></th>
+                  </tr>
                 </thead>
                 <tbody>
                   <tr v-for="h in assetHistory(a)" :key="h.kind + h.id">
@@ -101,8 +111,9 @@
                     </td>
                     <td class="muted acc-cell">{{ accountName(h.account_id) }}</td>
                     <td>{{ h.kind === 'buy' && h.possession.disposals?.length ? `${fmtQty(remainingQty(h.possession))} / ${fmtQty(h.quantity)}` : fmtQty(h.quantity) }}</td>
-                    <td class="muted">{{ h.price != null ? fmtAmount(h.price, commodityCode(a.commodity_id)) : '—' }}</td>
+                    <td class="muted">{{ h.price != null ? fmtAmount(h.price * (h.kind === 'buy' ? costFxRate(h.possession, a) : realizedGainRate(h, a)), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ h.fees ? fmtAmount(h.fees, a.display_currency) : '—' }}</td>
+                    <td class="muted">{{ h.kind === 'buy' && costBasisPerUnit(h.possession, a) != null ? fmtAmount(costBasisPerUnit(h.possession, a), a.display_currency) : '—' }}</td>
                     <td class="muted">{{ h.date ? h.date.slice(0, 10) : '—' }}</td>
                     <td v-if="h.kind === 'sell'" :class="h.gain != null ? (h.gain >= 0 ? 'gain-positive' : 'gain-negative') : 'muted'">
                       {{ h.gain != null ? fmtAmount(h.gain * realizedGainRate(h, a), a.display_currency) : '—' }}
@@ -511,7 +522,10 @@ function commodityCode(id) {
 function fmtAmount(v, currency = 'EUR') {
   // Pas de style: 'currency' — Intl choisirait un symbole localisé (ex: "$US" pour USD en fr-FR)
   // qui ne correspond pas au code stocké en base (commodities.short_name). Nombre + code tel quel.
-  return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2 }).format(v || 0)} ${currency}`
+  // maximumFractionDigits explicite : sans lui, Intl retombe sur 3 décimales par défaut dès que
+  // minimumFractionDigits est fourni seul, ce qui laissait passer un 3e chiffre (ex: 12,345 EUR)
+  // sur des montants issus d'une conversion de devise (division/multiplication à virgule longue).
+  return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0)} ${currency}`
 }
 
 // Quantité potentiellement fractionnaire depuis l'introduction du DCA (achat d'un montant fixe ->
@@ -541,6 +555,16 @@ function conversionRate(a) {
 // mais pas pire que le comportement précédent pour ces données historiques.
 function realizedGainRate(h, a) {
   return h.fx_rate != null ? h.fx_rate : conversionRate(a)
+}
+
+// Même principe que realizedGainRate, côté achat : le coût d'un lot est lui aussi un événement figé
+// dans le passé (p.fx_rate, résolu à l'achat — cf. rt_assets.py::add_possession). Le reconvertir avec
+// le taux du jour (conversionRate) ferait fluctuer le "coût" affiché au fil du temps selon le cours
+// des devises, alors que la valeur ACTUELLE (elle) doit bien utiliser le taux du jour — d'où l'usage
+// de deux taux différents dans possessionGain/gainLoss. Repli sur conversionRate uniquement pour les
+// lots antérieurs à l'ajout de cette colonne (fx_rate alors toujours null).
+function costFxRate(p, a) {
+  return p.fx_rate != null ? p.fx_rate : conversionRate(a)
 }
 
 const byType = computed(() => {
@@ -851,12 +875,26 @@ async function refreshPrice(a) {
   }
 }
 
-// Frais d'achat du lot proratisés à la quantité restante — la part correspondant aux unités déjà
-// vendues est déjà comptée dans realized_gain (côté backend), pas ici, pour ne pas la compter deux
-// fois. p.fees est toujours en devise par défaut (cf. rt_assets.py::add_possession), donc déjà
-// dans la même devise que a.display_currency — pas besoin de conversionRate dessus.
-function remainingFees(p, qty) {
-  return p.quantity ? (p.fees || 0) * (qty / p.quantity) : 0
+// Prix de revient (coût d'achat + frais, ramené à l'unité) d'un lot, dans la devise d'affichage —
+// propriété intrinsèque et FIGÉE du lot (utilise sa quantité et ses frais D'ORIGINE, pas la
+// quantité restante) : contrairement au coût utilisé pour la plus-value latente, le prix de revient
+// par unité ne change pas quand une partie du lot est vendue. p.fees est toujours déjà en devise par
+// défaut (cf. rt_assets.py::add_possession) — seul purchase_price (devise native) a besoin d'être
+// converti, via costFxRate (taux historique de CET achat, pas celui du jour).
+function costBasisPerUnit(p, a) {
+  if (p.purchase_price == null || !p.quantity) return null
+  return p.purchase_price * costFxRate(p, a) + (p.fees || 0) / p.quantity
+}
+
+// Prix de revient moyen pondéré de l'actif : moyenne des prix de revient par lot, pondérée par la
+// quantité RESTANTE de chaque lot (les unités déjà vendues ne comptent pas dans le coût de la
+// position actuellement détenue).
+function avgCostBasis(a) {
+  const priced = (a.possessions || []).filter(p => p.purchase_price != null && remainingQty(p) > 0)
+  const totalQty = priced.reduce((s, p) => s + remainingQty(p), 0)
+  if (!totalQty) return null
+  const totalCost = priced.reduce((s, p) => s + remainingQty(p) * costBasisPerUnit(p, a), 0)
+  return totalCost / totalQty
 }
 
 function possessionGain(p, a) {
@@ -865,7 +903,7 @@ function possessionGain(p, a) {
   // surestime sa plus-value latente.
   const qty = remainingQty(p)
   const currentValue = qty * a.value_per_unit * conversionRate(a)
-  const totalCost = qty * p.purchase_price * conversionRate(a) + remainingFees(p, qty)
+  const totalCost = qty * costBasisPerUnit(p, a)
   const abs = currentValue - totalCost
   const pct = totalCost !== 0 ? (abs / totalCost) * 100 : null
   return { abs, pct }
@@ -875,9 +913,7 @@ function gainLoss(a) {
   const priced = (a.possessions || []).filter(p => p.purchase_price != null)
   if (!priced.length) return null
   const currentValue = priced.reduce((s, p) => s + remainingQty(p) * a.value_per_unit, 0) * conversionRate(a)
-  const costValue = priced.reduce((s, p) => s + remainingQty(p) * p.purchase_price, 0) * conversionRate(a)
-  const totalFees = priced.reduce((s, p) => s + remainingFees(p, remainingQty(p)), 0)
-  const totalCost = costValue + totalFees
+  const totalCost = priced.reduce((s, p) => s + remainingQty(p) * costBasisPerUnit(p, a), 0)
   const abs = currentValue - totalCost
   const pct = totalCost !== 0 ? (abs / totalCost) * 100 : null
   return { abs, pct }
