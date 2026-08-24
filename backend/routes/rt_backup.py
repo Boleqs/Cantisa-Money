@@ -109,7 +109,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
                       DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None, TaxHouseholdIncome=None,
                       FinancialGoals=None, ImportCategoryRules=None, Watchlist=None, CustomReports=None,
                       Loans=None, LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None,
-                      AssetOperations=None):
+                      AssetOperations=None, ReceiptTemplates=None):
     commodities = Commodities.query.filter_by(user_id=user_id).all()
     accounts = Accounts.query.filter_by(user_id=user_id).all()
     institutions = Institutions.query.filter_by(user_id=user_id).all() if Institutions is not None else []
@@ -155,6 +155,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
     # utilisateur — 'pending' est un état transitoire de relecture OCR en cours, jamais persistant.
     documents = TransactionDocuments.query.filter_by(user_id=user_id, status='confirmed').all()
     financial_documents = FinancialDocuments.query.filter_by(user_id=user_id).all() if FinancialDocuments is not None else []
+    receipt_templates = ReceiptTemplates.query.filter_by(user_id=user_id).all() if ReceiptTemplates is not None else []
 
     data = {
         'backup_format_version': BACKUP_FORMAT_VERSION,
@@ -199,7 +200,7 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
         } for h in sub_price_history],
         'assets': [{
             'id': _u(a.id), 'symbol': a.symbol, 'name': a.name, 'asset_type': a.asset_type, 'sector': a.sector,
-            'commodity_id': _u(a.commodity_id), 'value_per_unit': _n(a.value_per_unit),
+            'country': a.country, 'commodity_id': _u(a.commodity_id), 'value_per_unit': _n(a.value_per_unit),
             'track_live_price': a.track_live_price,
         } for a in assets],
         'asset_possessions': [{
@@ -217,6 +218,12 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'fx_rate': _n(d.fx_rate),
             'sale_date': _dt(d.sale_date), 'dest_account_id': _u(d.dest_account_id),
             'realized_gain': _n(d.realized_gain), 'holding_period_days': d.holding_period_days,
+            # Contrairement à tx_id/source_split_id/dest_split_id/operation_id, exporté : sert à
+            # regrouper les cessions d'UNE MÊME vente FIFO (plusieurs lots à la fois) pour pouvoir la
+            # modifier/supprimer en une fois après restauration — voir rt_assets.py::_execute_sale.
+            # Sans lui, chaque lot d'une vente multi-lots redeviendrait éditable séparément après
+            # import (comportement dégradé mais sûr, pas de perte de donnée patrimoniale).
+            'sale_id': _u(d.sale_id),
         } for d in asset_disposals],
         'asset_valuations': [{
             'id': _u(v.id), 'asset_id': _u(v.asset_id), 'valuation_date': _dt(v.valuation_date),
@@ -257,6 +264,9 @@ def export_user_data(user_id, DB, Commodities, Accounts, Categories, Tags, Budge
             'opposing_account_id': _u(r.opposing_account_id),
         } for r in import_category_rules],
         'watchlist': [{'id': _u(w.id), 'ticker': w.ticker} for w in watchlist],
+        'receipt_templates': [{
+            'id': _u(r.id), 'merchant_name': r.merchant_name, 'merchant_key': r.merchant_key, 'zones': r.zones,
+        } for r in receipt_templates],
         'custom_reports': [{
             'id': _u(r.id), 'name': r.name, 'config': r.config,
         } for r in custom_reports],
@@ -349,7 +359,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                       SubscriptionPriceHistory=None, DcaPlans=None, TaxRegime=None, TaxHouseholdProfile=None,
                       TaxHouseholdIncome=None, FinancialGoals=None, ImportCategoryRules=None, Watchlist=None,
                       CustomReports=None, Loans=None, LoanInstallments=None, LoanRateRevisions=None,
-                      FinancialDocuments=None, AssetOperations=None):
+                      FinancialDocuments=None, AssetOperations=None, ReceiptTemplates=None):
     report = {}
 
     def bump(entity, created):
@@ -585,7 +595,7 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                 report.setdefault('errors', []).append(f"Actif '{row.get('name')}' ignoré (devise introuvable)")
                 continue
             obj = Assets(user_id=user_id, symbol=row['symbol'], name=row['name'], asset_type=row['asset_type'],
-                        sector=row.get('sector'), commodity_id=commodity_local,
+                        sector=row.get('sector'), country=row.get('country'), commodity_id=commodity_local,
                         value_per_unit=row.get('value_per_unit', 0),
                         track_live_price=row.get('track_live_price', False))
             DB.session.add(obj)
@@ -679,6 +689,11 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
     cache_disposal = {
         (d.possession_id, d.sale_date, d.quantity, d.sale_price) for d in existing_disposals
     }
+    # Regroupe les cessions d'une même vente FIFO d'origine (même sale_id dans le backup) sous un
+    # nouveau sale_id partagé, pour que "modifier/supprimer la vente" reste correct après import —
+    # voir le commentaire sur 'sale_id' dans export_user_data. Une ligne sans sale_id dans le backup
+    # (export antérieur à cette fonctionnalité, ou vente unitaire) reçoit un sale_id indépendant.
+    map_sale_id = {}
     for row in payload.get('asset_disposals', []):
         possession_local = map_possession.get(row.get('possession_id'))
         if not possession_local:
@@ -689,12 +704,15 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
         if key in cache_disposal:
             bump('asset_disposals', False)
         else:
+            old_sale_id = row.get('sale_id')
+            new_sale_id = map_sale_id.setdefault(old_sale_id, uuid.uuid4()) if old_sale_id else uuid.uuid4()
             DB.session.add(AssetDisposal(
                 user_id=user_id, possession_id=possession_local, quantity=row.get('quantity', 0),
                 sale_price=row.get('sale_price'), sale_price_native=row.get('sale_price_native'),
                 fees=row.get('fees', 0), fx_rate=row.get('fx_rate'),
                 sale_date=sale_date, dest_account_id=map_account.get(row.get('dest_account_id')),
-                realized_gain=row.get('realized_gain'), holding_period_days=row.get('holding_period_days')))
+                realized_gain=row.get('realized_gain'), holding_period_days=row.get('holding_period_days'),
+                sale_id=new_sale_id))
             cache_disposal.add(key)
             bump('asset_disposals', True)
     DB.session.flush()
@@ -830,6 +848,20 @@ def import_user_data(user_id, payload, DB, Commodities, Accounts, Categories, Ta
                 DB.session.add(Watchlist(user_id=user_id, ticker=row['ticker']))
                 cache_watchlist.add(row['ticker'])
                 bump('watchlist', True)
+        DB.session.flush()
+
+    # ── ReceiptTemplates (clé : merchant_key, UniqueConstraint user_id+merchant_key) ──
+    if ReceiptTemplates is not None:
+        cache_receipt_template = {t.merchant_key for t in ReceiptTemplates.query.filter_by(user_id=user_id).all()}
+        for row in payload.get('receipt_templates', []):
+            if row['merchant_key'] in cache_receipt_template:
+                bump('receipt_templates', False)
+            else:
+                DB.session.add(ReceiptTemplates(
+                    user_id=user_id, merchant_name=row['merchant_name'], merchant_key=row['merchant_key'],
+                    zones=row.get('zones', [])))
+                cache_receipt_template.add(row['merchant_key'])
+                bump('receipt_templates', True)
         DB.session.flush()
 
     # ── CustomReports (clé heuristique : nom) ────────────────────────────────
@@ -1120,7 +1152,7 @@ class BackupRoutes:
                  TaxHouseholdProfile=None, TaxHouseholdIncome=None, FinancialGoals=None,
                  ImportCategoryRules=None, Watchlist=None, CustomReports=None, Loans=None,
                  LoanInstallments=None, LoanRateRevisions=None, FinancialDocuments=None,
-                 AssetOperations=None):
+                 AssetOperations=None, ReceiptTemplates=None):
         ROUTE_PATH = f"{ROOT_PATH}/backup"
 
         @app.route(f"{ROUTE_PATH}/export", methods=['GET'])
@@ -1134,7 +1166,8 @@ class BackupRoutes:
                                     SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
                                     TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist,
                                     CustomReports, Loans, LoanInstallments, LoanRateRevisions,
-                                    FinancialDocuments=FinancialDocuments, AssetOperations=AssetOperations)
+                                    FinancialDocuments=FinancialDocuments, AssetOperations=AssetOperations,
+                                    ReceiptTemplates=ReceiptTemplates)
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr('data.json', json_lib.dumps(data, ensure_ascii=False, indent=2))
@@ -1191,7 +1224,8 @@ class BackupRoutes:
                                           ImportCategoryRules=ImportCategoryRules, Watchlist=Watchlist,
                                           CustomReports=CustomReports, Loans=Loans,
                                           LoanInstallments=LoanInstallments, LoanRateRevisions=LoanRateRevisions,
-                                          FinancialDocuments=FinancialDocuments, AssetOperations=AssetOperations)
+                                          FinancialDocuments=FinancialDocuments, AssetOperations=AssetOperations,
+                                          ReceiptTemplates=ReceiptTemplates)
                 DB.session.commit()
                 return json_response(report, HttpCode.OK)
             except Exception as e:

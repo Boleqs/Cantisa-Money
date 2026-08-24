@@ -96,6 +96,22 @@ class SellPossessionSchema(Schema):
     dest_account_id = fields.UUID(load_default=None)
 
 
+class UpdateSaleSchema(Schema):
+    # asset_id/account_id ne sont pas éditables (déduits des cessions existantes) — même logique que
+    # UpdatePossessionSchema, qui ne laisse pas non plus changer le compte d'une position.
+    sale_id = fields.UUID(required=True)
+    quantity = fields.Decimal(required=True, as_string=False, validate=validate.Range(min=Decimal('0.000001')))
+    sale_price = fields.Decimal(required=True, as_string=False)
+    fees = fields.Decimal(load_default=Decimal('0'), as_string=False, validate=validate.Range(min=0))
+    fx_rate = fields.Decimal(load_default=None, as_string=False, allow_none=True, validate=validate.Range(min=Decimal('0.000001')))
+    sale_date = fields.Date(required=True)
+    dest_account_id = fields.UUID(load_default=None)
+
+
+class DeleteSaleSchema(Schema):
+    sale_id = fields.UUID(required=True)
+
+
 class CreateAssetOperationSchema(Schema):
     asset_id = fields.UUID(required=True)
     operation_type = fields.String(required=True, validate=validate.OneOf(['split', 'merger', 'spinoff']))
@@ -184,8 +200,10 @@ def _possession_to_dict(p, disposals=None):
             'sale_price': float(d.sale_price) if d.sale_price is not None else None,
             'fees': float(d.fees or 0),
             'fx_rate': float(d.fx_rate) if d.fx_rate is not None else None,
+            'dest_account_id': str(d.dest_account_id) if d.dest_account_id else None,
             'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
             'operation_id': str(d.operation_id) if d.operation_id else None,
+            'sale_id': str(d.sale_id) if d.sale_id else None,
         } for d in disposals],
     }
 
@@ -246,13 +264,201 @@ def _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDispo
 
 
 class _OperationError(Exception):
-    """Erreur métier levée en cours d'application d'une opération sur titre — distincte d'une
-    Exception générique pour renvoyer un BAD_REQUEST (message utilisateur) plutôt qu'un SERVER_ERROR,
-    tout en garantissant le rollback (contrairement à un `return` en plein milieu du try)."""
-    def __init__(self, message, code=HttpCode.BAD_REQUEST):
-        super().__init__(message)
+    """Erreur métier levée en cours d'application d'une opération sur titre, ou de la création/
+    modification d'une vente (voir _execute_sale) — distincte d'une Exception générique pour renvoyer
+    un BAD_REQUEST (message utilisateur) plutôt qu'un SERVER_ERROR, tout en garantissant le rollback
+    (contrairement à un `return` en plein milieu du try). `response` permet de propager tel quel un
+    json_response déjà construit par un helper de portfolio_ops.py (son code HTTP n'est pas toujours
+    BAD_REQUEST) sans le reconstruire à partir d'un message."""
+    def __init__(self, message=None, code=HttpCode.BAD_REQUEST, response=None):
+        super().__init__(message or 'Operation error')
         self.message = message
         self.code = code
+        self.response = response
+
+
+def _execute_sale(DB, Assets, AssetPossession, AssetDisposal, Commodities, Accounts, Transactions, Splits,
+                   UserSettings, FxRates, user_id, asset_id, account_id, quantity, sale_price_native,
+                   sale_date, fees, dest_account_id, manual_fx_rate, sale_id):
+    """Cœur FIFO partagé par la création d'une vente (route POST) et sa modification (route PATCH) —
+    voir AssetsRoutes.sell_possession/update_sale. Consomme les lots de (asset_id, account_id) du
+    plus ancien au plus récent jusqu'à couvrir `quantity`, crée les AssetDisposal (et la Transaction/
+    Splits si dest_account_id est fourni) — ajoutés à la session mais PAS commités, à la charge de
+    l'appelant (une modification supprime d'abord l'ancienne vente dans la même transaction). Lève
+    _OperationError sur toute erreur de validation métier plutôt que de retourner une réponse Flask
+    directement, pour rester utilisable par n'importe quelle route appelante."""
+    a = Assets.query.filter(Assets.id == asset_id, Assets.user_id == user_id).first()
+    if not a:
+        raise _OperationError('Asset not found', HttpCode.NOT_FOUND)
+    commodity = Commodities.query.filter_by(id=a.commodity_id).first()
+    if not commodity:
+        raise _OperationError('Commodity not found', HttpCode.NOT_FOUND)
+    position_account = Accounts.query.filter(
+        Accounts.id == account_id, Accounts.user_id == user_id).first()
+    if not position_account:
+        raise _OperationError('Account not found', HttpCode.NOT_FOUND)
+
+    # FIFO : lots de ce (actif, compte), du plus ancien au plus récent, avec leur quantité restante —
+    # consommés dans cet ordre jusqu'à couvrir la quantité vendue. Méthode standard pour le calcul de
+    # plus-value (cohérent avec le fisc français), et celle qu'un utilisateur attend implicitement
+    # quand il vend "l'actif" plutôt qu'une ligne précise.
+    lots = AssetPossession.query.filter_by(
+        user_id=user_id, asset_id=asset_id, account_id=account_id
+    ).order_by(AssetPossession.purchase_date.asc(), AssetPossession.created_at.asc()).all()
+    disposals_by_lot = {p.id: AssetDisposal.query.filter_by(possession_id=p.id).all() for p in lots}
+    chunks = []  # (lot, quantité prélevée sur ce lot)
+    remaining_to_sell = float(quantity)
+    for p in lots:
+        if remaining_to_sell <= 0:
+            break
+        already_sold = sum(float(d.quantity) for d in disposals_by_lot[p.id])
+        lot_remaining = float(p.quantity) - already_sold
+        if lot_remaining <= 0:
+            continue
+        take = min(lot_remaining, remaining_to_sell)
+        chunks.append((p, take))
+        remaining_to_sell -= take
+    if remaining_to_sell > 1e-9:
+        total_remaining = sum(float(p.quantity) - sum(float(d.quantity) for d in disposals_by_lot[p.id]) for p in lots)
+        raise _OperationError(
+            f"Quantité vendue ({quantity}) supérieure à la quantité détenue sur ce compte ({total_remaining})")
+
+    sale_price_native = float(sale_price_native)
+    sale_price = sale_price_native
+    if a.track_live_price:
+        sale_price, error = resolve_purchase_price(
+            a.symbol, commodity.short_name, sale_price_native, sale_date, FxRates)
+        if error:
+            raise _OperationError(response=error)
+
+    dest_account = None
+    if dest_account_id:
+        dest_account = Accounts.query.filter(
+            Accounts.id == dest_account_id, Accounts.user_id == user_id).first()
+        if not dest_account:
+            raise _OperationError('Destination account not found', HttpCode.NOT_FOUND)
+        if dest_account.account_type not in ('Current', 'Assets', 'Equity'):
+            raise _OperationError("Le compte crédité doit être de type 'Current', 'Assets' ou 'Equity'")
+
+    settings = UserSettings.query.filter_by(user_id=user_id).first()
+    default_currency = settings.currency if settings else 'EUR'
+
+    total_fees = float(fees)
+    total_quantity = float(quantity)
+
+    # Résolu (et persisté plus bas dans chaque disposal.fx_rate) que la vente ait ou non un compte
+    # crédité — c'est ce même taux qui sert à reconvertir les frais de CETTE vente (déjà en devise
+    # par défaut) vers la devise de l'actif, pour rester cohérent avec sale_price/purchase_price/
+    # realized_gain qui y restent exprimés (cf. rt_tax.py qui reconvertit lui-même realized_gain
+    # depuis commodity.short_name).
+    proceeds_asset_ccy = total_quantity * float(sale_price)
+    proceeds_default, resolved_fx_rate, error = convert_asset_to_default_currency(
+        proceeds_asset_ccy, commodity.short_name, default_currency, manual_fx_rate, sale_date, FxRates)
+    if error:
+        raise _OperationError(response=error)
+    if commodity.short_name == default_currency:
+        total_fees_asset_ccy = total_fees
+        resolved_fx_rate = None  # pas "1.0" : aucune conversion n'a de sens ici (même devise)
+    else:
+        total_fees_asset_ccy = total_fees / resolved_fx_rate
+
+    # Frais d'achat de chaque lot reconvertis avec LE TAUX ET LA DATE DE CE LOT (p.fx_rate /
+    # p.purchase_date), pas ceux de la vente en cours — un même lot peut être vendu des années après
+    # avoir été acheté à un taux différent.
+    buy_fees_asset_ccy_by_lot = {}
+    for p, take in chunks:
+        prorated_buy_fees_default = float(p.fees or 0) * (take / float(p.quantity))
+        lot_purchase_date = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
+        prorated_buy_fees_asset, error = convert_default_to_asset_currency(
+            prorated_buy_fees_default, commodity.short_name, default_currency, p.fx_rate,
+            lot_purchase_date, FxRates)
+        if error:
+            raise _OperationError(response=error)
+        buy_fees_asset_ccy_by_lot[p.id] = prorated_buy_fees_asset
+
+    dest_amount = source_amount = dest_fx_rate = None
+    if dest_account:
+        # Le produit de la vente (déjà ramené en devise par défaut ci-dessus) moins les frais (déjà
+        # en devise par défaut) donne le virement réellement reçu — comme chez un courtier, symétrique
+        # de l'ajout des frais au coût dans add_possession. Un seul virement pour la vente entière,
+        # même si elle pioche sur plusieurs lots (FIFO) — les frais/le gain ne sont ventilés par lot
+        # que pour le calcul du gain réalisé, pas pour l'écriture comptable.
+        total_proceeds_default = proceeds_default - total_fees
+        if total_proceeds_default < 0:
+            raise _OperationError("Les frais dépassent le montant de la vente")
+        # Rôles inversés par rapport à add_possession : ici "dest_account" est le compte crédité (le
+        # cash qui entre), "source_account" est le compte débité (la position qui sort) — cf.
+        # décision de conception Phase 2 (vente = renversement à 2 splits, au montant de la vente,
+        # pas au coût d'achat).
+        dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
+            Accounts, Commodities, dest_account, position_account, total_proceeds_default,
+            default_currency, sale_date, FxRates)
+        if error:
+            raise _OperationError(response=error)
+
+    tx = None
+    source_split_id = dest_split_id = None
+    if dest_account:
+        tx = Transactions(
+            user_id=user_id,
+            currency_id=position_account.currency_id,
+            post_date=sale_date,
+            effective_date=sale_date,
+            description=f"Vente {a.symbol} x{format_qty(quantity)}",
+            category_id=None,
+            is_cleared=True,
+        )
+        DB.session.add(tx)
+        DB.session.flush()
+        source_split_id, dest_split_id = uuid.uuid4(), uuid.uuid4()
+        # source = compte de la position (débité, les titres "sortent") ; dest = compte crédité (le
+        # cash entre) — voir commentaire ci-dessus sur l'inversion des rôles.
+        DB.session.add(Splits(id=source_split_id, tx_id=tx.id, account_id=position_account.id, quantity=-source_amount, fx_rate=1.0))
+        DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
+        DB.session.flush()
+
+    disposals = []
+    for p, take in chunks:
+        # Frais de vente et gain ventilés au prorata de la part de CETTE vente prélevée sur ce lot ;
+        # frais d'achat du lot proratisés à la quantité prélevée sur ce lot spécifiquement (un même
+        # lot peut être vendu en plusieurs fois au fil du temps). chunk_fees_default est stocké tel
+        # quel (devise par défaut, comme AssetPossession.fees) ; chunk_fees_asset_ccy (reconverti
+        # plus haut) sert uniquement au calcul du gain.
+        fraction = take / total_quantity
+        chunk_fees_default = total_fees * fraction
+        chunk_fees_asset_ccy = total_fees_asset_ccy * fraction
+        realized_gain = None
+        if p.purchase_price is not None:
+            realized_gain = (
+                (float(sale_price) - float(p.purchase_price)) * take
+                - chunk_fees_asset_ccy - buy_fees_asset_ccy_by_lot[p.id]
+            )
+        holding_period_days = None
+        if p.purchase_date:
+            purchase_date_only = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
+            holding_period_days = (sale_date - purchase_date_only).days
+
+        disposal = AssetDisposal(
+            user_id=user_id,
+            possession_id=p.id,
+            quantity=take,
+            sale_price=sale_price,
+            sale_price_native=sale_price_native,
+            fees=chunk_fees_default,
+            fx_rate=resolved_fx_rate,
+            sale_date=sale_date,
+            dest_account_id=dest_account_id,
+            tx_id=tx.id if tx else None,
+            source_split_id=source_split_id,
+            dest_split_id=dest_split_id,
+            realized_gain=realized_gain,
+            holding_period_days=holding_period_days,
+            sale_id=sale_id,
+        )
+        DB.session.add(disposal)
+        disposals.append(disposal)
+
+    return a, position_account, disposals
 
 
 class AssetsRoutes:
@@ -899,198 +1105,135 @@ class AssetsRoutes:
             except ValidationError as err:
                 return json_response(err.messages, HttpCode.BAD_REQUEST)
             user_id = get_jwt_identity()
-
-            a = Assets.query.filter(Assets.id == data['asset_id'], Assets.user_id == user_id).first()
-            if not a:
-                return json_response('Asset not found', HttpCode.NOT_FOUND)
-            commodity = Commodities.query.filter_by(id=a.commodity_id).first()
-            if not commodity:
-                return json_response('Commodity not found', HttpCode.NOT_FOUND)
-            position_account = Accounts.query.filter(
-                Accounts.id == data['account_id'], Accounts.user_id == user_id).first()
-            if not position_account:
-                return json_response('Account not found', HttpCode.NOT_FOUND)
-
-            # FIFO : lots de ce (actif, compte), du plus ancien au plus récent, avec leur quantité
-            # restante — consommés dans cet ordre jusqu'à couvrir la quantité vendue. Méthode standard
-            # pour le calcul de plus-value (cohérent avec le fisc français), et celle qu'un utilisateur
-            # attend implicitement quand il vend "l'actif" plutôt qu'une ligne précise.
-            lots = AssetPossession.query.filter_by(
-                user_id=user_id, asset_id=data['asset_id'], account_id=data['account_id']
-            ).order_by(AssetPossession.purchase_date.asc(), AssetPossession.created_at.asc()).all()
-            disposals_by_lot = {p.id: AssetDisposal.query.filter_by(possession_id=p.id).all() for p in lots}
-            chunks = []  # (lot, quantité prélevée sur ce lot)
-            remaining_to_sell = float(data['quantity'])
-            for p in lots:
-                if remaining_to_sell <= 0:
-                    break
-                already_sold = sum(float(d.quantity) for d in disposals_by_lot[p.id])
-                lot_remaining = float(p.quantity) - already_sold
-                if lot_remaining <= 0:
-                    continue
-                take = min(lot_remaining, remaining_to_sell)
-                chunks.append((p, take))
-                remaining_to_sell -= take
-            if remaining_to_sell > 1e-9:
-                total_remaining = sum(float(p.quantity) - sum(float(d.quantity) for d in disposals_by_lot[p.id]) for p in lots)
-                return json_response(
-                    f"Quantité vendue ({data['quantity']}) supérieure à la quantité détenue sur ce compte ({total_remaining})",
-                    HttpCode.BAD_REQUEST)
-
-            sale_price_native = data['sale_price']
-            sale_price = sale_price_native
-            if a.track_live_price:
-                sale_price, error = resolve_purchase_price(
-                    a.symbol, commodity.short_name, sale_price_native, data['sale_date'], FxRates)
-                if error:
-                    return error
-
-            dest_account_id = data.get('dest_account_id')
-            dest_account = None
-            if dest_account_id:
-                dest_account = Accounts.query.filter(
-                    Accounts.id == dest_account_id, Accounts.user_id == user_id).first()
-                if not dest_account:
-                    return json_response('Destination account not found', HttpCode.NOT_FOUND)
-                if dest_account.account_type not in ('Current', 'Assets', 'Equity'):
-                    return json_response(
-                        "Le compte crédité doit être de type 'Current', 'Assets' ou 'Equity'", HttpCode.BAD_REQUEST)
-
-            settings = UserSettings.query.filter_by(user_id=user_id).first()
-            default_currency = settings.currency if settings else 'EUR'
-            manual_fx_rate = data.get('fx_rate')
-
-            total_fees = float(data['fees'])
-            total_quantity = float(data['quantity'])
-
-            # Résolu (et persisté plus bas dans chaque disposal.fx_rate) que la vente ait ou non un
-            # compte crédité — c'est ce même taux qui sert à reconvertir les frais de CETTE vente
-            # (déjà en devise par défaut) vers la devise de l'actif, pour rester cohérent avec
-            # sale_price/purchase_price/realized_gain qui y restent exprimés (cf. rt_tax.py qui
-            # reconvertit lui-même realized_gain depuis commodity.short_name).
-            proceeds_asset_ccy = total_quantity * float(sale_price)
-            proceeds_default, resolved_fx_rate, error = convert_asset_to_default_currency(
-                proceeds_asset_ccy, commodity.short_name, default_currency, manual_fx_rate,
-                data['sale_date'], FxRates)
-            if error:
-                return error
-            if commodity.short_name == default_currency:
-                total_fees_asset_ccy = total_fees
-                resolved_fx_rate = None  # pas "1.0" : aucune conversion n'a de sens ici (même devise)
-            else:
-                total_fees_asset_ccy = total_fees / resolved_fx_rate
-
-            # Frais d'achat de chaque lot reconvertis avec LE TAUX ET LA DATE DE CE LOT (p.fx_rate /
-            # p.purchase_date), pas ceux de la vente en cours — un même lot peut être vendu des
-            # années après avoir été acheté à un taux différent.
-            buy_fees_asset_ccy_by_lot = {}
-            for p, take in chunks:
-                prorated_buy_fees_default = float(p.fees or 0) * (take / float(p.quantity))
-                lot_purchase_date = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
-                prorated_buy_fees_asset, error = convert_default_to_asset_currency(
-                    prorated_buy_fees_default, commodity.short_name, default_currency, p.fx_rate,
-                    lot_purchase_date, FxRates)
-                if error:
-                    return error
-                buy_fees_asset_ccy_by_lot[p.id] = prorated_buy_fees_asset
-
-            dest_amount = source_amount = dest_fx_rate = None
-            if dest_account:
-                # Le produit de la vente (déjà ramené en devise par défaut ci-dessus) moins les
-                # frais (déjà en devise par défaut) donne le virement réellement reçu — comme chez
-                # un courtier, symétrique de l'ajout des frais au coût dans add_possession. Un seul
-                # virement pour la vente entière, même si elle pioche sur plusieurs lots (FIFO) — les
-                # frais/le gain ne sont ventilés par lot que pour le calcul du gain réalisé, pas pour
-                # l'écriture comptable.
-                total_proceeds_default = proceeds_default - total_fees
-                if total_proceeds_default < 0:
-                    return json_response(
-                        "Les frais dépassent le montant de la vente", HttpCode.BAD_REQUEST)
-                # Rôles inversés par rapport à add_possession : ici "dest_account" est le compte
-                # crédité (le cash qui entre), "source_account" est le compte débité (la position
-                # qui sort) — cf. décision de conception Phase 2 (vente = renversement à 2 splits,
-                # au montant de la vente, pas au coût d'achat).
-                dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
-                    Accounts, Commodities, dest_account, position_account, total_proceeds_default,
-                    default_currency, data['sale_date'], FxRates)
-                if error:
-                    return error
-
             try:
-                tx = None
-                source_split_id = dest_split_id = None
-                if dest_account:
-                    tx = Transactions(
-                        user_id=user_id,
-                        currency_id=position_account.currency_id,
-                        post_date=data['sale_date'],
-                        effective_date=data['sale_date'],
-                        description=f"Vente {a.symbol} x{format_qty(data['quantity'])}",
-                        category_id=None,
-                        is_cleared=True,
-                    )
-                    DB.session.add(tx)
-                    DB.session.flush()
-                    source_split_id, dest_split_id = uuid.uuid4(), uuid.uuid4()
-                    # source = compte de la position (débité, les titres "sortent") ; dest = compte
-                    # crédité (le cash entre) — voir commentaire ci-dessus sur l'inversion des rôles.
-                    DB.session.add(Splits(id=source_split_id, tx_id=tx.id, account_id=position_account.id, quantity=-source_amount, fx_rate=1.0))
-                    DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
-                    DB.session.flush()
-
-                disposals = []
-                for p, take in chunks:
-                    # Frais de vente et gain ventilés au prorata de la part de CETTE vente prélevée
-                    # sur ce lot ; frais d'achat du lot proratisés à la quantité prélevée sur ce lot
-                    # spécifiquement (un même lot peut être vendu en plusieurs fois au fil du temps).
-                    # chunk_fees_default est stocké tel quel (devise par défaut, comme AssetPossession.fees)
-                    # ; chunk_fees_asset_ccy (reconverti plus haut) sert uniquement au calcul du gain.
-                    fraction = take / total_quantity
-                    chunk_fees_default = total_fees * fraction
-                    chunk_fees_asset_ccy = total_fees_asset_ccy * fraction
-                    realized_gain = None
-                    if p.purchase_price is not None:
-                        realized_gain = (
-                            (float(sale_price) - float(p.purchase_price)) * take
-                            - chunk_fees_asset_ccy - buy_fees_asset_ccy_by_lot[p.id]
-                        )
-                    holding_period_days = None
-                    if p.purchase_date:
-                        purchase_date_only = p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date
-                        holding_period_days = (data['sale_date'] - purchase_date_only).days
-
-                    disposal = AssetDisposal(
-                        user_id=user_id,
-                        possession_id=p.id,
-                        quantity=take,
-                        sale_price=sale_price,
-                        sale_price_native=sale_price_native,
-                        fees=chunk_fees_default,
-                        fx_rate=resolved_fx_rate,
-                        sale_date=data['sale_date'],
-                        dest_account_id=dest_account_id,
-                        tx_id=tx.id if tx else None,
-                        source_split_id=source_split_id,
-                        dest_split_id=dest_split_id,
-                        realized_gain=realized_gain,
-                        holding_period_days=holding_period_days,
-                    )
-                    DB.session.add(disposal)
-                    disposals.append(disposal)
-
+                a, position_account, disposals = _execute_sale(
+                    DB, Assets, AssetPossession, AssetDisposal, Commodities, Accounts, Transactions, Splits,
+                    UserSettings, FxRates, user_id=user_id, asset_id=data['asset_id'], account_id=data['account_id'],
+                    quantity=data['quantity'], sale_price_native=data['sale_price'], sale_date=data['sale_date'],
+                    fees=data['fees'], dest_account_id=data.get('dest_account_id'), manual_fx_rate=data.get('fx_rate'),
+                    sale_id=uuid.uuid4(),
+                )
                 DB.session.commit()
                 _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
                                        Transactions, Splits, WealthSnapshot, AssetValuations, user_id, data['sale_date'])
                 return json_response({
                     'asset_id': str(a.id),
                     'account_id': str(position_account.id),
-                    'quantity_sold': total_quantity,
-                    'lots_touched': len(chunks),
+                    'quantity_sold': float(data['quantity']),
+                    'lots_touched': len(disposals),
                     'disposals': [{
                         'id': str(d.id), 'possession_id': str(d.possession_id), 'quantity': float(d.quantity),
                         'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
                     } for d in disposals],
                 }, HttpCode.CREATED)
+            except _OperationError as e:
+                DB.session.rollback()
+                return e.response if e.response is not None else json_response(e.message, e.code)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/possessions/sell", methods=['PATCH'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def update_sale():
+            """Modifie UNE vente, c'est-à-dire tous les AssetDisposal partageant le même sale_id (une
+            vente FIFO peut avoir touché plusieurs lots à la fois) — pas une ligne précise. L'actif et
+            le compte de la position ne sont pas éditables (déduits des cessions existantes, comme
+            account_id est figé sur update_possession) ; supprime l'ancienne vente puis en recrée une
+            nouvelle avec les nouvelles valeurs via _execute_sale, dans la même transaction DB pour
+            garantir qu'un échec de validation ne laisse pas l'ancienne vente à moitié supprimée."""
+            try:
+                data = UpdateSaleSchema().load(request.json or {})
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+
+            existing = AssetDisposal.query.filter_by(sale_id=data['sale_id'], user_id=user_id).all()
+            if not existing:
+                return json_response('Sale not found', HttpCode.NOT_FOUND)
+            if any(d.operation_id for d in existing):
+                return json_response(
+                    "Impossible de modifier une cession créée par une opération sur titre", HttpCode.BAD_REQUEST)
+
+            first_possession = AssetPossession.query.filter_by(id=existing[0].possession_id).first()
+            if not first_possession:
+                return json_response('Possession not found', HttpCode.NOT_FOUND)
+            asset_id, account_id = first_possession.asset_id, first_possession.account_id
+            old_min_date = min((d.sale_date.date() if hasattr(d.sale_date, 'date') else d.sale_date) for d in existing)
+            old_tx_ids = {d.tx_id for d in existing if d.tx_id}
+
+            try:
+                for d in existing:
+                    DB.session.delete(d)
+                DB.session.flush()
+                for tx_id in old_tx_ids:
+                    tx = Transactions.query.filter_by(id=tx_id).first()
+                    if tx:
+                        DB.session.delete(tx)  # cascade supprime les Splits liés (splits.py: ondelete='CASCADE')
+                DB.session.flush()
+
+                a, position_account, disposals = _execute_sale(
+                    DB, Assets, AssetPossession, AssetDisposal, Commodities, Accounts, Transactions, Splits,
+                    UserSettings, FxRates, user_id=user_id, asset_id=asset_id, account_id=account_id,
+                    quantity=data['quantity'], sale_price_native=data['sale_price'], sale_date=data['sale_date'],
+                    fees=data['fees'], dest_account_id=data.get('dest_account_id'), manual_fx_rate=data.get('fx_rate'),
+                    sale_id=data['sale_id'],
+                )
+                DB.session.commit()
+                refresh_from = min(old_min_date, data['sale_date'])
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+                                       Transactions, Splits, WealthSnapshot, AssetValuations, user_id, refresh_from)
+                return json_response({
+                    'asset_id': str(a.id),
+                    'account_id': str(position_account.id),
+                    'quantity_sold': float(data['quantity']),
+                    'lots_touched': len(disposals),
+                    'disposals': [{
+                        'id': str(d.id), 'possession_id': str(d.possession_id), 'quantity': float(d.quantity),
+                        'realized_gain': float(d.realized_gain) if d.realized_gain is not None else None,
+                    } for d in disposals],
+                }, HttpCode.OK)
+            except _OperationError as e:
+                DB.session.rollback()
+                return e.response if e.response is not None else json_response(e.message, e.code)
+            except Exception as e:
+                DB.session.rollback()
+                return json_response(str(e), HttpCode.SERVER_ERROR)
+
+        @app.route(f"{ROUTE_PATH}/possessions/sell", methods=['DELETE'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def delete_sale():
+            """Supprime UNE vente entière (tous les AssetDisposal partageant le même sale_id), et la
+            Transaction/Splits partagés s'il y en a — restaure la quantité sur le(s) lot(s) d'origine
+            comme delete_possession restaure une position achetée."""
+            try:
+                data = DeleteSaleSchema().load(request.args)
+            except ValidationError as err:
+                return json_response(err.messages, HttpCode.BAD_REQUEST)
+            user_id = get_jwt_identity()
+
+            existing = AssetDisposal.query.filter_by(sale_id=data['sale_id'], user_id=user_id).all()
+            if not existing:
+                return json_response('Sale not found', HttpCode.NOT_FOUND)
+            if any(d.operation_id for d in existing):
+                return json_response(
+                    "Impossible de supprimer une cession créée par une opération sur titre", HttpCode.BAD_REQUEST)
+
+            sale_date = min((d.sale_date.date() if hasattr(d.sale_date, 'date') else d.sale_date) for d in existing)
+            tx_ids = {d.tx_id for d in existing if d.tx_id}
+            try:
+                for d in existing:
+                    DB.session.delete(d)
+                for tx_id in tx_ids:
+                    tx = Transactions.query.filter_by(id=tx_id).first()
+                    if tx:
+                        DB.session.delete(tx)  # cascade supprime les Splits liés (splits.py: ondelete='CASCADE')
+                DB.session.commit()
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+                                       Transactions, Splits, WealthSnapshot, AssetValuations, user_id, sale_date)
+                return json_response('Sale deleted', HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()
                 return json_response(str(e), HttpCode.SERVER_ERROR)

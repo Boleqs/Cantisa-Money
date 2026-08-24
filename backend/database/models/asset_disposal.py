@@ -51,4 +51,9 @@ class AssetDisposal(Base):
     # asset_operations.py et rt_assets.py::create_asset_operation) — realized_gain vaut alors 0
     # (rollover neutre) plutôt qu'un vrai gain/perte de marché. NULL pour une vente normale.
     operation_id:uuid = Column(UUID(as_uuid=True), nullable=True)
+    # Partagé par toutes les cessions issues d'un même appel à sell_possession (une vente FIFO peut
+    # piocher sur plusieurs lots à la fois) — permet de modifier/supprimer LA vente en une fois plutôt
+    # que lot par lot, voir rt_assets.py::_execute_sale. NULL pour une cession issue d'une opération
+    # sur titre (operation_id non nul), qui n'est pas une vente éditable via ce mécanisme.
+    sale_id:uuid = Column(UUID(as_uuid=True), nullable=True)
     created_at:datetime = Column(DateTime, default=func.current_timestamp())

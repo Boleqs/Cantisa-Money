@@ -141,6 +141,10 @@
                           @click="deletePossession(h.possession, a)"
                         >✕</button>
                       </template>
+                      <template v-else-if="!h.operation_id">
+                        <button class="btn-action" @click="openEditSale(h, a)">✎</button>
+                        <button class="btn-action btn-danger" :disabled="actionPending" @click="deleteSale(h, a)">✕</button>
+                      </template>
                     </td>
                   </tr>
                 </tbody>
@@ -272,10 +276,10 @@
     <!-- Modal vente -->
     <div v-if="showSellModal" class="modal-backdrop" @click.self="shake">
       <div class="modal" :class="{ 'modal-shake': shaking }">
-        <h2>Vendre — {{ sellAssetTarget?.name }}</h2>
+        <h2>{{ sellEditTarget ? 'Modifier la vente' : 'Vendre' }} — {{ sellAssetTarget?.name }}</h2>
         <label>Compte *
-          <select v-model="sellForm.account_id" @change="sellForm.quantity = sellRemainingQty">
-            <option v-for="a in sellAccountsForAsset(sellAssetTarget)" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
+          <select v-model="sellForm.account_id" :disabled="!!sellEditTarget" @change="sellForm.quantity = sellRemainingQty">
+            <option v-for="a in sellAccountsForAsset(sellAssetTarget, sellEditTarget?.account_id)" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
         <p class="hint-text">
@@ -308,12 +312,12 @@
           </select>
         </label>
         <div class="modal-actions">
-          <button class="btn" @click="showSellModal = false">Annuler</button>
+          <button class="btn" @click="showSellModal = false; sellEditTarget = null">Annuler</button>
           <button
             class="btn btn-primary"
             :disabled="actionPending || !sellForm.account_id || !sellForm.quantity || sellForm.quantity <= 0 || sellForm.quantity > sellRemainingQty || sellForm.sale_price == null || !sellForm.sale_date"
             @click="saveSell"
-          >{{ actionPending ? 'Vente…' : 'Vendre' }}</button>
+          >{{ actionPending ? (sellEditTarget ? 'Modification…' : 'Vente…') : (sellEditTarget ? 'Modifier' : 'Vendre') }}</button>
         </div>
       </div>
     </div>
@@ -491,6 +495,7 @@ const expanded = ref(new Set())
 
 const showSellModal = ref(false)
 const sellAssetTarget = ref(null)
+const sellEditTarget = ref(null)
 const sellForm = ref({ account_id: null, quantity: 1, sale_price: null, fees: 0, fx_rate: null, sale_date: null, dest_account_id: null })
 
 const showHistoryModal = ref(false)
@@ -515,7 +520,7 @@ useEscapeClose(
   () => {
     if (showModal.value) showModal.value = false
     else if (showPossessionModal.value) showPossessionModal.value = false
-    else if (showSellModal.value) showSellModal.value = false
+    else if (showSellModal.value) { showSellModal.value = false; sellEditTarget.value = null }
     else if (showOperationModal.value) showOperationModal.value = false
     else if (showHistoryModal.value) closeHistory()
   },
@@ -878,13 +883,16 @@ function remainingQty(p) {
 }
 
 // Comptes détenant encore des unités de cet actif — vente au niveau de l'actif (FIFO côté backend,
-// le lot le plus ancien d'abord), pas d'une ligne précise, voir sellAccountsForAsset().
-function sellAccountsForAsset(a) {
+// le lot le plus ancien d'abord), pas d'une ligne précise, voir sellAccountsForAsset(). forceAccountId
+// garde le compte de la vente en cours d'édition dans la liste même si elle a vidé sa dernière position
+// (le compte n'est de toute façon pas modifiable en édition, voir openEditSale/le select désactivé).
+function sellAccountsForAsset(a, forceAccountId = null) {
   if (!a) return []
   const ids = new Set()
   for (const p of a.possessions || []) {
     if (remainingQty(p) > 0) ids.add(p.account_id)
   }
+  if (forceAccountId) ids.add(forceAccountId)
   return [...ids].map(id => accounts.value.find(acc => acc.id === id)).filter(Boolean)
 }
 
@@ -895,10 +903,28 @@ function remainingQtyForAccount(a, accountId) {
     .reduce((s, p) => s + remainingQty(p), 0)
 }
 
-const sellRemainingQty = computed(() => remainingQtyForAccount(sellAssetTarget.value, sellForm.value.account_id))
+// Toutes les cessions (lots) partageant le même sale_id — une vente FIFO peut avoir touché plusieurs
+// lots à la fois, voir backend rt_assets.py::_execute_sale.
+function findSaleGroup(a, saleId) {
+  const rows = []
+  for (const p of a?.possessions || []) {
+    for (const d of p.disposals || []) {
+      if (d.sale_id === saleId) rows.push({ d, p })
+    }
+  }
+  return rows
+}
+
+const sellRemainingQty = computed(() => {
+  const base = remainingQtyForAccount(sellAssetTarget.value, sellForm.value.account_id)
+  // En édition, la quantité de la vente en cours sera restaurée sur ses lots d'origine avant d'être
+  // réappliquée avec les nouvelles valeurs (voir update_sale côté backend) — donc disponible à nouveau.
+  return sellEditTarget.value ? base + sellEditTarget.value.quantity : base
+})
 
 function openSellAsset(a) {
   sellAssetTarget.value = a
+  sellEditTarget.value = null
   const firstAccount = sellAccountsForAsset(a)[0]?.id || null
   sellForm.value = {
     account_id: firstAccount,
@@ -908,22 +934,74 @@ function openSellAsset(a) {
   showSellModal.value = true
 }
 
+function openEditSale(h, a) {
+  const rows = findSaleGroup(a, h.sale_id)
+  if (!rows.length) return
+  const totalQty = rows.reduce((s, r) => s + Number(r.d.quantity), 0)
+  const totalFees = rows.reduce((s, r) => s + Number(r.d.fees || 0), 0)
+  const first = rows[0].d
+  sellAssetTarget.value = a
+  sellEditTarget.value = { sale_id: h.sale_id, quantity: totalQty, account_id: rows[0].p.account_id }
+  sellForm.value = {
+    account_id: rows[0].p.account_id,
+    quantity: totalQty,
+    sale_price: first.sale_price,
+    fees: totalFees,
+    fx_rate: first.fx_rate,
+    sale_date: first.sale_date ? first.sale_date.slice(0, 10) : null,
+    dest_account_id: first.dest_account_id || null,
+  }
+  showSellModal.value = true
+}
+
 async function saveSell() {
   if (actionPending.value) return
   actionPending.value = true
+  const isEdit = !!sellEditTarget.value
   try {
-    await axios.post('/api/assets/possessions/sell', {
-      asset_id: sellAssetTarget.value.id,
-      account_id: sellForm.value.account_id,
+    const payload = {
       quantity: sellForm.value.quantity,
       sale_price: sellForm.value.sale_price,
       fees: sellForm.value.fees || 0,
       fx_rate: sellFxMismatch.value ? (sellForm.value.fx_rate || null) : null,
       sale_date: sellForm.value.sale_date,
       dest_account_id: sellForm.value.dest_account_id || null,
-    })
+    }
+    if (isEdit) {
+      await axios.patch('/api/assets/possessions/sell', { ...payload, sale_id: sellEditTarget.value.sale_id })
+    } else {
+      await axios.post('/api/assets/possessions/sell', {
+        asset_id: sellAssetTarget.value.id,
+        account_id: sellForm.value.account_id,
+        ...payload,
+      })
+    }
     showSellModal.value = false
+    sellEditTarget.value = null
     await reload()
+    toast.success(isEdit ? 'Vente modifiée.' : 'Vente enregistrée.')
+  } catch (e) {
+    error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    actionPending.value = false
+  }
+}
+
+async function deleteSale(h, a) {
+  const rows = findSaleGroup(a, h.sale_id)
+  const totalQty = rows.reduce((s, r) => s + Number(r.d.quantity), 0)
+  const ok = await confirmDialog({
+    title: 'Supprimer la vente',
+    message: `Supprimer cette vente (${fmtQty(totalQty)} unités) ? La quantité sera restaurée sur le(s) lot(s) d'origine.`,
+    confirmLabel: 'Supprimer',
+    danger: true,
+  })
+  if (!ok || actionPending.value) return
+  actionPending.value = true
+  try {
+    await axios.delete('/api/assets/possessions/sell', { params: { sale_id: h.sale_id } })
+    await reload()
+    toast.success('Vente supprimée.')
   } catch (e) {
     error.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
   } finally {
@@ -945,7 +1023,7 @@ function assetHistory(a) {
       entries.push({
         kind: 'sell', id: d.id, date: d.sale_date, account_id: d.dest_account_id || p.account_id,
         quantity: d.quantity, price: d.sale_price, fees: d.fees, fx_rate: d.fx_rate, gain: d.realized_gain, possession: p,
-        operation_id: d.operation_id,
+        operation_id: d.operation_id, sale_id: d.sale_id, dest_account_id: d.dest_account_id,
       })
     }
   }

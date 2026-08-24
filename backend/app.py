@@ -105,7 +105,7 @@ BackupRoutes(app, DB, Users, Commodities, Accounts, Categories, Tags, Budgets, B
              Institutions, SubscriptionPriceHistory, DcaPlans, TaxRegime, TaxHouseholdProfile,
              TaxHouseholdIncome, FinancialGoals, ImportCategoryRules, Watchlist, CustomReports,
              Loans, LoanInstallments, LoanRateRevisions, FinancialDocuments=FinancialDocuments,
-             AssetOperations=AssetOperations)
+             AssetOperations=AssetOperations, ReceiptTemplates=ReceiptTemplates)
 CustomReportsRoutes(app, DB, Users, CustomReports, Splits, Transactions, Accounts, Categories,
                      Tags, TagsOnSplits, Commodities, FxRates, UserSettings)
 
