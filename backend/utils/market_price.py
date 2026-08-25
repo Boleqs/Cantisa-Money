@@ -1,3 +1,4 @@
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta, date as date_cls
 
@@ -5,10 +6,13 @@ import yfinance as yf
 
 
 def _safe(value, decimals=2):
+    """yfinance renvoie parfois inf/-inf/nan (ex: ratios calculés sur un résultat ~nul) — non
+    finite, donc non sérialisable en JSON strict, d'où le filtrage explicite (voir rt_markets.py)."""
     try:
         if value is None:
             return None
-        return round(float(value), decimals)
+        v = float(value)
+        return round(v, decimals) if math.isfinite(v) else None
     except (TypeError, ValueError):
         return None
 

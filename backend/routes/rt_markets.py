@@ -1,4 +1,5 @@
 import io
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -57,22 +58,26 @@ def _compute_score(stock, weights, thresholds):
 
 
 def _safe(value, decimals=2):
-    """Retourne la valeur arrondie ou None si indisponible."""
+    """Retourne la valeur arrondie ou None si indisponible. yfinance renvoie parfois inf/-inf/nan
+    (ex: trailingPE quand le résultat net est ~nul) — non finite, donc non sérialisable en JSON
+    strict (Python écrirait le token invalide `Infinity`/`NaN`), d'où le filtrage explicite."""
     try:
         if value is None:
             return None
-        return round(float(value), decimals)
+        v = float(value)
+        return round(v, decimals) if math.isfinite(v) else None
     except (TypeError, ValueError):
         return None
 
 
 def _raw(value):
-    """Retourne la valeur brute (float) sans arrondi, ou None si indisponible.
+    """Retourne la valeur brute (float) sans arrondi, ou None si indisponible/non finie (voir _safe).
     À utiliser pour les décimaux qui seront ensuite multipliés par 100."""
     try:
         if value is None:
             return None
-        return float(value)
+        v = float(value)
+        return v if math.isfinite(v) else None
     except (TypeError, ValueError):
         return None
 

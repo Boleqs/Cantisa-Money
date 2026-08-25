@@ -13,6 +13,7 @@ from backend.utils.restricted_by_permission import restricted_by_permission
 from backend.utils.portfolio_ops import resolve_current_value, resolve_purchase_price, resolve_split_amounts, \
     convert_asset_to_default_currency, convert_default_to_asset_currency, format_qty, cost_basis_per_unit
 from backend.utils.asset_geography import compute_country_breakdown
+from backend.utils.wealth import compute_bank_net_worth, get_portfolio_breakdown
 
 VALID_ASSET_TYPES = ('Stock', 'ETF', 'RealEstate', 'Vehicle', 'Other')
 ASSETS_PERM = VAR_PERMISSIONS_LIST['Patrimoine']['id']
@@ -173,6 +174,86 @@ def _asset_to_dict(a):
         'last_price_updated_at': a.last_price_updated_at.isoformat() if a.last_price_updated_at else None,
         'created_at': a.created_at.isoformat() if a.created_at else None,
     }
+
+
+def _compute_geography(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency):
+    """Répartition géographique du portefeuille : actions/ETF via Yahoo Finance (pays direct pour une
+    action, extrapolation du top 10 holdings pour un ETF — Yahoo ne fournit jamais la composition
+    complète d'un fonds, voir asset_geography.py), actifs physiques (RealEstate/Vehicle/Other) via le
+    pays saisi manuellement sur l'actif (100% de sa valeur, un seul pays par actif contrairement à un
+    ETF). Extrait de get_assets_geography (route GET /assets/geography) pour être réutilisé par
+    l'endpoint de diversification sans dupliquer les appels Yahoo Finance."""
+    commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+
+    def asset_value(a):
+        possessions = AssetPossession.query.filter(AssetPossession.asset_id == a.id).all()
+        possession_ids = [p.id for p in possessions]
+        disposals = (AssetDisposal.query.filter(AssetDisposal.possession_id.in_(possession_ids)).all()
+                     if possession_ids else [])
+        disposed_by_possession = {}
+        for disp in disposals:
+            disposed_by_possession.setdefault(disp.possession_id, []).append(disp)
+
+        total_qty = float(sum(p.quantity - sum(d.quantity for d in disposed_by_possession.get(p.id, []))
+                               for p in possessions))
+        if total_qty <= 0:
+            return None
+        total_value = total_qty * float(a.value_per_unit or 0)
+        native_commodity = commodities_by_id.get(a.commodity_id)
+        native_code = native_commodity.short_name if native_commodity else target_currency
+        rate = 1.0 if native_code == target_currency else (get_fx_rate(native_code, target_currency, FxRates) or 1.0)
+        return total_value * rate
+
+    assets = Assets.query.filter(Assets.user_id == user_id).all()
+
+    positions = []
+    by_country = {}
+    unmapped_value = 0.0
+    for a in assets:
+        value = asset_value(a)
+        if value is None:
+            continue
+        if a.asset_type in ('Stock', 'ETF'):
+            positions.append({'symbol': a.symbol, 'asset_type': a.asset_type, 'value': value})
+        elif a.country:
+            by_country[a.country] = by_country.get(a.country, 0.0) + value
+        else:
+            unmapped_value += value
+
+    breakdown = compute_country_breakdown(positions)
+    for country, value in breakdown['by_country'].items():
+        by_country[country] = by_country.get(country, 0.0) + value
+    unmapped_value += breakdown['unmapped_value']
+    total_known_value = sum(by_country.values())
+    grand_total = total_known_value + unmapped_value
+
+    countries = sorted((
+        {'country': country, 'value': round(value, 2),
+         'percent': round(value / total_known_value * 100, 2) if total_known_value else 0}
+        for country, value in by_country.items()
+    ), key=lambda c: c['percent'], reverse=True)
+
+    return {
+        'countries': countries,
+        'by_country_raw': by_country,
+        'total_known_value': round(total_known_value, 2),
+        'unmapped_value': round(unmapped_value, 2),
+        'unmapped_percent': round(unmapped_value / grand_total * 100, 2) if grand_total else 0,
+    }
+
+
+def _diversification_score(values):
+    """Score de diversification 0-100 pour un ensemble de montants (une dimension : classe d'actif,
+    secteur ou pays) basé sur l'indice de Herfindahl-Hirschman (HHI = somme des parts au carré,
+    mesure standard de concentration en finance/économie). HHI vaut 1/N pour N parts égales (parfaite
+    diversification) et 1 pour une concentration totale sur une seule part — score = 100*(1-HHI),
+    donc 0 = tout sur une seule part, proche de 100 = très étalé sur beaucoup de parts égales.
+    None (pas de score, pas de matière) si aucune valeur positive."""
+    total = sum(v for v in values if v > 0)
+    if total <= 0:
+        return None
+    hhi = sum((v / total) ** 2 for v in values if v > 0)
+    return round((1 - hhi) * 100, 1)
 
 
 def _possession_to_dict(p, disposals=None):
@@ -510,69 +591,99 @@ class AssetsRoutes:
         @jwt_required()
         @restricted_by_permission(Users, ASSETS_PERM)
         def get_assets_geography():
-            """Répartition géographique du portefeuille : actions/ETF via Yahoo Finance (pays
-            direct pour une action, extrapolation du top 10 holdings pour un ETF — Yahoo ne fournit
-            jamais la composition complète d'un fonds, voir asset_geography.py), actifs physiques
-            (RealEstate/Vehicle/Other) via le pays saisi manuellement sur l'actif (100% de sa valeur,
-            un seul pays par actif contrairement à un ETF)."""
             user_id = get_jwt_identity()
             settings = UserSettings.query.filter_by(user_id=user_id).first()
             target_currency = settings.currency if settings else 'EUR'
-            commodities_by_id = {c.id: c for c in Commodities.query.filter_by(user_id=user_id).all()}
+            geo = _compute_geography(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency)
+            return json_response({
+                'countries': geo['countries'],
+                'total_known_value': geo['total_known_value'],
+                'unmapped_value': geo['unmapped_value'],
+                'unmapped_percent': geo['unmapped_percent'],
+                'display_currency': target_currency,
+            }, HttpCode.OK)
 
-            def asset_value(a):
-                possessions = AssetPossession.query.filter(AssetPossession.asset_id == a.id).all()
-                possession_ids = [p.id for p in possessions]
-                disposals = (AssetDisposal.query.filter(AssetDisposal.possession_id.in_(possession_ids)).all()
-                             if possession_ids else [])
-                disposed_by_possession = {}
-                for disp in disposals:
-                    disposed_by_possession.setdefault(disp.possession_id, []).append(disp)
+        @app.route(f"{ROUTE_PATH}/diversification", methods=['GET'])
+        @jwt_required()
+        @restricted_by_permission(Users, ASSETS_PERM)
+        def get_assets_diversification():
+            """Portail de diversification du patrimoine global (bancaire + portefeuille + physique) :
+            répartition par classe d'actif, par secteur et par pays, chacune avec un score 0-100
+            (voir _diversification_score), plus une note globale = moyenne des trois. Contrairement à
+            GET /assets/geography (portefeuille seul), le périmètre ici est le patrimoine total — le
+            cash et l'immobilier comptent comme des parts à part entière de chaque dimension pertinente,
+            pas seulement les lignes du portefeuille financier."""
+            user_id = get_jwt_identity()
+            settings = UserSettings.query.filter_by(user_id=user_id).first()
+            target_currency = settings.currency if settings else 'EUR'
 
-                total_qty = float(sum(p.quantity - sum(d.quantity for d in disposed_by_possession.get(p.id, []))
-                                       for p in possessions))
-                if total_qty <= 0:
-                    return None
-                total_value = total_qty * float(a.value_per_unit or 0)
-                native_commodity = commodities_by_id.get(a.commodity_id)
-                native_code = native_commodity.short_name if native_commodity else target_currency
-                rate = 1.0 if native_code == target_currency else (get_fx_rate(native_code, target_currency, FxRates) or 1.0)
-                return total_value * rate
+            bank_cash = compute_bank_net_worth(Accounts, Commodities, AssetPossession, FxRates, user_id, target_currency)
+            portfolio = get_portfolio_breakdown(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency)
 
-            assets = Assets.query.filter(Assets.user_id == user_id).all()
+            # --- Classe d'actif : cash + chaque type d'actif détenu, sur le patrimoine total ---
+            class_values = {'Cash / Épargne': bank_cash} if bank_cash > 0 else {}
+            asset_type_labels = {'Stock': 'Actions', 'ETF': 'ETF', 'RealEstate': 'Immobilier',
+                                  'Vehicle': 'Véhicules', 'Other': 'Autre'}
+            for a in portfolio:
+                label = asset_type_labels.get(a['asset_type'], a['asset_type'])
+                class_values[label] = class_values.get(label, 0) + a['value']
+            class_total = sum(class_values.values())
+            asset_class = {
+                'buckets': sorted((
+                    {'label': label, 'value': round(v, 2), 'percent': round(v / class_total * 100, 2) if class_total else 0}
+                    for label, v in class_values.items() if v > 0
+                ), key=lambda b: b['percent'], reverse=True),
+                'score': _diversification_score(class_values.values()),
+            }
 
-            positions = []
-            by_country = {}
-            unmapped_value = 0.0
-            for a in assets:
-                value = asset_value(a)
-                if value is None:
-                    continue
-                if a.asset_type in ('Stock', 'ETF'):
-                    positions.append({'symbol': a.symbol, 'asset_type': a.asset_type, 'value': value})
-                elif a.country:
-                    by_country[a.country] = by_country.get(a.country, 0.0) + value
+            # --- Secteur : chaque secteur d'actions/ETF détenu, le reste du patrimoine (cash +
+            # immobilier + actifs sans secteur identifié) formant un seul bloc "Hors actions/ETF" —
+            # un portefeuille 90% cash / 10% actions ne doit pas paraître bien diversifié juste parce
+            # que ces 10% couvrent beaucoup de secteurs (voir périmètre "patrimoine global" demandé). ---
+            sector_values = {}
+            outside_equities = bank_cash if bank_cash > 0 else 0
+            for a in portfolio:
+                if a['asset_type'] in ('Stock', 'ETF') and a['sector']:
+                    sector_values[a['sector']] = sector_values.get(a['sector'], 0) + a['value']
                 else:
-                    unmapped_value += value
+                    outside_equities += a['value']
+            if outside_equities > 0:
+                sector_values['Hors actions/ETF (cash, immobilier…)'] = outside_equities
+            sector_total = sum(sector_values.values())
+            sector = {
+                'buckets': sorted((
+                    {'label': label, 'value': round(v, 2), 'percent': round(v / sector_total * 100, 2) if sector_total else 0}
+                    for label, v in sector_values.items() if v > 0
+                ), key=lambda b: b['percent'], reverse=True),
+                'score': _diversification_score(sector_values.values()),
+            }
 
-            breakdown = compute_country_breakdown(positions)
-            for country, value in breakdown['by_country'].items():
-                by_country[country] = by_country.get(country, 0.0) + value
-            unmapped_value += breakdown['unmapped_value']
-            total_known_value = sum(by_country.values())
-            grand_total = total_known_value + unmapped_value
+            # --- Géographie : réutilise le calcul de /assets/geography (financier + physique), le
+            # cash s'ajoutant comme un bloc "non localisé" au même titre que le reste non identifié —
+            # aucune notion fiable de pays pour un simple solde bancaire dans ce modèle de données. ---
+            geo = _compute_geography(Assets, AssetPossession, AssetDisposal, Commodities, FxRates, user_id, target_currency)
+            geo_values = dict(geo['by_country_raw'])
+            geo_unmapped = geo['unmapped_value'] + (bank_cash if bank_cash > 0 else 0)
+            if geo_unmapped > 0:
+                geo_values['Non localisé (cash…)'] = geo_values.get('Non localisé (cash…)', 0) + geo_unmapped
+            geo_total = sum(geo_values.values())
+            geography = {
+                'buckets': sorted((
+                    {'label': label, 'value': round(v, 2), 'percent': round(v / geo_total * 100, 2) if geo_total else 0}
+                    for label, v in geo_values.items() if v > 0
+                ), key=lambda b: b['percent'], reverse=True),
+                'score': _diversification_score(geo_values.values()),
+            }
 
-            countries = sorted((
-                {'country': country, 'value': round(value, 2),
-                 'percent': round(value / total_known_value * 100, 2) if total_known_value else 0}
-                for country, value in by_country.items()
-            ), key=lambda c: c['percent'], reverse=True)
+            dimension_scores = [d['score'] for d in (asset_class, sector, geography) if d['score'] is not None]
+            global_score = round(sum(dimension_scores) / len(dimension_scores), 1) if dimension_scores else None
 
             return json_response({
-                'countries': countries,
-                'total_known_value': round(total_known_value, 2),
-                'unmapped_value': round(unmapped_value, 2),
-                'unmapped_percent': round(unmapped_value / grand_total * 100, 2) if grand_total else 0,
+                'asset_class': asset_class,
+                'sector': sector,
+                'geography': geography,
+                'global_score': global_score,
+                'total_patrimoine': round(class_total, 2),
                 'display_currency': target_currency,
             }, HttpCode.OK)
 
@@ -1298,7 +1409,16 @@ class AssetsRoutes:
             ratio = float(data['ratio_to']) / float(data['ratio_from'])
             operation_date = data['operation_date']
 
-            lots = AssetPossession.query.filter_by(user_id=user_id, asset_id=a.id).all()
+            # Seuls les lots déjà détenus au moment de l'opération sont concernés — un lot acheté
+            # après (purchase_date > operation_date) reflète déjà la structure de titre post-opération
+            # (ex: rachat après un split, déjà au nouveau ratio) et ne doit ni être rescalé/clôturé/
+            # scindé, ni recevoir de part de l'actif cible. purchase_date le jour même de l'opération
+            # est traité comme "déjà détenu" (une seule date, pas d'heure, saisie côté utilisateur).
+            lots = [
+                p for p in AssetPossession.query.filter_by(user_id=user_id, asset_id=a.id).all()
+                if not p.purchase_date
+                or (p.purchase_date.date() if hasattr(p.purchase_date, 'date') else p.purchase_date) <= operation_date
+            ]
             lot_ids = [p.id for p in lots]
             disposals_by_lot = {}
             if lot_ids:

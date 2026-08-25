@@ -86,7 +86,7 @@ export default {
               <SidebarLink v-if="hasPermission('Crédits')" to="/credits" :icon="faHandHoldingDollar">Crédits</SidebarLink>
               <SidebarGroup v-if="hasPermission('Patrimoine')" label="Portfolio" :icon="faChartLine" :paths="['/portfolio', '/portfolio/geographie', '/patrimoine/prediction', '/dca']">
                 <SidebarLink to="/portfolio" :icon="faLayerGroup">Liste des actifs</SidebarLink>
-                <SidebarLink to="/portfolio/geographie" :icon="faEarthAmericas">Répartition géographique</SidebarLink>
+                <SidebarLink to="/portfolio/geographie" :icon="faEarthAmericas">Diversification</SidebarLink>
                 <SidebarLink to="/patrimoine/prediction" :icon="faChartArea">Prédiction</SidebarLink>
                 <SidebarLink to="/dca" :icon="faCoins">Investissement programmé</SidebarLink>
               </SidebarGroup>

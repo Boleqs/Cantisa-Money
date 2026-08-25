@@ -241,7 +241,10 @@ async function reload() {
       calls.push(axios.get('/api/assets'))
       calls.push(axios.get('/api/wealth/account-values', { params: { currency: defaultCurrency.value } }))
     }
-    const [accRes, allAccRes, txData, catRes, comRes, assetsRes, accountValuesRes] = await Promise.all(calls)
+    // `institutionsData` n'est jamais lu : ensureInstitutionsLoaded() peuple le ref partagé
+    // `institutions` en effet de bord, seul son ordre dans `calls` compte pour la déstructuration
+    // (un slot anonyme ici décalait assetsRes/accountValuesRes d'un cran).
+    const [accRes, allAccRes, txData, catRes, comRes, institutionsData, assetsRes, accountValuesRes] = await Promise.all(calls)
     account.value = accRes.data?.response_data ?? null
     allAccounts.value = Array.isArray(allAccRes.data?.response_data) ? allAccRes.data.response_data : []
     transactions.value = txData.transactions

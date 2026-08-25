@@ -67,7 +67,8 @@
           />
           <p v-else-if="result" class="field-hint">
             Calculé automatiquement sur les 12 derniers mois : <strong :class="result.params.avg_monthly_net_flow >= 0 ? 'pos' : 'neg'">{{ fmtAmount(result.params.avg_monthly_net_flow) }}</strong>
-            /mois (revenus et dépenses réels, hors abonnements et crédits déjà comptés à part).
+            /mois (revenus et dépenses réels sur vos comptes courants/épargne, hors abonnements,
+            échéances de crédit et achats/ventes d'actifs — déjà comptés à part).
           </p>
         </div>
 
@@ -96,6 +97,45 @@
         </div>
       </div>
       <button class="btn btn-primary apply-btn" :disabled="loading" @click="reload">Appliquer</button>
+    </div>
+
+    <!-- Objectif de patrimoine : taux de croissance nécessaire -->
+    <div class="card">
+      <div class="card-title">Objectif de patrimoine — taux de croissance nécessaire</div>
+      <p class="section-hint">
+        Donnez un capital cible et une date : on résout le taux de croissance annuel des actifs financiers
+        nécessaire pour l'atteindre, le flux mensuel et la part investie ci-dessus restant fixes.
+      </p>
+      <div class="hyp-grid">
+        <div class="hyp-field">
+          <label>Capital cible ({{ currency }})</label>
+          <input v-model.number="targetAmount" type="number" step="1000" min="0" placeholder="ex: 200000" />
+        </div>
+        <div class="hyp-field">
+          <label>Date cible</label>
+          <input v-model="targetDate" type="date" />
+        </div>
+      </div>
+      <button class="btn btn-primary apply-btn" :disabled="requiredGrowthLoading || !targetAmount || !targetDate" @click="computeRequiredGrowth">
+        {{ requiredGrowthLoading ? 'Calcul…' : 'Calculer le taux nécessaire' }}
+      </button>
+
+      <div v-if="requiredGrowthError" class="alert" style="margin-top: 12px;">{{ requiredGrowthError }}</div>
+
+      <div v-if="requiredGrowthResult" class="required-growth-result">
+        <template v-if="requiredGrowthResult.feasible">
+          <p>
+            Taux de croissance annuel nécessaire : <strong class="pos">{{ requiredGrowthResult.required_growth_financial_pct }} %/an</strong>
+            sur les actifs financiers, pour atteindre <strong>{{ fmtAmount(targetAmount) }}</strong> d'ici le {{ fmtDate(targetDate) }}
+            ({{ requiredGrowthResult.horizon_months }} mois).
+          </p>
+          <button class="btn btn-sm" type="button" @click="applyRequiredGrowth">Appliquer ce taux ci-dessus</button>
+        </template>
+        <p v-else class="neg">
+          Objectif hors de portée même à +100 %/an de croissance financière (projection : {{ fmtAmount(requiredGrowthResult.projected_amount) }}) —
+          augmentez la part du flux investie en financier ou reculez la date cible.
+        </p>
+      </div>
     </div>
 
     <!-- Objectifs de vie -->
@@ -302,6 +342,58 @@ function goalStatus(goalId) {
 const GOAL_STATUS_LABELS = { feasible: '✓ Atteignable', at_risk: '⚠ À risque', out_of_range: 'Hors horizon' }
 function goalStatusLabel(status) {
   return GOAL_STATUS_LABELS[status] || status
+}
+
+// ── objectif de patrimoine : taux de croissance nécessaire ─────────────────────
+function defaultTargetDate() {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() + 5)
+  return d.toISOString().slice(0, 10)
+}
+const targetAmount = ref(null)
+const targetDate = ref(defaultTargetDate())
+const requiredGrowthResult = ref(null)
+const requiredGrowthLoading = ref(false)
+const requiredGrowthError = ref('')
+
+async function computeRequiredGrowth() {
+  if (!targetAmount.value || !targetDate.value) return
+  requiredGrowthLoading.value = true
+  requiredGrowthError.value = ''
+  requiredGrowthResult.value = null
+  try {
+    const params = {
+      target_amount: targetAmount.value,
+      target_date: targetDate.value,
+      growth_physical_pct: growthPhysical.value,
+      growth_cash_pct: growthCash.value,
+      currency: currency.value,
+    }
+    if (netFlowMode.value === 'manual') params.avg_monthly_net_flow = manualNetFlow.value
+    params.invest_mode = investMode.value
+    if (investMode.value === 'percent') {
+      params.invest_financial_pct = investFinancial.value
+      params.invest_physical_pct = investPhysical.value
+    } else {
+      params.invest_financial_amount = investFinancial.value
+      params.invest_physical_amount = investPhysical.value
+    }
+    const res = await axios.get('/api/forecast/required-growth', { params })
+    requiredGrowthResult.value = res.data?.response_data ?? null
+  } catch (e) {
+    requiredGrowthError.value = e?.response?.data?.response_data || e?.message || 'Erreur inconnue'
+  } finally {
+    requiredGrowthLoading.value = false
+  }
+}
+
+function applyRequiredGrowth() {
+  if (!requiredGrowthResult.value) return
+  growthFinancial.value = requiredGrowthResult.value.required_growth_financial_pct
+  const h = requiredGrowthResult.value.horizon_months
+  horizonMonths.value = HORIZONS.reduce((best, hz) =>
+    Math.abs(hz.months - h) < Math.abs(best - h) ? hz.months : best, HORIZONS[0].months)
+  reload()
 }
 
 function fmtDate(v) {
@@ -570,6 +662,11 @@ const chartSeries = computed(() => {
 .field-hint .neg { color: #f87171; font-weight: 600; }
 
 .apply-btn { margin-top: 16px; }
+
+.required-growth-result { margin-top: 14px; font-size: 13px; color: #cbd5e1; line-height: 1.6; }
+.required-growth-result .pos { color: #4ade80; font-weight: 600; }
+.required-growth-result p.neg { color: #f87171; margin: 0; }
+.required-growth-result .btn-sm { margin-top: 8px; }
 
 .chart-note {
   margin: -6px 0 0;

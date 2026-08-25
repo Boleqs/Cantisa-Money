@@ -26,13 +26,14 @@ def _account_currency(account, commodities_by_id, target_currency):
     return commodity.short_name if commodity else target_currency
 
 
-def _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, AssetPossession, user_id, start, today):
+def _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, AssetPossession,
+                               AssetDisposal, user_id, start, today):
     """Transactions déjà couvertes par une projection explicite (échéances de crédit, exécutions
-    d'abonnement, contributions DCA) — à exclure de toute moyenne historique pour éviter un double
-    comptage dans project_wealth(). Exclusion au niveau de la TRANSACTION (jamais du compte entier) :
-    un compte "Dépenses courantes" fourre-tout, alimenté à la fois par des abonnements et des
-    dépenses ponctuelles, ne doit perdre que la part abonnements/crédits/DCA, pas être ignoré en
-    bloc."""
+    d'abonnement, achats/ventes d'actifs) — à exclure de toute moyenne historique pour éviter un
+    double comptage dans project_wealth(). Exclusion au niveau de la TRANSACTION (jamais du compte
+    entier) : un compte "Dépenses courantes" fourre-tout, alimenté à la fois par des abonnements et
+    des dépenses ponctuelles, ne doit perdre que la part abonnements/crédits/actifs, pas être ignoré
+    en bloc."""
     excluded_tx_ids = set()
     for loan in Loans.query.filter_by(user_id=user_id, is_closed=False).all():
         paid_insts = LoanInstallments.query.filter(
@@ -57,27 +58,36 @@ def _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptio
         ).with_entities(Transactions.id).all()
         excluded_tx_ids.update(tx_id for (tx_id,) in sub_tx_ids)
 
-    # Contributions DCA : lien explicite via dca_plan_id (plus robuste que le matching par nom des
-    # abonnements ci-dessus, la description varie à chaque exécution — voir scheduler.py::
-    # _execute_dca_contribution). Sans cette exclusion, chaque sortie DCA historique serait comptée
-    # deux fois : une fois ici (comme dépense "organique") et une fois dans la boucle DCA future de
-    # project_wealth() — même bug que celui déjà évité pour abonnements/crédits.
-    dca_tx_ids = AssetPossession.query.filter(
+    # Achats/ventes d'actifs (lien explicite via tx_id, DCA ou manuel — un achat passé depuis le
+    # bouton "+" du Portfolio n'est pas moins un transfert vers le portefeuille qu'une contribution
+    # DCA). Sans cette exclusion, un virement "Compte courant -> CTO" ou le produit d'une vente
+    # apparaît comme une dépense/un revenu "organique" du pool bancaire, alors que c'est un transfert
+    # interne déjà représenté par la valeur du portefeuille (voir compute_bank_net_worth) — la même
+    # logique que pour abonnements/crédits ci-dessus, étendue au-delà du seul cas DCA.
+    possession_tx_ids = AssetPossession.query.filter(
         AssetPossession.user_id == user_id,
-        AssetPossession.dca_plan_id.isnot(None),
         AssetPossession.tx_id.isnot(None),
         AssetPossession.purchase_date >= start,
         AssetPossession.purchase_date <= today,
     ).with_entities(AssetPossession.tx_id).all()
-    excluded_tx_ids.update(tx_id for (tx_id,) in dca_tx_ids)
+    excluded_tx_ids.update(tx_id for (tx_id,) in possession_tx_ids)
+
+    disposal_tx_ids = AssetDisposal.query.filter(
+        AssetDisposal.user_id == user_id,
+        AssetDisposal.tx_id.isnot(None),
+        AssetDisposal.sale_date >= start,
+        AssetDisposal.sale_date <= today,
+    ).with_entities(AssetDisposal.tx_id).all()
+    excluded_tx_ids.update(tx_id for (tx_id,) in disposal_tx_ids)
     return excluded_tx_ids
 
 
-def compute_avg_monthly_net_flow(DB, Accounts, Transactions, Splits, AssetPossession, Loans, LoanInstallments,
-                                  Subscriptions, Commodities, FxRates, user_id, target_currency):
+def compute_avg_monthly_net_flow(DB, Accounts, Transactions, Splits, AssetPossession, AssetDisposal, Loans,
+                                  LoanInstallments, Subscriptions, Commodities, FxRates, user_id, target_currency):
     """Variation mensuelle moyenne du pool bancaire (Current/Assets/Equity, hors comptes-conteneurs
     de portefeuille) sur les 12 derniers mois ("période équivalente de l'année précédente"), hors
-    transactions déjà couvertes par une projection explicite (abonnements, échéances de crédit).
+    transactions déjà couvertes par une projection explicite (abonnements, échéances de crédit,
+    achats/ventes d'actifs — voir _excluded_transaction_ids).
 
     Volontairement un flux NET (peut être positif = épargne, négatif = déficit) et non une simple
     moyenne de dépenses : le salaire n'est presque jamais modélisé comme un Abonnement dans cette
@@ -87,7 +97,8 @@ def compute_avg_monthly_net_flow(DB, Accounts, Transactions, Splits, AssetPosses
     loyer manuel, etc. en un seul chiffre, sans exiger que le revenu soit catégorisé."""
     today = date.today()
     start = today - timedelta(days=365)
-    excluded_tx_ids = _excluded_transaction_ids(Loans, LoanInstallments, Transactions, Subscriptions, AssetPossession, user_id, start, today)
+    excluded_tx_ids = _excluded_transaction_ids(
+        Loans, LoanInstallments, Transactions, Subscriptions, AssetPossession, AssetDisposal, user_id, start, today)
 
     bank_accounts = Accounts.query.filter(
         Accounts.user_id == user_id,
@@ -162,8 +173,8 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
         net_flow_auto = False
     else:
         avg_monthly_net_flow = compute_avg_monthly_net_flow(
-            DB, Accounts, Transactions, Splits, AssetPossession, Loans, LoanInstallments, Subscriptions,
-            Commodities, FxRates, user_id, target_currency)
+            DB, Accounts, Transactions, Splits, AssetPossession, AssetDisposal, Loans, LoanInstallments,
+            Subscriptions, Commodities, FxRates, user_id, target_currency)
         net_flow_auto = True
 
     # Part du flux mensuel moyen affectée à l'investissement plutôt qu'à la trésorerie — deux modes :
@@ -393,3 +404,49 @@ def project_wealth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodi
         'points': points,
         'goals_result': goals_result,
     }
+
+
+def solve_required_financial_growth(DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+                                      Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, user_id,
+                                      horizon_months, target_amount, growth_physical_pct, growth_cash_pct,
+                                      avg_monthly_net_flow_override, target_currency,
+                                      invest_mode='amount', invest_financial_amount=0.0, invest_physical_amount=0.0,
+                                      invest_financial_pct=0.0, invest_physical_pct=0.0):
+    """Résout par bissection le taux de croissance annuel des actifs financiers (growth_financial_pct)
+    nécessaire pour atteindre target_amount de patrimoine financier net à l'horizon donné, toutes les
+    autres hypothèses (flux mensuel, part investie, croissance physique/cash) restant fixes. Réutilise
+    project_wealth comme boîte noire plutôt que d'inverser analytiquement sa formule (composition
+    mensuelle + apports + objectifs mêlés, pas de forme fermée simple) : la fonction est croissante en
+    growth_financial_pct dès qu'une part du flux est investie en financier ou qu'un portefeuille
+    financier existe déjà, ce qui rend la bissection valide sur l'intervalle de recherche.
+
+    Retourne (rate_pct, projected_amount, feasible). feasible=False si l'objectif est hors de portée
+    même aux bornes de recherche [-50%, +100%]/an — ex: rien n'est investi en financier (le levier
+    n'a aucun effet), ou l'objectif dépasse ce qu'un rendement de +100 %/an peut produire."""
+    def net_worth_at(rate):
+        result = project_wealth(
+            DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates,
+            Loans, LoanInstallments, Subscriptions, DcaPlans, Transactions, Splits, user_id,
+            horizon_months=horizon_months, growth_financial_pct=rate, growth_physical_pct=growth_physical_pct,
+            growth_cash_pct=growth_cash_pct, avg_monthly_net_flow_override=avg_monthly_net_flow_override,
+            target_currency=target_currency, goals=None, invest_mode=invest_mode,
+            invest_financial_amount=invest_financial_amount, invest_physical_amount=invest_physical_amount,
+            invest_financial_pct=invest_financial_pct, invest_physical_pct=invest_physical_pct,
+        )
+        return result['points'][-1]['financial_net_worth']
+
+    low, high = -50.0, 100.0
+    low_value, high_value = net_worth_at(low), net_worth_at(high)
+
+    if low_value >= target_amount:
+        return round(low, 2), low_value, True
+    if high_value < target_amount:
+        return round(high, 2), high_value, False
+
+    for _ in range(25):
+        mid = (low + high) / 2
+        if net_worth_at(mid) < target_amount:
+            low = mid
+        else:
+            high = mid
+    return round(high, 2), net_worth_at(high), True

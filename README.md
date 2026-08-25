@@ -1,37 +1,83 @@
 # CMM — Cantisa Money Manager
 
-Une application de gestion financière personnelle complète et auto-hébergée : comptabilité en
-partie double façon GnuCash, budgets, crédits, patrimoine et fiscalité, dans une interface web
-pensée par sections dédiées (à la Microsoft Money) plutôt qu'un empilement d'onglets.
+Une application de gestion financière personnelle **complète et auto-hébergée** : comptabilité en
+partie double façon GnuCash, budgets, crédits, portefeuille d'investissement, patrimoine et
+fiscalité — dans une interface pensée par sections dédiées (à la Microsoft Money) plutôt qu'un
+empilement d'onglets. Vos données restent chez vous, sur votre propre serveur.
 
 ![Écran d'accueil de CMM](docs/screenshot-home.jpg)
 
-<p>
-  <img src="docs/screenshot-dashboard.jpg" width="32%" alt="Tableau de bord : évolution du patrimoine net et du solde" />
-  <img src="docs/screenshot-patrimoine.jpg" width="32%" alt="Vue d'ensemble patrimoniale : évolution et répartition du portefeuille" />
-  <img src="docs/screenshot-prediction.jpg" width="32%" alt="Prédiction du patrimoine net à horizon 5 ans" />
-</p>
+## Pourquoi CMM
 
-Backend Flask (Python) + PostgreSQL, frontend Vue 3 + Vite.
+- **100 % auto-hébergé, zéro dépendance cloud** — vos comptes, soldes et transactions ne quittent
+  jamais votre machine. Pas d'abonnement, pas de service tiers qui ferme et emporte vos données.
+- **Comptabilité en partie double, pas un simple pointeur de dépenses** — chaque transaction est
+  un ensemble de splits qui s'équilibrent, comme un vrai grand livre comptable (GnuCash). Ça
+  élimine toute une classe d'incohérences que les apps "liste de dépenses" ne détectent jamais.
+- **Tout au même endroit** — comptes bancaires, budgets, crédits, portefeuille d'investissement,
+  immobilier et impôts sont généralement éclatés entre 3 ou 4 apps différentes. Ici, un seul
+  patrimoine consolidé, une seule source de vérité.
+- **Multi-devises natif** — comptes et actifs dans n'importe quelle devise, conversion automatique
+  au taux du jour (ou historique) partout où c'est pertinent.
+- **Fiscalité française intégrée** — un moteur de calcul d'impôt sur le revenu configurable
+  (foyer fiscal, quotient familial, marquage fiscal des catégories) directement branché sur les
+  données déjà suivies dans l'app, sans re-saisie dans un tableur à part.
+- **Vos données, exportables à tout moment** — sauvegarde/restauration complète, exports PDF/CSV :
+  aucun verrouillage propriétaire.
+- **Code source ouvert** — l'app tourne en Docker en une commande, et le schéma de données comme
+  la logique de calcul sont entièrement lisibles et modifiables.
 
 ## Fonctionnalités
 
-**Comptabilité en partie double, multi-devises**
+### Vue d'ensemble et suivi au quotidien
+Tableau de bord avec évolution du patrimoine net, solde et dépenses par catégorie ; page d'accueil
+centralisant échéances à venir (abonnements, crédits) et santé budgétaire.
+
+<p>
+  <img src="docs/screenshot-dashboard.jpg" width="100%" alt="Tableau de bord : évolution du patrimoine net, solde et dépenses par catégorie" />
+</p>
+
+### Comptabilité en partie double, multi-devises
 Comptes de tous types (courant, actif, passif, capitaux propres, revenus, dépenses), transactions
-à splits multiples, rapprochement bancaire, devises et taux de change avec conversion automatique.
+à splits multiples, rapprochement bancaire, synchronisation bancaire (Enable Banking), import CSV
+avec catégorisation par règles, OCR de factures avec auto-création de transactions.
 
-**Budgets, abonnements, crédits**
+### Budgets, abonnements, crédits
 Budgets par compte/catégorie/tag avec suivi automatique des dépenses, abonnements récurrents avec
-alertes avant prélèvement, crédits avec échéanciers, révisions de taux et remboursement anticipé.
+alertes avant prélèvement et historique de prix, crédits avec échéanciers, révisions de taux et
+remboursement anticipé.
 
-**Patrimoine, portefeuille, prédiction**
-Suivi d'actifs avec historique de valorisation, portefeuille avec cours de marché, projection du
-patrimoine net dans le temps.
+### Portefeuille d'investissement et patrimoine
+Suivi d'actifs (actions, ETF, immobilier, véhicules...) avec cours de marché en temps réel,
+opérations sur titres (split, fusion, scission), DCA (plans d'investissement programmé), et une vue
+consolidée du patrimoine total.
 
-**OCR, import intelligent, fiscalité, rapports**
-Scan de factures avec auto-création de transactions, import bancaire CSV avec catégorisation en
-masse, moteur d'impôt configurable (foyer fiscal, marquage fiscal des catégories), constructeur de
-rapports personnalisés, export PDF/CSV et sauvegarde/restauration complète des données.
+<p>
+  <img src="docs/screenshot-portfolio.jpg" width="100%" alt="Portefeuille : actifs détenus, valeur, prix de revient et plus-value" />
+</p>
+
+### Diversification et prédiction du patrimoine
+Portail de diversification donnant une note globale (indice de Herfindahl-Hirschman) et la
+répartition par classe d'actif, secteur et pays — sur l'ensemble du patrimoine, pas seulement le
+portefeuille financier. Projection du patrimoine net à horizon choisi, avec un calculateur d'objectif
+qui résout le taux de croissance annuel nécessaire pour atteindre un capital cible à une date donnée.
+
+<p>
+  <img src="docs/screenshot-diversification.jpg" width="49%" alt="Portail de diversification : note globale, répartition par classe d'actif, secteur et pays" />
+  <img src="docs/screenshot-prediction.jpg" width="49%" alt="Prédiction du patrimoine net à horizon 5 ans" />
+</p>
+<p>
+  <img src="docs/screenshot-prediction-goal.jpg" width="100%" alt="Calculateur d'objectif : taux de croissance annuel nécessaire pour un capital cible" />
+</p>
+
+### Fiscalité, rapports et sauvegarde
+Moteur d'impôt sur le revenu configurable (foyer fiscal, quotient familial, plus-values), 
+constructeur de rapports personnalisés, export PDF/CSV, coffre-fort de documents financiers, et
+sauvegarde/restauration complète des données.
+
+<p>
+  <img src="docs/screenshot-fiscalite.jpg" width="100%" alt="Simulateur d'impôt : détail du calcul de l'IR" />
+</p>
 
 ## Installation rapide (Docker)
 
