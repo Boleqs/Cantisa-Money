@@ -4,21 +4,27 @@ import { ensureSettingsLoaded, onboardingCompleted } from '@/utils/settings.js'
 import { ensurePermissionsLoaded } from '@/utils/permissions.js'
 
 axios.defaults.withCredentials = true
-// API_HOST/API_PORT/API_HTTPS (voir .env.example) : "localhost" en dur empêchait tout accès au
-// backend depuis un autre appareil que celui servant le frontend (localhost désigne toujours la
-// machine de l'utilisateur, pas le serveur) — voir backlog_external_hosting.
-const apiProtocol = import.meta.env.API_HTTPS === 'true' ? 'https' : 'http'
-const apiHost = import.meta.env.API_HOST || 'localhost'
-const apiPort = import.meta.env.API_PORT || '5000'
-axios.defaults.baseURL = `${apiProtocol}://${apiHost}:${apiPort}`
+// baseURL vide = appels relatifs (/api/...) sur l'origine qui a servi la page : c'est le cas
+// nominal, le reverse proxy (caddy en Docker, server.proxy de Vite en dev) route /api vers le
+// backend. Aucun rebuild nécessaire quand l'adresse publique change.
+// API_HOST/API_PORT/API_HTTPS (voir .env.example) : uniquement pour un accès direct au backend
+// sans reverse proxy (dev sans le proxy Vite, LAN) — rétablit alors une URL absolue.
+const apiHost = import.meta.env.API_HOST
+if (apiHost) {
+  const apiProtocol = import.meta.env.API_HTTPS === 'true' ? 'https' : 'http'
+  const apiPort = import.meta.env.API_PORT || '5000'
+  axios.defaults.baseURL = `${apiProtocol}://${apiHost}:${apiPort}`
+} else {
+  axios.defaults.baseURL = ''
+}
 // Protection CSRF côté backend (flask-jwt-extended, double-submit cookie) : axios lit
 // automatiquement ce cookie non-httponly et l'envoie dans ce header sur chaque requête.
 axios.defaults.xsrfCookieName = 'csrf_access_token'
 axios.defaults.xsrfHeaderName = 'X-CSRF-TOKEN'
-// Depuis axios 1.6, le cookie XSRF n'est plus relayé en header sur les requêtes cross-origin
-// (frontend:5173 vs backend:5000 = origines différentes) sans ce flag explicite — sans lui,
-// tous les POST/PUT/PATCH/DELETE échouent en 401 "Missing CSRF token" (les GET passent car
-// non concernés par la protection CSRF de flask-jwt-extended).
+// Depuis axios 1.6, ce flag est nécessaire pour que le cookie XSRF soit relayé en header dès que
+// withCredentials est actif — sans lui, tous les POST/PUT/PATCH/DELETE échouent en 401 "Missing
+// CSRF token" (les GET passent, non concernés par la protection CSRF de flask-jwt-extended). Requis
+// aussi bien en same-origin (reverse proxy) qu'en accès direct cross-origin (mode API_HOST).
 axios.defaults.withXSRFToken = true
 
 const routes = [
@@ -346,18 +352,25 @@ axios.interceptors.response.use(
     }
 )
 
+// 502/503/504 : le reverse proxy (caddy) répond mais le backend est down — même situation côté
+// utilisateur qu'un backend directement injoignable (pas de réponse du tout). Dans les deux cas on
+// veut la page d'erreur dédiée, pas /Signin (où la connexion échouerait pareil).
+function isBackendUnreachable(err) {
+    return !err.response || [502, 503, 504].includes(err.response.status)
+}
+
 async function checkAuth() {
     try {
         await axios.get('/api/auth/check-auth', { withCredentials: true })
         return true
     } catch (err) {
-        if (err.message === 'Network Error') return 'network_error'
+        if (isBackendUnreachable(err)) return 'network_error'
         return false
     }
 }
 
 router.beforeEach(async (to, from, next) => {
-    document.title = 'CMM | ' + to.name
+    document.title = 'Cantisa Money | ' + to.name
 
     if (to.meta.requiresAuth || to.meta.guestOnly) {
         const authStatus = await checkAuth()

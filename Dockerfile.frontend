@@ -10,17 +10,9 @@ COPY index.html vite.config.js jsconfig.json ./
 COPY public/ public/
 COPY src/ src/
 
-# API_HOST/API_PORT/API_HTTPS (voir .env.example) sont lus par src/router/index.js via
-# import.meta.env (envPrefix dans vite.config.js) : "vite build" les fige dans les fichiers
-# statiques générés. Contrairement au serveur de dev, les changer nécessite donc de reconstruire
-# l'image ("docker compose up --build"), pas juste de relancer le conteneur.
-ARG API_HOST=localhost
-ARG API_PORT=5000
-ARG API_HTTPS=false
-ENV API_HOST=$API_HOST
-ENV API_PORT=$API_PORT
-ENV API_HTTPS=$API_HTTPS
-
+# Le frontend appelle l'API en relatif (/api, voir src/router/index.js) : il n'a plus besoin de
+# connaître l'hôte/port du backend au build. C'est le reverse proxy (service caddy) qui route
+# /api/* vers le backend. Conséquence : changer l'adresse publique ne nécessite plus de rebuild.
 RUN npm run build
 
 # --- Stage 2 : service des fichiers statiques ---
@@ -30,9 +22,9 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 # nginx:1.27-alpine substitue automatiquement, au démarrage du conteneur, les variables d'env
 # présentes dans les fichiers /etc/nginx/templates/*.template vers /etc/nginx/conf.d/*.conf (via
-# envsubst) — c'est ce qui permet à FRONTEND_PORT (et, si activé, le chemin du certificat TLS) de
-# rester configurable à l'exécution malgré un build de fichiers statiques figés. Les deux templates
-# possibles (HTTP ou HTTPS, voir API_HTTPS) sont déposés hors du dossier auto-traité :
+# envsubst) — c'est ce qui permet à FRONTEND_PORT de rester configurable à l'exécution malgré un
+# build de fichiers statiques figés. Les deux templates possibles (HTTP ou HTTPS interne, voir
+# INTERNAL_TLS et le reverse proxy caddy) sont déposés hors du dossier auto-traité :
 # /docker-entrypoint.d/19-select-nginx-template.envsh (point d'extension officiel de cette image,
 # exécuté avant l'envsubst natif) choisit lequel activer au démarrage du conteneur. Extension
 # .envsh (pas .sh) : ce script est alors "sourcé" dans le shell de l'entrypoint plutôt qu'exécuté
@@ -45,6 +37,5 @@ COPY nginx-select-template.sh /docker-entrypoint.d/19-select-nginx-template.envs
 RUN chmod +x /docker-entrypoint.d/19-select-nginx-template.envsh
 
 ENV FRONTEND_PORT=5173
-ENV API_HTTPS=false
 
 EXPOSE 5173

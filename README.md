@@ -87,10 +87,11 @@ Prérequis : Docker + Docker Compose.
 docker compose up --build
 ```
 
-- Frontend : http://localhost:5173
-- Backend : http://localhost:5000
+Accès : **https://localhost** (certificat auto-signé par défaut — accepter l'avertissement du
+navigateur une fois).
 
-(ports par défaut — personnalisables via `FRONTEND_PORT`/`API_PORT`, voir plus bas)
+Un seul conteneur est exposé, `caddy` (reverse proxy) : il sert le frontend et route `/api/*` vers
+le backend. `db`, `backend` et `frontend` ne sont accessibles que sur le réseau Docker interne.
 
 Comptes de démonstration créés au premier démarrage (base vide) : `John` / `Alice`, mot de passe
 `CantisaDemo2026!` pour les deux.
@@ -104,17 +105,23 @@ des valeurs par défaut raisonnables s'appliquent sinon) :
 - `DEMO_DATA=false` — base vide sans jeu de données de test ; combiné à `ADMIN_USERNAME` /
   `ADMIN_EMAIL` / `ADMIN_PASSWORD`, crée un unique compte admin réel à la place (sinon aucun moyen
   de se connecter, il n'y a pas d'inscription publique)
-- `CORS_ORIGINS` — origine(s) autorisées à appeler l'API, si le frontend n'est pas sur
-  `localhost:5173`
-- `API_HOST` / `API_PORT` / `FRONTEND_PORT` / `POSTGRES_PORT` — pour un accès depuis un autre
-  appareil que la machine hôte, ou en cas de port déjà pris. `API_HOST`/`API_PORT`/`API_HTTPS` sont
-  figées dans le frontend au moment du build (`docker compose up --build` nécessaire pour les
-  changer, un simple redémarrage ne suffit pas)
-- `API_HTTPS=true` — sert l'API **et** le frontend en HTTPS, avec le même certificat auto-signé
-  généré automatiquement (si `TLS_CERT_PATH`/`TLS_KEY_PATH` ne sont pas fournis) ; pas de reverse
-  proxy dans ce projet, chaque service termine TLS lui-même (gunicorn, nginx/Vite). Suit aussi
-  `JWT_COOKIE_SECURE` par défaut (pas besoin de définir les deux séparément) ; penser à adapter
-  `CORS_ORIGINS` en `https://` également
+- `HTTP_PORT` / `HTTPS_PORT` — ports publics du reverse proxy (défauts `80` / `443`)
+- `MAX_UPLOAD_MB` — taille max d'un upload (défaut `500`)
+
+### Exposer l'app sur un domaine
+
+Le frontend appelle l'API en relatif : **changer l'adresse publique ne nécessite pas de rebuild**.
+Selon le certificat voulu (voir `.env`) :
+
+| Cas | Configuration |
+|---|---|
+| LAN / usage perso | rien à faire — certificat auto-signé, `https://<ip-ou-hôte>` |
+| Certificat existant (ex. Let's Encrypt géré ailleurs) | `TLS_CERT_PATH` / `TLS_KEY_PATH` + monter le dossier dans le service `caddy` |
+| Certificat public automatique | `EDGE_ACME_DOMAIN=mon-domaine.fr` (le domaine doit pointer ici, ports 80+443 ouverts) |
+| Derrière ton propre reverse proxy | `EDGE_HTTPS=false` — `caddy` sert en HTTP, ton proxy termine le TLS et forwarde dessus. Mettre `JWT_COOKIE_SECURE=false` seulement si le lien ton-proxy → caddy n'est pas en HTTPS |
+
+Le trafic interne (`caddy` → backend/frontend) est toujours chiffré (certificat auto-signé non
+vérifié — réseau Docker isolé).
 
 ### Migrations
 
@@ -128,7 +135,7 @@ alembic revision --autogenerate -m "description du changement"
 Puis relire le fichier généré dans `migrations/versions/` avant de le committer — l'autogenerate
 ne détecte pas tout correctement (renommages de colonnes, etc.).
 
-## Installation manuelle (sans Docker)
+## Installation manuelle (sans Docker) — développement
 
 Backend :
 ```bash
@@ -145,3 +152,9 @@ Frontend :
 npm install
 npm run dev
 ```
+Le serveur de dev Vite proxifie `/api` vers le backend (`localhost:5000`) : le frontend est en
+same-origin, comme derrière le reverse proxy en prod. `API_HTTPS=true` dans `.env` sert le dev en
+HTTPS (démarrer le backend une fois d'abord, il génère le certificat).
+
+Un déploiement bare-metal *de production* (build statique + gunicorn en service systemd + nginx
+hôte) n'est pas encore fourni — utiliser Docker pour la prod.

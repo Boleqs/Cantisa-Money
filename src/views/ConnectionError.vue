@@ -9,18 +9,30 @@ emit('fullpage', { value: true })
 const router = useRouter()
 const retrying = ref(false)
 const retryFailed = ref(false)
-// Reflète la config réelle (API_HOST/API_PORT/API_HTTPS, voir .env.example et router/index.js)
-// plutôt qu'une adresse en dur, trompeuse dès que ces variables sont personnalisées.
-const apiBaseUrl = axios.defaults.baseURL
+// Reflète la config réelle (voir router/index.js) plutôt qu'une adresse en dur. baseURL vide =
+// appels relatifs sur l'origine courante (cas nominal derrière le reverse proxy).
+const apiBaseUrl = axios.defaults.baseURL || `${window.location.origin}/api`
 
 async function retry() {
   retrying.value = true
   retryFailed.value = false
   try {
-    await axios.get('/api/auth/check-auth', { withCredentials: true })
+    // Endpoint public : on veut seulement savoir si le backend répond, pas si l'utilisateur est
+    // authentifié. /auth/check-auth renvoie 404 "Not logged in" pour un visiteur déconnecté —
+    // axios le traite comme une erreur, ce qui laissait à tort l'utilisateur bloqué ici alors que
+    // le backend était revenu.
+    await axios.get('/api/version')
+    // Le backend répond : on relance la navigation normale, la garde router redirige vers Signin
+    // ou le Dashboard selon l'état de session.
     router.push('/')
   } catch (err) {
-    retryFailed.value = true
+    // Pas de réponse, ou 502/503/504 du reverse proxy (backend toujours down) : on reste ici.
+    // Toute autre réponse HTTP prouve que le backend est joignable -> on repart.
+    if (!err.response || [502, 503, 504].includes(err.response.status)) {
+      retryFailed.value = true
+    } else {
+      router.push('/')
+    }
   } finally {
     retrying.value = false
   }

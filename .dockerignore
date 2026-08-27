@@ -5,3 +5,10 @@ node_modules
 **/__pycache__
 dist
 .env
+# Secrets et certificats générés localement par "python app.py" (dev sans Docker) : NE JAMAIS les
+# embarquer dans l'image — sinon "COPY backend/" les fige dedans, et Docker pré-remplit les volumes
+# nommés instance_data/certs_data avec au premier démarrage (clé Flask, pepper, mot de passe
+# Postgres, clé privée Enable Banking, certificat auto-signé). Chaque déploiement doit générer les
+# siens. Ces dossiers sont déjà dans .gitignore.
+backend/certs
+backend/instance

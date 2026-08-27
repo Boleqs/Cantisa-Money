@@ -94,3 +94,11 @@ class FlaskConfig:
     # Protection CSRF (double-submit cookie) activée par défaut — le frontend envoie le header
     # X-CSRF-TOKEN attendu via axios.defaults.xsrfCookieName/xsrfHeaderName (voir router/index.js).
     JWT_COOKIE_CSRF_PROTECT = os.environ.get('JWT_COOKIE_CSRF_PROTECT', 'true').lower() == 'true'
+    # MAX_UPLOAD_MB (voir .env.example) : taille maximale d'une requête (import de sauvegarde,
+    # coffre-fort de documents, OCR de factures). Doit rester cohérent avec la limite du reverse
+    # proxy (request_body max_size dans le Caddyfile). Werkzeug renvoie 413 au-delà.
+    try:
+        _MAX_UPLOAD_MB = int(os.environ.get('MAX_UPLOAD_MB', '500'))
+    except ValueError:
+        _MAX_UPLOAD_MB = 500
+    MAX_CONTENT_LENGTH = _MAX_UPLOAD_MB * 1024 * 1024

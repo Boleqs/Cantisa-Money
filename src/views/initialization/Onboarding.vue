@@ -3,7 +3,7 @@
     <div class="card">
 
       <div class="brand">
-        <span class="brand-logo">CMM</span>
+        <img class="brand-logo-img" src="../../components/icons/cantisa-logo-wordmark.svg" alt="Cantisa Money Manager" />
         <span class="brand-version">Configuration initiale</span>
       </div>
 
@@ -213,18 +213,14 @@ async function submit() {
 
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   margin-bottom: 16px;
 }
-.brand-logo {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -1px;
-  background: linear-gradient(90deg, #60a5fa, #818cf8);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.brand-logo-img {
+  height: 42px;
+  width: auto;
+  border-radius: 6px;
 }
 .brand-version { font-size: 11px; color: #4b5563; font-weight: 500; }
 

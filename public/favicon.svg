@@ -1,0 +1,32 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F4A42"/>
+      <stop offset="100%" stop-color="#0A332E"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#B98A3E"/>
+      <stop offset="100%" stop-color="#E9C77B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Ledger ring ("C") with a gap opening to the upper right -->
+  <circle cx="256" cy="256" r="150"
+          fill="none"
+          stroke="#F3ECDD"
+          stroke-width="52"
+          stroke-dasharray="680.7 261.8"
+          stroke-linecap="round"/>
+
+  <!-- Growth line breaking out through the ring, ending in a coin -->
+  <line x1="110" y1="322" x2="392" y2="156"
+        stroke="url(#gold)"
+        stroke-width="26"
+        stroke-linecap="round"/>
+
+  <circle cx="400" cy="150" r="27" fill="url(#gold)"/>
+  <circle cx="400" cy="150" r="27" fill="none" stroke="#7A5A22" stroke-width="2" opacity="0.35"/>
+</svg>

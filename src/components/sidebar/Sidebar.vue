@@ -56,8 +56,9 @@ export default {
 
 <template>
     <div class="sidebar" :style="{ width: sidebarWidth}">
-        <h1>
-            <span class="sidebar-title" :class="{ schmall: collapsed, bwig: !collapsed }">CMM</span>
+        <h1 class="sidebar-title">
+            <img class="sidebar-logo-icon" src="../icons/cantisa-logo-icon.svg" alt="Cantisa" />
+            <span v-if="!collapsed" class="sidebar-logo-text bwig">Cantisa</span>
         </h1>
 
         <!-- Zone scrollable des liens -->
@@ -217,9 +218,26 @@ export default {
     display: flex;
     justify-content: center;
     align-items: center;
+    gap: 0.5em;
     width: 100%;
     height: 100px;
     flex-shrink: 0;
+    margin: 0;
+}
+
+.sidebar-logo-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+    flex-shrink: 0;
+    transition: 0.3s ease;
+}
+
+.sidebar-logo-text {
+    color: #F3ECDD;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
 }
 
 /* Boîte commune aux 3 icônes du footer (replier / compte / réglages) : même centrage flex et
@@ -271,10 +289,6 @@ export default {
     transition: 0.3s ease-in-out;
 }
 
-.schmall {
-    font-size: 0.50em;
-    transition: 0.3s ease;
-}
 .bwig {
     font-size: 1.10em;
     transition: 0.3s ease;

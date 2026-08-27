@@ -1,0 +1,12 @@
+# Reverse proxy (voir Caddyfile + caddy-entrypoint.sh). Image minimale : Caddy ne sert aucun
+# fichier de l'app, il ne fait que router vers les services backend/frontend (voir docker-compose.yml).
+FROM caddy:2-alpine
+
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY caddy-entrypoint.sh /caddy-entrypoint.sh
+RUN chmod +x /caddy-entrypoint.sh
+
+# 80/443 par défaut (surchargés par HTTP_PORT/HTTPS_PORT au démarrage, voir .env.example).
+EXPOSE 80 443
+
+ENTRYPOINT ["/caddy-entrypoint.sh"]

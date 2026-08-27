@@ -15,8 +15,15 @@ export default defineConfig(({ mode }) => {
   // API_HTTPS (voir .env.example) : équivalent local (npm run dev) au nginx du build de prod —
   // même certificat que le backend (backend/utils/tls.py le génère à son démarrage). S'il n'existe
   // pas encore (backend jamais lancé), on retombe sur du HTTP plutôt que de planter.
+  const apiHttps = (env.API_HTTPS || '').toLowerCase() === 'true'
+  const apiPort = Number(env.API_PORT) || 5000
+  // En dev, le frontend appelle l'API en relatif (/api, voir src/router/index.js) : ce proxy
+  // rejoue localement le rôle du reverse proxy caddy de la prod (même origine, pas de CORS).
+  // secure:false : le backend sert un certificat auto-signé quand API_HTTPS=true.
+  const apiProxyTarget = `${apiHttps ? 'https' : 'http'}://localhost:${apiPort}`
+
   let httpsConfig = undefined
-  if ((env.API_HTTPS || '').toLowerCase() === 'true') {
+  if (apiHttps) {
     const certPath = env.TLS_CERT_PATH || fileURLToPath(new URL('./backend/certs/selfsigned.crt', import.meta.url))
     const keyPath = env.TLS_KEY_PATH || fileURLToPath(new URL('./backend/certs/selfsigned.key', import.meta.url))
     if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
@@ -42,6 +49,13 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: Number(env.FRONTEND_PORT) || 5173,
       https: httpsConfig,
+      proxy: {
+        '/api': {
+          target: apiProxyTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+      },
     },
     // Par défaut Vite n'expose au bundle client que les variables préfixées VITE_. On ajoute API_
     // pour réutiliser telles quelles (sans duplication ni renommage) les variables API_HOST/

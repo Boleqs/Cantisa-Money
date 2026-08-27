@@ -26,6 +26,9 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    # Plus aucun "ports:" : le backend n'est plus joignable depuis l'hôte, seulement depuis le
+    # réseau Docker interne (le service caddy le proxifie sur /api/*). Pour un accès direct
+    # temporaire (debug), ajouter ponctuellement "ports: [\"5000:5000\"]".
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -42,30 +45,24 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
-      # Laissé vide (au lieu d'un défaut "false" en dur) si non défini par l'utilisateur : c'est
-      # backend/config.py qui décide alors, en suivant API_HTTPS — voir .env.example.
-      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-}
+      # Same-origin derrière le reverse proxy : plus besoin de CORS. Gardé pour les cas où le
+      # backend serait appelé depuis une autre origine (accès direct, outillage).
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Le trafic client passe par le TLS "edge" de Caddy : cookie de session en Secure par défaut.
+      # Mettre false uniquement si EDGE_HTTPS=false ET que le proxy amont ne fait pas de HTTPS.
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-true}
       JWT_COOKIE_CSRF_PROTECT: ${JWT_COOKIE_CSRF_PROTECT:-true}
-      API_HTTPS: ${API_HTTPS:-false}
-      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
-      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
-      API_HOST: ${API_HOST:-localhost}
       API_PORT: ${API_PORT:-5000}
+      # Limite d'upload (Mo) — appliquée au backend (MAX_CONTENT_LENGTH) et à Caddy (request_body).
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-500}
       ENABLE_BANKING_APP_ID: ${ENABLE_BANKING_APP_ID:-}
       ENABLE_BANKING_REDIRECT_URL: ${ENABLE_BANKING_REDIRECT_URL:-}
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      # Même port des deux côtés : API_PORT pilote maintenant aussi le port interne réellement
-      # écouté par gunicorn (voir docker-entrypoint.sh), pas seulement le mapping externe.
-      - "${API_PORT:-5000}:${API_PORT:-5000}"
     volumes:
-      # Volume nommé : persiste le certificat auto-signé généré par utils/tls.py entre deux
-      # redémarrages (sinon regénéré à chaque fois, ce qui obligerait à réaccepter l'avertissement
-      # navigateur à chaque fois). Sert aussi de dépôt pour un certificat fourni par l'utilisateur
-      # (voir .env.example) — il faut alors le copier dans le volume, pas dans ./backend/certs.
+      # Volume nommé : persiste le certificat auto-signé interne généré par utils/tls.py entre deux
+      # redémarrages. Partagé en lecture avec le frontend (qui l'utilise pour son propre TLS interne).
       - certs_data:/app/backend/certs
       # Volume nommé : persiste FLASK_SECRET_KEY/PWD_PEPPER générés par utils/secrets.py quand ils
       # ne sont pas fournis via l'env — sinon régénérés à chaque redémarrage, ce qui invaliderait
@@ -76,32 +73,65 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-      args:
-        # Build de prod (nginx) : ces valeurs sont figées dans les fichiers statiques générés, pas
-        # relues à l'exécution — les changer nécessite "docker compose up --build". Voir
-        # Dockerfile.frontend et .env.example.
-        API_HOST: ${API_HOST:-localhost}
-        API_PORT: ${API_PORT:-5000}
-        API_HTTPS: ${API_HTTPS:-false}
+      # Plus d'args de build : le frontend appelle l'API en relatif (/api), il n'a plus besoin de
+      # connaître l'hôte/port du backend. Un "docker compose up" (sans --build) suffit désormais
+      # pour changer l'adresse publique.
+    # Plus aucun "ports:" : servi uniquement via le reverse proxy caddy.
     environment:
-      # Lues à l'exécution par /docker-entrypoint.d/19-select-nginx-template.sh (voir
-      # Dockerfile.frontend) pour choisir entre servir en HTTP ou HTTPS et, dans ce dernier cas,
-      # localiser le bon certificat dans /certs (voir volume ci-dessous).
+      # Lu à l'exécution par /docker-entrypoint.d/19-select-nginx-template.sh (voir Dockerfile.frontend).
       FRONTEND_PORT: ${FRONTEND_PORT:-5173}
-      API_HTTPS: ${API_HTTPS:-false}
-      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
-      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
     volumes:
-      # Même volume nommé que le backend (voir plus haut) — un certificat est lié à un nom d'hôte,
-      # pas à un port, pas besoin d'en générer un différent par service. Lecture seule : seul le
-      # backend en génère un par défaut.
+      # Certificat auto-signé interne généré par le backend (voir volume du backend). Lecture seule.
       - certs_data:/certs:ro
     depends_on:
       - backend
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    environment:
+      # Ports publics. 80/443 par défaut ; à changer en cas de conflit sur l'hôte (ACME exige
+      # alors un accès direct au 443, voir caddy-entrypoint.sh).
+      HTTP_PORT: ${HTTP_PORT:-80}
+      HTTPS_PORT: ${HTTPS_PORT:-443}
+      # true (défaut) : Caddy termine le TLS côté client (voir EDGE_ACME_DOMAIN / TLS_CERT_PATH,
+      # sinon certificat auto-signé). false : Caddy sert en HTTP, un reverse proxy amont fourni
+      # par l'utilisateur termine le TLS.
+      EDGE_HTTPS: ${EDGE_HTTPS:-true}
+      # Renseigné : Caddy obtient un certificat public automatique (Let's Encrypt / ZeroSSL) pour
+      # ce domaine. Vide (défaut) : PAS de certificat public — l'app n'est pas forcément exposée
+      # sur Internet.
+      EDGE_ACME_DOMAIN: ${EDGE_ACME_DOMAIN:-}
+      EDGE_ACME_EMAIL: ${EDGE_ACME_EMAIL:-}
+      # Certificat "edge" fourni par l'utilisateur (à la place de l'auto-signé). Chemins DANS le
+      # conteneur caddy — monter le dossier via le volume commenté ci-dessous.
+      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-500}
+      API_PORT: ${API_PORT:-5000}
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+    depends_on:
+      - backend
+      - frontend
     ports:
-      - "${FRONTEND_PORT:-5173}:${FRONTEND_PORT:-5173}"
+      - "${HTTP_PORT:-80}:${HTTP_PORT:-80}"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+    volumes:
+      # Stockage interne de Caddy : certificats ACME. À persister (sinon re-demandés à chaque
+      # redémarrage — rate limit Let's Encrypt).
+      - caddy_data:/data
+      - caddy_config:/config
+      # Certificat auto-signé généré par le backend, réutilisé pour le TLS edge quand aucun autre
+      # n'est configuré (voir caddy-entrypoint.sh). Lecture seule.
+      - certs_data:/certs:ro
+      # Certificat "edge" fourni par l'utilisateur (voir TLS_CERT_PATH) : décommenter et adapter
+      # le chemin hôte. Ex. avec TLS_CERT_PATH=/etc/caddy-certs/fullchain.pem :
+      # - ./mes-certs:/etc/caddy-certs:ro
 
 volumes:
   db_data:
   certs_data:
   instance_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,52 @@
+# Reverse proxy — point d'entrée public unique du déploiement Docker (voir docker-compose.yml,
+# service "caddy"). Route le trafic client vers les deux services internes, qui ne sont plus
+# exposés directement sur l'hôte :
+#   /api/*   -> backend  (gunicorn)
+#   le reste -> frontend (nginx : fichiers statiques + fallback SPA)
+#
+# {$CADDY_SITE} / {$CADDY_TLS_LINE} / {$CADDY_AUTO_HTTPS} sont calculés au démarrage du conteneur
+# par caddy-entrypoint.sh, selon EDGE_HTTPS / EDGE_ACME_DOMAIN / TLS_CERT_PATH (voir .env.example).
+# Caddy substitue les variables d'environnement AVANT de parser ce fichier.
+{
+	admin off
+	auto_https {$CADDY_AUTO_HTTPS:disable_redirects}
+}
+
+{$CADDY_SITE::443} {
+	# Ligne TLS "edge" (client -> Caddy), calculée par caddy-entrypoint.sh : "tls <cert> <key>"
+	# (certificat auto-signé du backend par défaut, ou celui fourni via TLS_CERT_PATH), "tls
+	# <email>" (ACME), ou une ligne de commentaire "#..." quand Caddy gère seul (ACME sans email)
+	# ou ne fait pas de TLS (EDGE_HTTPS=false). Toujours une seule ligne (un bloc {...} en valeur
+	# de variable casse le parsing). Pas de {$VAR:defaut} : une valeur vide y retomberait.
+	{$CADDY_TLS_LINE}
+
+	# Uploads volumineux : import de sauvegarde, coffre-fort de documents, OCR de factures. Sans
+	# ça la limite par défaut couperait ces requêtes. La même valeur est appliquée côté backend
+	# via MAX_CONTENT_LENGTH (voir backend/config.py et MAX_UPLOAD_MB dans .env.example).
+	request_body {
+		max_size {$MAX_UPLOAD_MB:500}MB
+	}
+
+	encode zstd gzip
+
+	# Trafic interne Caddy -> backend/frontend : chiffré (chaque service termine son propre TLS
+	# avec le certificat auto-signé généré au démarrage du backend), mais NON vérifié — le réseau
+	# est le bridge Docker interne, jamais exposé. tls_insecure_skip_verify évite d'avoir à
+	# distribuer ce certificat interne à Caddy et à gérer ses SAN.
+	@api path /api/*
+	handle @api {
+		reverse_proxy https://backend:{$API_PORT:5000} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy https://frontend:{$FRONTEND_PORT:5173} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+}

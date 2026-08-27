@@ -70,10 +70,15 @@ def _generate_self_signed_cert(cert_path, key_path):
 def _subject_alt_names():
     from cryptography import x509
 
-    names = [x509.DNSName('localhost'), x509.IPAddress(ipaddress.ip_address('127.0.0.1'))]
-    # API_HOST (voir .env.example) est l'hôte réellement utilisé par les navigateurs des
-    # utilisateurs (IP LAN, nom de domaine...) : l'inclure évite l'avertissement supplémentaire
-    # "nom de certificat invalide" en plus de celui, inévitable, sur l'autorité auto-signée.
+    # 'backend' / 'frontend' : noms de service Docker par lesquels le reverse proxy (caddy) joint
+    # ces conteneurs. Le proxy ne vérifie pas ce certificat (tls_insecure_skip_verify, voir
+    # Caddyfile), mais les inclure permet d'activer la vérification stricte si souhaité un jour.
+    names = [
+        x509.DNSName('localhost'), x509.IPAddress(ipaddress.ip_address('127.0.0.1')),
+        x509.DNSName('backend'), x509.DNSName('frontend'),
+    ]
+    # API_HOST : hôte utilisé pour un accès direct au backend (dev sans proxy, LAN). L'inclure
+    # évite l'avertissement "nom de certificat invalide" en plus de celui sur l'autorité auto-signée.
     extra_host = os.environ.get('API_HOST', 'localhost')
     if extra_host and extra_host != 'localhost':
         try:

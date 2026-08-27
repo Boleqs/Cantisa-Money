@@ -1,0 +1,33 @@
+<svg viewBox="0 0 1000 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F4A42"/>
+      <stop offset="100%" stop-color="#0A332E"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#B98A3E"/>
+      <stop offset="100%" stop-color="#E9C77B"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1000" height="260" rx="28" fill="url(#bg)"/>
+
+  <!-- Icon mark -->
+  <g transform="translate(30,10) scale(0.46)">
+    <circle cx="256" cy="256" r="150"
+            fill="none"
+            stroke="#F3ECDD"
+            stroke-width="52"
+            stroke-dasharray="680.7 261.8"
+            stroke-linecap="round"/>
+    <line x1="110" y1="322" x2="392" y2="156"
+          stroke="url(#gold)"
+          stroke-width="26"
+          stroke-linecap="round"/>
+    <circle cx="400" cy="150" r="27" fill="url(#gold)"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="270" y="140" font-family="Georgia, 'Times New Roman', serif" font-size="86" font-weight="700" fill="#F3ECDD">Cantisa</text>
+  <text x="272" y="182" font-family="Helvetica, Arial, sans-serif" font-size="26" letter-spacing="6" fill="#C9A15A">MONEY MANAGER</text>
+</svg>
