@@ -234,11 +234,12 @@
           </select>
         </label>
         <label>Compte débité (facultatif)
-          <select v-model="possessionForm.source_account_id" :disabled="!!possessionEditTarget">
+          <select v-model="possessionForm.source_account_id">
             <option :value="null">Aucun — saisie manuelle</option>
             <option v-for="a in debitableAccounts" :key="a.id" :value="a.id">{{ accountDisplayLabel(a, accounts) }}</option>
           </select>
         </label>
+        <p v-if="possessionEditTarget" class="hint-text">Modifier ce champ recrée ou supprime la transaction liée — le cash du ou des comptes concernés sera recalculé en conséquence.</p>
         <label>Quantité *
           <input v-model.number="possessionForm.quantity" type="number" min="0.000001" step="any" />
         </label>
@@ -835,6 +836,7 @@ async function savePossession() {
         fees: possessionForm.value.fees || 0,
         fx_rate: possessionFxMismatch.value ? (possessionForm.value.fx_rate || null) : null,
         purchase_date: possessionForm.value.purchase_date,
+        source_account_id: possessionForm.value.source_account_id || null,
       })
     } else {
       await axios.post('/api/assets/possessions', {

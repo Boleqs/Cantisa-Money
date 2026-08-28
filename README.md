@@ -108,6 +108,25 @@ des valeurs par défaut raisonnables s'appliquent sinon) :
 - `HTTP_PORT` / `HTTPS_PORT` — ports publics du reverse proxy (défauts `80` / `443`)
 - `MAX_UPLOAD_MB` — taille max d'un upload (défaut `500`)
 
+### Images pré-construites (sans cloner le dépôt / Portainer)
+
+`docker compose up --build` clone le dépôt et rebuild localement. Pour éviter ça — déploiement
+rapide, ou via l'UI **Portainer** (Stacks) — les 4 images sont publiées sur GHCR à chaque version :
+
+```bash
+curl -O https://raw.githubusercontent.com/Boleqs/Cantisa-Money/main/docker-compose.images.yml
+curl -O https://raw.githubusercontent.com/Boleqs/Cantisa-Money/main/.env.example
+mv .env.example .env   # puis éditer si besoin
+docker compose -f docker-compose.images.yml up -d
+```
+
+Sous Portainer : **Stacks > Add stack**, coller le contenu de `docker-compose.images.yml` (ou
+"Repository" en pointant vers son URL raw ci-dessus), renseigner les variables d'environnement du
+stack (voir `.env.example`), puis déployer — aucun build n'a lieu, seules les images sont pull.
+
+`IMAGE_TAG` (dans `.env`) fixe la version déployée (ex. `2.0.1`) ; `latest` par défaut suit la
+dernière version publiée.
+
 ### Exposer l'app sur un domaine
 
 Le frontend appelle l'API en relatif : **changer l'adresse publique ne nécessite pas de rebuild**.

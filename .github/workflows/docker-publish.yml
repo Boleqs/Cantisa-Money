@@ -1,0 +1,82 @@
+name: Publier les images Docker
+
+# Construit et publie les 4 images (db, backend, frontend, caddy) sur GHCR, pour permettre un
+# déploiement via docker-compose.images.yml (ou Portainer) sans clone/build local — voir README.
+#
+# Déclenchement :
+# - push d'un tag "vX.Y.Z" (ex. v2.0.1) -> publie X.Y.Z, X.Y et latest
+# - manuel (workflow_dispatch) -> publie sous le tag indiqué (défaut "dev"), utile pour tester
+#   avant d'avoir un vrai tag Git
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag d'image à publier (ex: dev, 2.0.1-rc1)"
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: boleqs
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            dockerfile: backend/Dockerfile
+          - name: frontend
+            dockerfile: Dockerfile.frontend
+          - name: db
+            dockerfile: db/Dockerfile
+          - name: caddy
+            dockerfile: Dockerfile.caddy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (pour le build ARM64)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Connexion à GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Déterminer les tags de l'image
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/cantisa-money-${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build et push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

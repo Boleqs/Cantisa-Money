@@ -75,6 +75,10 @@ class UpdatePossessionSchema(Schema):
     fees = fields.Decimal(load_default=Decimal('0'), as_string=False, validate=validate.Range(min=0))
     fx_rate = fields.Decimal(load_default=None, as_string=False, allow_none=True, validate=validate.Range(min=Decimal('0.000001')))
     purchase_date = fields.Date(required=True)
+    # Éditable (contrairement à account_id) : permet de lier a posteriori le compte réellement
+    # débité à une position créée sans lui (ou d'en changer/le retirer) — voir add_possession pour
+    # la sémantique. Miroir de UpdateSaleSchema.dest_account_id côté vente.
+    source_account_id = fields.UUID(load_default=None, allow_none=True)
 
 
 class DeletePossessionSchema(Schema):
@@ -540,6 +544,42 @@ def _execute_sale(DB, Assets, AssetPossession, AssetDisposal, Commodities, Accou
         disposals.append(disposal)
 
     return a, position_account, disposals
+
+
+def _resolve_purchase_transaction(DB, Accounts, Commodities, Transactions, Splits, user_id, dest_account,
+                                   source_account, total_cost_default, default_currency, purchase_date,
+                                   quantity, symbol, FxRates):
+    """Crée (si `source_account` est fourni) la Transaction + les 2 Splits représentant le virement
+    du compte débité vers le compte-conteneur de la position, pour son coût total (achat + frais).
+    Retourne (tx, source_split_id, dest_split_id, error) — les trois premiers valent None (et error
+    reste None) si `source_account` est None : aucun mouvement d'argent réel, saisie manuelle seule.
+    Factorisée entre add_possession et update_possession pour que les deux permettent de (dé)lier un
+    compte débité de façon identique — miroir de _execute_sale côté vente (dest_account_id)."""
+    if not source_account:
+        return None, None, None, None
+    dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
+        Accounts, Commodities, dest_account, source_account, total_cost_default,
+        default_currency, purchase_date, FxRates)
+    if error:
+        return None, None, None, error
+    tx = Transactions(
+        user_id=user_id,
+        currency_id=source_account.currency_id,
+        post_date=purchase_date,
+        effective_date=purchase_date,
+        description=f"Achat {symbol} x{format_qty(quantity)}",
+        category_id=None,
+        is_cleared=True,
+    )
+    DB.session.add(tx)
+    DB.session.flush()
+    # Ids générés explicitement (pas de lookup par account_id à la modification — ambigu quand
+    # source_account == dest_account, cf. achat autofinancé par le CTO).
+    source_split_id, dest_split_id = uuid.uuid4(), uuid.uuid4()
+    DB.session.add(Splits(id=source_split_id, tx_id=tx.id, account_id=source_account.id, quantity=-source_amount, fx_rate=1.0))
+    DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
+    DB.session.flush()
+    return tx, source_split_id, dest_split_id, None
 
 
 class AssetsRoutes:
@@ -1018,42 +1058,19 @@ class AssetsRoutes:
             if commodity.short_name == default_currency:
                 resolved_fx_rate = None  # pas "1.0" : aucune conversion n'a de sens ici (même devise)
 
-            dest_amount = source_amount = dest_fx_rate = None
-            if source_account:
-                # Les frais (toujours saisis en devise par défaut) s'ajoutent directement au coût
-                # déjà ramené en devise par défaut ci-dessus : purchase_price reste lui un prix par
-                # unité "propre", non pollué par le forfait de frais. Le total en devise par défaut
-                # est ensuite reconverti automatiquement vers la devise réelle de chaque compte
-                # impliqué (fiable même si la devise de l'actif est trop exotique pour avoir un
-                # historique de change disponible).
-                total_cost_default = cost_default + float(data['fees'])
-                dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
-                    Accounts, Commodities, dest_account, source_account, total_cost_default,
-                    default_currency, data['purchase_date'], FxRates)
-                if error:
-                    return error
+            # Les frais (toujours saisis en devise par défaut) s'ajoutent directement au coût déjà
+            # ramené en devise par défaut ci-dessus : purchase_price reste lui un prix par unité
+            # "propre", non pollué par le forfait de frais. Reconverti vers la devise réelle de
+            # chaque compte impliqué par _resolve_purchase_transaction ci-dessous.
+            total_cost_default = cost_default + float(data['fees'])
 
             try:
-                tx = None
-                source_split_id = dest_split_id = None
-                if source_account:
-                    tx = Transactions(
-                        user_id=user_id,
-                        currency_id=source_account.currency_id,
-                        post_date=data['purchase_date'],
-                        effective_date=data['purchase_date'],
-                        description=f"Achat {a.symbol} x{format_qty(data['quantity'])}",
-                        category_id=None,
-                        is_cleared=True,
-                    )
-                    DB.session.add(tx)
-                    DB.session.flush()
-                    # Ids générés explicitement (pas de lookup par account_id à la modification —
-                    # ambigu quand source_account == dest_account, cf. achat autofinancé par le CTO).
-                    source_split_id, dest_split_id = uuid.uuid4(), uuid.uuid4()
-                    DB.session.add(Splits(id=source_split_id, tx_id=tx.id, account_id=source_account.id, quantity=-source_amount, fx_rate=1.0))
-                    DB.session.add(Splits(id=dest_split_id, tx_id=tx.id, account_id=dest_account.id, quantity=dest_amount, fx_rate=dest_fx_rate))
-                    DB.session.flush()
+                tx, source_split_id, dest_split_id, tx_error = _resolve_purchase_transaction(
+                    DB, Accounts, Commodities, Transactions, Splits, user_id, dest_account, source_account,
+                    total_cost_default, default_currency, data['purchase_date'],
+                    data['quantity'], a.symbol, FxRates)
+                if tx_error:
+                    return tx_error
 
                 p = AssetPossession(
                     user_id=user_id,
@@ -1115,12 +1132,27 @@ class AssetsRoutes:
                 if error:
                     return error
 
+            dest_account = Accounts.query.filter_by(id=p.account_id).first()
+
+            # Compte débité éditable (contrairement à account_id) — voir UpdatePossessionSchema et
+            # add_possession pour la validation identique. None = désassocier (saisie manuelle).
+            new_source_account_id = data.get('source_account_id')
+            source_account = None
+            if new_source_account_id:
+                source_account = Accounts.query.filter(
+                    Accounts.id == new_source_account_id, Accounts.user_id == user_id).first()
+                if not source_account:
+                    return json_response('Source account not found', HttpCode.NOT_FOUND)
+                if source_account.account_type not in ('Current', 'Assets', 'Equity'):
+                    return json_response(
+                        "Le compte débité doit être de type 'Current', 'Assets' ou 'Equity'", HttpCode.BAD_REQUEST)
+
             settings = UserSettings.query.filter_by(user_id=user_id).first()
             default_currency = settings.currency if settings else 'EUR'
             manual_fx_rate = data.get('fx_rate')
 
             resolved_fx_rate = None
-            dest_amount = source_amount = dest_fx_rate = None
+            total_cost_default = None
             if commodity:
                 cost_asset_ccy = float(data['quantity']) * float(purchase_price)
                 cost_default, resolved_fx_rate, error = convert_asset_to_default_currency(
@@ -1130,17 +1162,10 @@ class AssetsRoutes:
                     return error
                 if commodity.short_name == default_currency:
                     resolved_fx_rate = None
-                if p.tx_id and p.source_account_id:
-                    dest_account = Accounts.query.filter_by(id=p.account_id).first()
-                    source_account = Accounts.query.filter_by(id=p.source_account_id).first()
-                    total_cost_default = cost_default + float(data['fees'])
-                    dest_amount, source_amount, dest_fx_rate, error = resolve_split_amounts(
-                        Accounts, Commodities, dest_account, source_account, total_cost_default,
-                        default_currency, data['purchase_date'], FxRates)
-                    if error:
-                        return error
+                total_cost_default = cost_default + float(data['fees'])
 
             old_purchase_date = p.purchase_date.date() if p.purchase_date else None
+            old_tx_id = p.tx_id
             try:
                 p.quantity = data['quantity']
                 p.purchase_price = purchase_price
@@ -1149,25 +1174,36 @@ class AssetsRoutes:
                 p.fx_rate = resolved_fx_rate
                 p.purchase_date = data['purchase_date']
 
-                if p.tx_id and dest_amount is not None:
-                    tx = Transactions.query.filter_by(id=p.tx_id).first()
-                    if tx:
-                        tx.post_date = data['purchase_date']
-                        tx.effective_date = data['purchase_date']
-                        tx.description = f"Achat {a.symbol} x{format_qty(data['quantity'])}"
-                    source_split = Splits.query.filter_by(id=p.source_split_id).first()
-                    dest_split = Splits.query.filter_by(id=p.dest_split_id).first()
-                    if source_split:
-                        source_split.quantity = -source_amount
-                    if dest_split:
-                        dest_split.quantity = dest_amount
-                        dest_split.fx_rate = dest_fx_rate
+                # Toujours supprimer puis recréer la transaction liée (plutôt que la muter en place) —
+                # même principe que update_sale/_execute_sale côté vente : gère uniformément les cas
+                # "pas de compte débité -> un compte", "un compte -> un autre" et "un compte -> aucun",
+                # sans code dupliqué par cas.
+                if old_tx_id:
+                    old_tx = Transactions.query.filter_by(id=old_tx_id).first()
+                    if old_tx:
+                        DB.session.delete(old_tx)  # cascade supprime les Splits liés (splits.py: ondelete='CASCADE')
+                    DB.session.flush()
+
+                tx, source_split_id, dest_split_id, tx_error = _resolve_purchase_transaction(
+                    DB, Accounts, Commodities, Transactions, Splits, user_id, dest_account, source_account,
+                    total_cost_default, default_currency, data['purchase_date'], data['quantity'],
+                    a.symbol if a else '', FxRates)
+                if tx_error:
+                    DB.session.rollback()
+                    return tx_error
+
+                p.source_account_id = new_source_account_id
+                p.tx_id = tx.id if tx else None
+                p.source_split_id = source_split_id
+                p.dest_split_id = dest_split_id
 
                 DB.session.commit()
-                if old_purchase_date != data['purchase_date']:
-                    from_date = min(old_purchase_date, data['purchase_date']) if old_purchase_date else data['purchase_date']
-                    _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
-                                           Splits, WealthSnapshot, AssetValuations, user_id, from_date)
+                # Rafraîchi sans condition (aligné sur add_possession/delete_possession) : un
+                # changement de compte débité (ou du montant réellement viré) impacte le patrimoine
+                # historique même sans changement de date d'achat.
+                from_date = min(old_purchase_date, data['purchase_date']) if old_purchase_date else data['purchase_date']
+                _force_wealth_refresh(app, DB, Accounts, Assets, AssetPossession, AssetDisposal, Commodities, FxRates, Transactions,
+                                       Splits, WealthSnapshot, AssetValuations, user_id, from_date)
                 return json_response(_possession_to_dict(p, existing_disposals), HttpCode.OK)
             except Exception as e:
                 DB.session.rollback()
